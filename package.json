@@ -1,0 +1,40 @@
+{
+  "name": "WoMbot",
+  "version": "1.0.0",
+  "description": "A Discord bot custom hacked for Witches of Midnight (Forged in the Dark game).",
+  "main": "index.js",
+  "dependencies": {
+    "@discordjs/opus": "^0.7.0",
+    "discord.js": "^12.5.3",
+    "dotenv": "^10.0.0",
+    "ffmpeg-static": "^4.4.1",
+    "opusscript": "0.0.8"
+  },
+  "devDependencies": {
+    "node": "^16.6.0"
+  },
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+<<<<<<< HEAD
+    "url": "git+https://github.com/Gavi616/CoMbot.git"
+=======
+    "url": "git+https://github.com/Gavi616/WoMbot.git"
+>>>>>>> f70080722d35350e7daeee36f0c8ed194ba9db63
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+<<<<<<< HEAD
+    "url": "https://github.com/Gavi616/CoMbot/issues"
+  },
+  "homepage": "https://github.com/Gavi616/CoMbot#readme"
+=======
+    "url": "https://github.com/Gavi616/WoMbot/issues"
+  },
+  "homepage": "https://github.com/Gavi616/WoMbot#readme"
+>>>>>>> f70080722d35350e7daeee36f0c8ed194ba9db63
+}

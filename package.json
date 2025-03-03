@@ -1,7 +1,7 @@
 {
-  "name": "WoMbot",
-  "version": "1.0.0",
-  "description": "A Discord bot custom hacked for Witches of Midnight (Forged in the Dark game).",
+  "name": "CandleBot",
+  "version": "0.5.0",
+  "description": "A Discord bot custom made for Ten Candles (game created by ).",
   "main": "index.js",
   "dependencies": {
     "@discordjs/opus": "^0.7.0",
@@ -18,23 +18,13 @@
   },
   "repository": {
     "type": "git",
-<<<<<<< HEAD
-    "url": "git+https://github.com/Gavi616/CoMbot.git"
-=======
-    "url": "git+https://github.com/Gavi616/WoMbot.git"
->>>>>>> f70080722d35350e7daeee36f0c8ed194ba9db63
+    "url": "git+https://github.com/Gavi616/CandleBot.git"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "bugs": {
-<<<<<<< HEAD
-    "url": "https://github.com/Gavi616/CoMbot/issues"
+    "url": "https://github.com/Gavi616/CandleBot/issues"
   },
-  "homepage": "https://github.com/Gavi616/CoMbot#readme"
-=======
-    "url": "https://github.com/Gavi616/WoMbot/issues"
-  },
-  "homepage": "https://github.com/Gavi616/WoMbot#readme"
->>>>>>> f70080722d35350e7daeee36f0c8ed194ba9db63
+  "homepage": "https://github.com/Gavi616/CandleBot#readme"
 }

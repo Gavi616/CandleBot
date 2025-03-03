@@ -1,534 +1,444 @@
-const Discord = require("discord.js");
-const bot = new Discord.Client();
-require("dotenv").config();
-const obj = require("./embed.js");
+require('dotenv').config();
+const Discord = require('discord.js');
+const fs = require('fs');
+const path = require('path');
+const helpEmbed = require('./embed.js');
 
-// true = on, false = off
-//const soundtoggle = false;
-const linktoggle = true;
-const spoilertoggle = false;
+const client = new Discord.Client({ intents: ['Guilds', 'GuildMessages', 'MessageContent'] });
+const prefix = '.';
 
-bot.on("ready", () => {
-  console.log("WoMbot " + womversion + " is starting up.");
-  //console.log("Dice Sounds are " + (soundtoggle ? "on." : "off."));
-  console.log("3D Dice Link is " + (linktoggle ? "on." : "off."));
-  console.log("Spoiler rolls & draws is " + (spoilertoggle ? "on." : "off."));
-  console.log(`The command prefix is '${prefix}'`);
-  console.log("WoMbot " + womversion + " is now online.");
+let gameData = {};
+
+function loadGameData() {
+  try {
+    const data = fs.readFileSync('gameData.json', 'utf8');
+    gameData = JSON.parse(data);
+  } catch (err) {
+    console.error('Error loading game data:', err);
+    gameData = {};
+  }
+}
+
+function saveGameData() {
+  fs.writeFileSync('gameData.json', JSON.stringify(gameData));
+}
+
+client.once('ready', () => {
+  console.log('Ten Candles Bot is ready!');
+  loadGameData();
 });
 
-const prefix = process.env.BOT_PREFIX || "!";
-const womversion = "v1.5";
-const minor_suits = ["Wands", "Pentacles", "Swords", "Cups"];
-const minor_values = ["Ace", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten", "Page", "Knight", "Queen", "King"];
-const major_values = ["0 - The Fool", "1 - The Magician", "2 - The High Priestess", "3 - The Empress", "4 - The Emperor", "5 - The Hierophant", "6 - The Lovers", "7 - The Chariot", "8 - Strength", "9 - The Hermit", "10 - The Wheel of Fortune", "11 - Justice", "12 - The Hanged Man", "13 - Death", "14 - Temperance", "15 - The Devil", "16 - The Tower", "17 - The Star", "18 - The Moon", "19 - The Sun", "20 - Judgement", "21 - The World"];
-const wm_effects = ["Caster regains all lost Essence from their brief connection to the Wyld", "A nearby spirit merges with the caster imparting a Trauma until the spirit is Banished", "Ringing in the caster’s ears makes Concentration impossible for the rest of the Undertaking", "Modify the Wyld Magic's Scale or Area by randomresult", "Modify the Wyld Magic's Duration by randomresult", "Modify the Wyld Magic's Range by randomresult", "Caster’s randombodypart into that of a random animal", "A randomly chosen angry mythical creature appears nearby and is focused on the caster", "A randomly chosen angry mythical creature appears nearby and is focused on spell’s target", "Caster loses all Essence; gains increased effect on all non-mental & non-magical Action rolls", "Caster becomes Disconnected from their magic until the end of the Undertaking or Downtime", "Caster is trapped between worlds (for at least one Undertaking, returning with new Trauma)", "If the effect is elemental in nature, substitute another element at random", "If the Wyld Magic has a target, a new target is chosen by a seemingly malevolent force"];
+client.on('messageCreate', async (message) => {
+  if (message.author.bot) return;
 
-var voiceChan = "";
-var rollType = "";
-var url_start = "http://dice.bee.ac/?";
-var dice_types = "d=Xd6@";
-var user = "&user=placeholder_user";
-var type = "&type=placeholder_type";
-var url_end = "&shadows=0&noresult&dicescale=2&roll";
-var complete_url = "";
+  if (command === 'help') {
+    message.channel.send({ embeds: [helpEmbed.help] });
+  }
 
-function rand(min, max){
-    return (Math.floor(Math.pow(10,14)*Math.random()*Math.random())%(max-min+1))+min;
-}
+  const channelId = message.channel.id;
+  const userId = message.author.id;
 
-function sleep(milliseconds) {
-  const date = Date.now();
-  let currentDate = null;
-  do {
-    currentDate = Date.now();
-  } while (currentDate - date < milliseconds);
-}
-
-sleep(rand(0,33));
-sleep(rand(0,66));
-sleep(rand(0,99));
-
-const roll = {
-  //Parsing the user's string. Obtaining dice number (max 10), resist bool, draw bool, comment.
-  parse(content) {
-    const data = {};
-
-    data.statement = content;
-
-    //Comment handling
-    data.comment = ""; //Avoids concat "undefined" with "\n I'm limited...."
-    if (content.includes("/")) {
-      data.comment = "\n" + content.slice(content.indexOf("/") + 1) || "";
-      //Removes comment from statement so that it isn't misparsed later
-      data.statement = content.substr(0, content.indexOf("/"));
-    }
-
-    //Calculates number of dice to roll.
-    data.d = Number(/^\d+/.exec(content)); //Number must immediately follow !, can be many digits.
-    if (data.d > 10) {
-      data.d = 10;
-      data.comment +=
-        "\nI'm limited to rolling 10 dice, drawing 10 minor arcana cards, drawing 10 major arcana cards, or conjuring 10 Wyld Magic Complications at a time.";
-    }
-
-    // default type
-    type = "&type=Action";
-
-    //Resist checker
-    if (data.statement.toLowerCase().includes("r")) {
-      rollType = "**Resistance** Roll: ";
-      type = "&type=Resistance";
-      data.resist = true;
-    }
-
-    //Gather Information Roll checker
-    if (data.statement.toLowerCase().includes("g")) {
-      rollType = "**Gather Information** Roll: ";
-      type="&type=Gather_Information";
-      data.gather = true;
-    }
-
-    //Fortune Roll checker
-    if (data.statement.toLowerCase().includes("f")) {
-      rollType = "**Fortune** Roll: ";
-      type = "&type=Fortune";
-      data.fortune = true;
-    }
-
-    //Engagement Roll checker
-    if (data.statement.toLowerCase().includes("e")) {
-      rollType = "**Engagement** Roll: ";
-      type = "&type=Engagement";
-      data.engagement = true;
-    }
-    
-    //Wyld Magic Action checker
-    if (data.statement.toLowerCase().includes("w")) {
-      rollType = "**Wyld Magic** Roll: ";
-      type = "&type=Wyld_Magic";
-      data.wyldmagic = true;
-    }
-    
-    //Drawing Down the Moon checker
-    if (data.statement.toLowerCase().includes("ddtm")) {
-      rollType = "**Drawing Down the Moon** Roll: ";
-      type = "&type=Drawing_Down_the_Moon";
-      data.ddtm = true;
-    }
-
-    //Minor Arcana checker
-    if (data.statement.toLowerCase().includes("minor")) {
-      data.minor = true;
-    }
-
-    //Major Arcana checker
-    if (data.statement.toLowerCase().includes("major")) {
-      data.major = true;
-    }
-    
-    //Wyld Magic Complications checker
-    if (data.statement.toLowerCase().includes("wyld")) {
-      data.wyldcomp = true;
-    }
-
-    if (!data.minor && !data.major && !data.wyldcomp) {
-      // add 0d_ into type when user input 0 dice
-      if (data.d == 0) {
-        type = type.slice(0, 6) + "0d_" + type.slice(6);
-      }
-      data.dice = data.d || 2; //Handles 0d rolls for actions and resist.
-    } else {
-      data.dice = data.d; //Handles draws & wyld magic complications.
-    }
-
-    // Handles sounds in Discord Voice Channel
-    //if (soundtoggle)  {
-    //  if (!data.minor && !data.major && !data.wyldcomp) {
-    //    if (!!voiceChan) {
-    //      voiceChan.join().then(connection => {
-    //        var oneortwo = data.d == 1 ? "one" : "two";
-    //        var random1to6 = Math.floor(Math.random() * 6 + 1);
-    //        var filename = "./audio_files/" + oneortwo + "_" + random1to6 + ".mp3";
-    //        const dispatcher = connection.play(filename);
-    //        dispatcher.on("end", end => voiceChan.leave());
-    //      }).catch(err => console.log(err));
-    //    }
-    //  }
-    //}
-
-    return this.roller(data);
-  },
-
-  //Generates random data
-  roller(data) {
-    //Rolling dice into data.rolls[]
-    data.rolls = [];
-    data.index = 0;
-    data.result = 0;
-    //Drawing cards into data.minorsuits[], data.minorvalues[] and data.majorvalues[]
-    data.minorsuits = [];
-    data.minorvalues = [];
-    data.majorvalues = [];
-    data.num = [];
-
-    //roll the dice
-    for (i = 1; i <= data.dice; i++) {
-      data.rolls.push(Math.floor(Math.random() * 6 + 1));
-    }
-    
-    // draw random minor arcana
-    for (i = 1; i <= data.dice + 1; i++) {
-      var newMinorSuit = 0;
-      var newMinorValue = 0;
-
-      do {
-        rndMinorValueNum = Math.floor(Math.random() * minor_values.length);
-        rndMinorSuit = minor_suits[Math.floor(Math.random() * minor_suits.length)];
-        rndMinorValue = minor_values[rndMinorValueNum];
-        newMinorSuit = rndMinorSuit;
-        newMinorValue = rndMinorValue;
-      } while (data.minorsuits.indexOf(newMinorSuit) >= 0 && data.minorvalues.indexOf(newMinorValue) >= 0)
-
-      data.minorsuits.push(newMinorSuit);
-      data.minorvalues.push(newMinorValue);
-      data.num.push(rndMinorValueNum);
-    }
-
-    // draw random major arcana
-    for (i = 1; i <= data.dice + 1; i++) {
-      var newMajorValue = 0;
-
-      do {
-        rndMajorValueNum = Math.floor(Math.random() * major_values.length);
-        rndMajorValue = major_values[rndMajorValueNum];
-        newMajorValue = rndMajorValue;
-      } while (data.majorvalues.indexOf(newMajorValue) >= 0)
-
-      data.majorvalues.push(newMajorValue);
-      data.num.push(rndMajorValueNum);
-    }
-    
-    dice_types = "d=Xd6@";
-
-    if (data.d === 0) {
-      dice_types = dice_types.replace('X', 2);
-      //Generate dice info for url
-      for (var i = 0; i < data.rolls.length; i++) {
-        var item = data.rolls[i].toString().replace(/\*/g, "");
-
-        if (i == data.rolls.length - 1) {
-          dice_types += item;
+  if (message.channel.type === Discord.ChannelType.DM) {
+    if (gameData[Object.keys(gameData).find(key => gameData[key].players[userId])]) {
+      const currentGame = gameData[Object.keys(gameData).find(key => gameData[key].players[userId])];
+      if (currentGame.characterGenStep === 1) {
+        const [virtue, vice] = message.content.split(',').map(s => s.trim());
+        if (virtue && vice) {
+          currentGame.players[userId].virtue = virtue;
+          currentGame.players[userId].vice = vice;
+          saveGameData();
+          message.reply('Traits received!');
         } else {
-          dice_types += item + "%20";
+          message.reply('Please provide both Virtue and Vice separated by a comma.');
+        }
+      } else if (currentGame.characterGenStep === 4) {
+        currentGame.players[userId].moment = message.content;
+        saveGameData();
+        message.reply('Moment received!');
+      } else if (currentGame.characterGenStep === 5) {
+        currentGame.players[userId].brink = message.content;
+        saveGameData();
+        message.reply('Brink received!');
+      } else if (gameData[channelId] && currentGame.characterGenStep === 8 && message.attachments.size === 0 && message.content.startsWith(prefix) === false) {
+        if (message.attachments.size > 0 && message.attachments.first().contentType.startsWith('audio/')) {
+          currentGame.players[message.author.id].recording = message.attachments.first().url;
+          saveGameData();
+          message.reply('Audio recording received!');
+        } else if (message.content) {
+          currentGame.players[message.author.id].recording = message.content;
+          saveGameData();
+          message.reply('Text recording received!');
         }
       }
-
-      //generate URL link for dice rolls only
-      if (!data.wyldcomp && !data.major && !data.minor && !data.draw && !data.draw && linktoggle) {
-        complete_url = "[🎲Link](" + url_start + dice_types + user + type + url_end + ")";
-      } else {
-        complete_url = "";
-      }
-
-      return this.zeroHandle(data); //Roll 2d, take lowest
-    } else {
-      dice_types = dice_types.replace('X', data.d);
-      //Generate dice info for url
-      for (var i = 0; i < data.rolls.length; i++) {
-        var item = data.rolls[i].toString().replace(/\*/g, "");
-
-        if (i == data.rolls.length - 1) {
-          dice_types += item;
-        } else {
-          dice_types += item + "%20";
-        }
-      }
-
-      //generate URL link for dice rolls only
-      if (!data.wyldcomp && !data.major && !data.minor && !data.draw && linktoggle) {
-        complete_url = "[🎲Link](" + url_start + dice_types + user + type + url_end + ")";
-      } else {
-        complete_url = "";
-      }
-
-      return this.manyHandle(data); //Take highest of data.rolls
     }
-  },
+  } else {
+    if (!message.content.startsWith(prefix) || message.author.bot) return;
 
-  //Handling 0d rolls (roll 2, take lowest)
-  zeroHandle(data) {
-    if (data.rolls[0] > data.rolls[1]) {
-      data.result = data.rolls[1];
-      data.rolls[1] = `**${data.result}**`;
-    } else {
-      data.result = data.rolls[0];
-      data.rolls[0] = `**${data.result}**`;
+    const args = message.content.slice(prefix.length).trim().split(/ +/);
+    const command = args.shift().toLowerCase();
+
+    if (command === 'startgame') {
+      startGame(message);
+    } else if (command === 'action') {
+      action(message, args);
+    } else if (command === 'endgame') {
+      endGame(message);
+    } else if (command === 'nextstep') {
+      nextStep(message);
     }
+  }
+});
 
-    return this.commenter(data);
-  },
+function startGame(message) {
+  const channelId = message.channel.id;
+  const args = message.content.split(' ').slice(1);
 
-  //Default roll handler
-  manyHandle(data) {
-    data.rolls.forEach((value, index) => {
-      if (value > data.result) {
-        //Stores highest roll + the index of it.
-        data.result = value;
-        data.index = index;
-      } else if (value === 6 && data.result === 6) {
-        //Bolds duplicate 6s if they exist (crit handling).
-        data.rolls[index] = "**6**";
-        data.crit = true;
+  if (gameData[channelId]) {
+    message.reply('A game is already in progress in this channel.');
+    return;
+  }
+
+  if (args.length < 2) {
+    message.reply('Usage: .startgame <GM ID> <Player IDs (space-separated)>');
+    return;
+  }
+
+  const gmId = args[0].replace(/<@!?(\d+)>/, '$1');
+  const playerIds = args.slice(1).map(id => id.replace(/<@!?(\d+)>/, '$1'));
+
+  gameData[channelId] = {
+    dicePool: 0,
+    scene: 0,
+    traitsUsed: 0,
+    momentUsed: false,
+    brinkUsed: false,
+    hopeDieActive: false,
+    characterGenStep: 1,
+    players: {},
+    playerOrder: playerIds,
+    gmId: gmId,
+  };
+
+  playerIds.forEach(id => {
+    gameData[channelId].players[id] = {
+      virtue: '',
+      vice: '',
+      moment: '',
+      brink: '',
+      name: '',
+      look: '',
+      concept: '',
+      recording: '',
+    };
+  });
+
+  saveGameData();
+  message.channel.send('A new Ten Candles game has started! Let\'s begin character generation.');
+  sendCharacterGenStep(message, channelId);
+}
+
+function sendCharacterGenStep(message, channelId) {
+  const step = gameData[channelId].characterGenStep;
+  const players = gameData[channelId].players;
+  const playerOrder = gameData[channelId].playerOrder;
+  const gmId = gameData[channelId].gmId;
+
+  if (step === 1) {
+    message.channel.send('**Step One: Players Write Traits (Light Three Candles)**\nEach player generates one Virtue and one Vice: Virtues solve more problems than they create, Vices cause more problems than they solve.\nThey should be a single vague but descriptive adjective. (e.g. Steady is better than Sharpshooter)\nPlayers, please DM me your Virtue and Vice, in that order, separated by a comma (e.g., "Brave, Cruel").');
+  } else if (step === 2) {
+    const swappedTraits = swapTraits(players, playerOrder);
+    gameData[channelId].players = swappedTraits;
+    saveGameData();
+    message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). The GM will now introduce the module/theme.');
+  } else if (step === 3) {
+    message.channel.send('**Step Three: Players Create Concepts**\nName: What’s their name or what are they called?\nLook: What do they look like at a quick glance?\nConcept: In a few words, who are they?\nPlayers, please DM me your Name, Look and Concept, in that order as three separate messages\n(e.g., Luke Brooks[enter]\nA tall, handsome and svelte blonde man who wears brand-new cowboy-style clothing.[enter]\nA model who deperately wants to be seen as tough and rugged.[enter]"');
+  } else if (step === 4) {
+    message.channel.send('**Step Four: Players Plan Moments (Light Three Candles)**\nAn event that would be reasonable to achieve, and kept succinct and clear to provide strong direction. However, all Moments should also have the potential for failure.\nPlayers, please DM me your Moment.');
+  } else if (step === 5) {
+    message.channel.send('**Step Five: Players and GM Discover Brinks (Light Three Candles)**\nWrite a short explanation outlining when or where you saw your neighbor’s Brink (GM is included). A short descriptive phrase is fine, don’t worry about making them too specific.\nOne party, chosen at random, writes, “I have seen them..” & gives a detail about the threat without outright identifying them.\nPlayers, please DM me a short explanation of when or where you saw the Brink of the player to your right.\nGM, please DM me a short explanation of when or where you saw the Brink of the player to your right.');
+  } else if (step === 6) {
+    const swappedBrinks = swapBrinks(players, playerOrder, gmId);
+    gameData[channelId].players = swappedBrinks;
+    saveGameData();
+    message.channel.send('**Step Six: Brinks Swapped**\nBrinks have been swapped. Players may now arrange their Trait, Moment, and Brink cards. They may place one moment on top.');
+  } else if (step === 7) {
+    message.channel.send('**Step Seven: Inventory Supplies (Light the Final Candle)**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). It begins.');
+  } else if (step === 8) {
+    message.channel.send('**Step 8: Game Start**\nCharacter generation is complete! The first candle is lit, and the game begins.\nUse the `.action` command to perform actions. Use modifiers such as `-trait`, `-moment`, `-brink` and `-hope` as needed. Expect the candles to begin to go out as the scenes progress.\nCheck your DMs for instructions on recording your final message.');
+    gameData[channelId].dicePool = 10;
+    gameData[channelId].scene = 1;
+    saveGameData();
+    sendCandleStatus(message, gameData);
+
+    const players = gameData[channelId].players;
+    for (const userId in players) {
+      try {
+        client.users.cache.get(userId).send('Please record your final message for the world you will inevitably leave behind in-character and send it as an audio file or a text message.');
+      } catch (error) {
+        console.error(`Error DMing user ${userId}:`, error);
       }
+    }
+  }
+}
+
+function swapTraits(players, playerOrder) {
+  const newPlayers = { ...players };
+  for (let i = 0; i < playerOrder.length; i++) {
+    const currentPlayerId = playerOrder[i];
+    const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
+    const prevPlayerId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length];
+
+    newPlayers[currentPlayerId].virtue = players[prevPlayerId].virtue;
+    newPlayers[currentPlayerId].vice = players[nextPlayerId].vice;
+  }
+  return newPlayers;
+}
+
+function swapBrinks(players, playerOrder, gmId) {
+  const newPlayers = { ...players };
+  for (let i = 0; i < playerOrder.length; i++) {
+    const currentPlayerId = playerOrder[i];
+    const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
+    newPlayers[currentPlayerId].brink = players[nextPlayerId].brink;
+  }
+  newPlayers[playerOrder[0]].brink = players[gmId].brink;
+  return newPlayers;
+}
+
+function nextStep(message) {
+  const channelId = message.channel.id;
+  if (!gameData[channelId]) {
+    message.reply('No game is in progress in this channel.');
+    return;
+  }
+
+  if (gameData[channelId].characterGenStep >= 8) {
+    message.reply('Character generation is already complete.');
+    return;
+  }
+
+  gameData[channelId].characterGenStep++;
+  saveGameData();
+  sendCharacterGenStep(message, channelId);
+}
+
+async function action(message, args) {
+  const channelId = message.channel.id;
+  if (!gameData[channelId]) {
+    message.reply('No game is in progress in this channel. Use `.startgame` to begin.');
+    return;
+  }
+  if (gameData[channelId].characterGenStep < 8) {
+    message.reply('Character generation is not complete. Please use the `.nextstep` command to proceed.');
+    return;
+  }
+
+  let dicePool = gameData[channelId].dicePool;
+  let hopeDieRoll = 0;
+  let rerollOnes = false;
+  let numOnesRerolled = 0;
+
+  if (args.includes('-trait')) {
+    rerollOnes = true;
+  }
+
+  if (args.includes('-moment')) {
+  }
+
+  if (args.includes('-brink')) {
+    rerollOnes = true;
+  }
+
+  if (args.includes('-hope') && gameData[channelId].hopeDieActive) {
+    hopeDieRoll = Math.floor(Math.random() * 6) + 1;
+  }
+
+  let rolls = [];
+  if (hopeDieRoll) {
+    rolls.push(hopeDieRoll);
+  }
+
+  for (let i = 0; i < dicePool; i++) {
+    rolls.push(Math.floor(Math.random() * 6) + 1);
+  }
+
+  let sixes = rolls.filter((roll) => roll >= 6).length;
+  let ones = rolls.filter((roll) => roll === 1).length;
+
+  if (rerollOnes) {
+    const onesIndices = rolls.reduce((indices, roll, index) => {
+      if (roll === 1 && (hopeDieRoll !== 1 || index !== 0)) {
+        indices.push(index);
+      }
+      return indices;
+    }, []);
+
+    numOnesRerolled = onesIndices.length;
+
+    onesIndices.forEach((index) => {
+      rolls[index] = Math.floor(Math.random() * 6) + 1;
     });
-    data.rolls[data.index] = `**${data.result}**`; //Bolds the first occurence of highest roll.
 
-    return this.commenter(data);
-  },
+    sixes = rolls.filter((roll) => roll >= 6).length;
+    ones = rolls.filter((roll) => roll === 1).length;
+  }
 
-  //Formatting reply string.
-  commenter(data) {
-    // add url and results to repsonse
-    let replyString = ` {**${data.result}**} `;
+  gameData[channelId].dicePool -= rolls.length - (hopeDieRoll ? 1 : 0);
 
-    if (data.d !== 1) {
-      replyString += `from ${data.rolls.join(", ")}`; //Doesn't display roll array if 1d.
+  let response = `Rolled: ${rolls.join(', ')}\n`;
+  if (sixes > 0) {
+    response += `Success! (${sixes} sixes)\n`;
+  } else {
+    response += `Failure. (No sixes)\n`;
+  }
+  response += `Dice remaining: ${gameData[channelId].dicePool}`;
+
+  let gmDicePool = 10 - gameData[channelId].scene;
+  let gmRolls = [];
+  for (let i = 0; i < gmDicePool; i++) {
+    gmRolls.push(Math.floor(Math.random() * 6) + 1);
+  }
+  let gmSixes = gmRolls.filter((roll) => roll === 6).length;
+
+  let totalSixes = sixes;
+  if (hopeDieRoll > 0 && hopeDieRoll >= 5) {
+    totalSixes++;
+  }
+
+  let narrationRights = '';
+  if (totalSixes > gmSixes) {
+    narrationRights = 'You have narration rights.';
+  } else if (totalSixes < gmSixes) {
+    narrationRights = 'The GM has narration rights.';
+  } else {
+    narrationRights = 'The GM has narration rights.';
+  }
+
+  response += `\nGM Rolled: <span class="math-inline">\{gmRolls\.join\(', '\)\} \(</span>{gmSixes} sixes)\n${narrationRights}`;
+
+  if (gameData[channelId].scene === 10 && dicePool === 1) {
+    if (ones > 0) {
+      gameData[channelId].dicePool++;
     }
-
-    if (data.comment) {
-      replyString += data.comment;
+    if (sixes === 0) {
+      response += '\nYour character has perished. Please narrate their demise.';
+      delete gameData[channelId];
+      saveGameData();
+      message.channel.send(response);
+      return;
     }
+  }
 
-    //Display minor arcana draws
-    var carddisplay = 0;
-    var wylddisplay = 0;
-    if (data.minor) {
-      if (data.dice == 0) {
-        return ` Drew precisely **0 Minor Arcana** cards, as requested.\n${data.comment}`;
-      } else {
-        carddisplay = ` Drew **${data.dice} Minor Arcana** card(s):\n`;
-        for (i = 1; i <= data.dice; i++) {
-          if (i <= data.dice) {
-            carddisplay += `${i}: **${data.minorvalues[i]} of ${data.minorsuits[i]}**\n`
-          }
-        }
-      }
-      return `${carddisplay}${data.comment}`;
-      //Display major arcana draws
-    } else if (data.major) {
-      if (data.dice == 0) {
-        return ` Drew precisely **0 Major Arcana** cards, as requested.\n${data.comment}`;
-      } else {
-        carddisplay = ` Drew **${data.dice} Major Arcana** card(s):\n`;
-        for (i = 1; i <= data.dice; i++) {
-          if (i <= data.dice) {
-            carddisplay += `${i}: **${data.majorvalues[i]}**\n`
-          }
-        }
-      }
-      return `${carddisplay}${data.comment}`;
-      //Display Wyld Magic Complications  
-    } else if (data.wyldcomp) {
-      if (data.dice == 0) {
-        return ` Conjured precisely **0 Wyld Magic Complications**, as requested.\n${data.comment}`;
-      } else {
-        wylddisplay = ` Conjured **${data.dice} Wyld Magic Complication(s)**:\n`;
-        for (i = 1; i <= data.dice; i++) {
-          var wyldtext = 0;
-          if (i <= data.dice) {
-            var wyldtext = `${i}: **${data.minorvalues[i]} of ${data.minorsuits[i]}**: ${wm_effects[data.num[i]]}\n`;
+  if (args.includes('-moment')) {
+    if (sixes > 0) {
+      response += '\nBurn your Moment card and give yourself a Hope die until your Brink fails.';
+      gameData[channelId].hopeDieActive = true;
+    } else {
+      response += '\nBurn your Moment card and face your imminent doom.';
+      gameData[channelId].hopeDieActive = false;
+    }
+  }
 
-            var intrandomresult = (Math.floor(Math.random() * 2 + 1)); //randomresultsign of 1 or 2
-            var randomresultsign = 0;
-            switch (intrandomresult) {
-              case 1:
-                randomresultsign = "-";
-                break;
-              case 2:
-                randomresultsign = "+";
-                break;
-            }
+  if (gameData[channelId].dicePool <= 0) {
+    gameData[channelId].dicePool = 10 - gameData[channelId].scene;
+    gameData[channelId].scene++;
+    response += `\nScene changed to scene ${gameData[channelId].scene}. Dice pool reset to ${gameData[channelId].dicePool}`;
+    if (gameData[channelId].scene > 10) {
+      response += '\nThe final candle is extinguished, any remaining characters may take their final actions now. Use `.endgame` when the last character has perished.';
+    } else {
+      response += "\nEstablish truths equal to the number of lit candles, then say 'and we are alive.'";
+    }
+  }
 
-            var intrandompart = (Math.floor(Math.random() * 6 + 1)); //randomresultsign of 1 to 6
-            var randombodypart = 0;
-            switch (intrandompart) {
-              case 1:
-              case 2:
-                randombodypart = "arms shapeshift";
-                break;
-              case 3:
-              case 4:
-                randombodypart = "legs shapeshift";
-                break;
-              case 5:
-                randombodypart = "torso shapeshifts";
-                break;
-              case 6:
-                randombodypart = "head shapeshifts";
-                break;
-            }
+  saveGameData();
 
-            var randomnum1to3 = (Math.floor(Math.random() * 3 + 1)).toString();
-            randomresult = '' + randomresultsign + randomnum1to3;
+  sendDiceImages(message, rolls);
+  message.channel.send(response);
+  sendCandleStatus(message, gameData);
 
-            wyldtext = wyldtext.replace("randomresult", randomresult);
-            wyldtext = wyldtext.replace("randombodypart", randombodypart);
+  if (args.includes('-trait') && numOnesRerolled > 0) {
+    message.channel.send(`Burn your Trait card, ${numOnesRerolled} ones have been rerolled.`);
+  }
 
-            wylddisplay += wyldtext;
-          }
-        }
+  if (args.includes('-brink') && numOnesRerolled > 0) {
+    message.channel.send(`Burn your Brink card, ${numOnesRerolled} ones have been rerolled.`);
+  }
+}
+
+async function endGame(message) {
+  const channelId = message.channel.id;
+  if (!gameData[channelId]) {
+    message.reply('No game is in progress in this channel.');
+    return;
+  }
+
+  const players = gameData[channelId].players;
+
+  client.on('messageCreate', async (dmMessage) => {
+    if (dmMessage.channel.type === Discord.ChannelType.DM && players[dmMessage.author.id]) {
+      if (dmMessage.attachments.size > 0 && dmMessage.attachments.first().contentType.startsWith('audio/')) {
+        players[dmMessage.author.id].recording = dmMessage.attachments.first().url;
+        saveGameData();
+        dmMessage.channel.send('Audio recording received!');
+      } else if (dmMessage.content) {
+        players[dmMessage.author.id].recording = dmMessage.content;
+        saveGameData();
+        dmMessage.channel.send('Text recording received!');
       }
-      return `${wylddisplay}${data.comment}`;
-    } else if (data.resist) {
-      //Resistance rolls
-      if (data.crit) {
-        return ` ${rollType}**Critical!** You reduce or resist the effect and **Recover 1 Willpower!**\n${replyString}`;
+    }
+  });
+
+  message.channel.send('The final scene fades to black. The story is over. Players, please send your final recordings via DM.');
+
+  message.channel.send('Playing final recordings:');
+  for (const userId in players) {
+    if (players[userId].recording) {
+      if (players[userId].recording.startsWith('http')) {
+        message.channel.send(`Recording for <@${userId}>:\n${players[userId].recording}`);
       } else {
-        switch (true) {
-          case data.result === 6:
-            return ` ${rollType}**Success!** You reduce or resist the effect and **Spend no Willpower!**\n${replyString}`;
-          case data.result >= 4:
-            return ` ${rollType}You reduce or resist the effect and **Spend 1 Willpower!**\n${replyString}`;
-          case data.result <= 3:
-            return ` ${rollType}You reduce or resist the effect and **Spend 3 Willpower!**\n${replyString}`;
-        }
-      }
-    } else if (data.gather) {
-      //Gather Information rolls
-      if (data.crit) {
-        return ` ${rollType}**Critical!** Exceptional details. This info is complete and more details may be revealed than you hoped for without prompting!\n${replyString}`;
-      } else {
-        switch (true) {
-          case data.result === 6:
-            return ` ${rollType}**Great!** Good details. This info is complete and follow-up questions may reveal more info than you hoped for!\n${replyString}`;
-          case data.result >= 4:
-            return ` ${rollType}**Standard.** You get good details. Clarifying / follow-up questions are possible.\n${replyString}`;
-          case data.result <= 3:
-            return ` ${rollType}**Limited.** You get incomplete or partial information.\n${replyString}`;
-        }
-      }
-    } else if (data.fortune) {
-      //Fortune rolls
-      if (data.crit) {
-        return ` ${rollType}**Exceptional result!** Great, extreme effect or 5 ticks!\n${replyString}`;
-      } else {
-        switch (true) {
-          case data.result === 6:
-            return ` ${rollType}**Good result!** Standard, full effect or 3 ticks!\n${replyString}`;
-          case data.result >= 4:
-            return ` ${rollType}**Mixed result.** Limited, partial effect or 2 ticks.\n${replyString}`;
-          case data.result <= 3:
-            return ` ${rollType}**Bad result.** Poor, little effect or 1 tick.\n${replyString}`;
-        }
-      }
-    } else if (data.ddtm) {
-      //Drawing Down the Moon
-      var ddtmtext = ` ${rollType}This ritual binds all members of the coven together and grounds all spellwork used during the recent Undertaking (including Wyld Magic).`;
-      if (data.crit) {
-        return ` ${ddtmtext}\n**Exceptional result!** Restore all Essence and 5 Willpower to each member!\n${replyString}`;
-      } else {
-        switch (true) {
-          case data.result === 6:
-            return ` ${ddtmtext}\n**Great result!** Restore 6 Essence and 3 Willpower to each member!\n${replyString}`;
-          case data.result >= 4:
-            return ` ${ddtmtext}\n**Good result!** Restore 4 Essence and 2 Willpower to each member!\n${replyString}`;
-          case data.result <= 3:
-            return ` ${ddtmtext}\n**Poor result.** Restore 2 Essence and 1 Willpower to each member!\n${replyString}`;
-        }
-      }
-    } else if (data.engagement) {
-      //Engagement
-      if (data.crit) {
-        return ` ${rollType}**Exceptional result!** The coven overcomes first obstacle and encouters the second obstacle from a Controlled position!\n${replyString}`;
-      } else {
-        switch (true) {
-          case data.result === 6:
-            return ` ${rollType}**Good result!** The coven encounters the first obstacle from a **Controlled** position!\n${replyString}`;
-          case data.result >= 4:
-            return ` ${rollType}**Mixed result.** The coven encounters the first obstacle from a **Risky** position.\n${replyString}`;
-          case data.result <= 3:
-            return ` ${rollType}**Bad result.** The coven encounters the first obstacle from a **Desperate** position.\n${replyString}`;
-        }
-      }
-    } else if (data.wyldmagic) {
-      //Wyld Magic rolls
-      if (data.crit) {
-        return ` ${rollType}**Critical Success!** You do it with increased effect!\n${replyString}`;
-      } else {
-        switch (true) {
-          case data.result === 6:
-            return ` ${rollType}**Complete Success!** You do it!\n${replyString}`;
-          case data.result >= 4:
-            return ` ${rollType}**Partial Success!** You do it with a Wyld Magic Complication.\n${replyString}`;
-          case data.result <= 3:
-            return ` ${rollType}**Failure!** The effect fails and a Wyld Magic Complication occurs instead.\n${replyString}`;
-        }
+        message.channel.send(`Recording for <@${userId}>:\n"${players[userId].recording}"`);
+        message.channel.send(`*<@${userId}>'s final message read aloud:*`);
+        message.channel.send(players[userId].recording);
       }
     } else {
-      //Action rolls
-      rollType = "**Action** Roll: ";
-      switch (true) {
-        case data.crit:
-          return ` ${rollType}**Critical Success!** You do it with increased effect!\n${replyString}`;
-        case data.result === 6:
-          return ` ${rollType}**Complete Success!** You do it!\n${replyString}`;
-        case data.result >= 4:
-          return ` ${rollType}**Partial Success!** You do it at a cost.\n${replyString}`;
-        case data.result <= 3:
-          return ` ${rollType}**Failure!**\n${replyString}`;
-      }
-    }
-  },
-};
-
-bot.on("message", (msg) => {
-  if (msg.member != null) {
-    //voiceChan = msg.member.voice.channel;
-    user = "&user=" + msg.author.username.replace(/ /g,"_");
-  }
-
-  if (msg.content.length > prefix.length && msg.content.slice(0, prefix.length) === prefix) {
-    let content = msg.content.slice(prefix.length);
-
-    if (obj[content]) {
-      msg.reply(obj[content]).catch((error) => {
-        console.log(error);
-        msg.reply(
-          "The bot had an error, which has been logged.\n*" +
-          error.message +
-          "*"
-        );
-      });
-    } else if (!isNaN(content[0])) {
-      let reply = roll.parse(content);
-
-      if (!spoilertoggle){
-        var roller_embed = new Discord.MessageEmbed()
-          .setDescription(complete_url + reply)
-      } else {
-        var roller_embed = new Discord.MessageEmbed()
-          .setDescription(complete_url + " ||" + reply + "||")
-      }
-
-      //console.log(roller_embed);
-
-      msg.channel.send(roller_embed)
-        .catch((error) => {
-          console.log(error);
-          msg.reply(
-            "The bot had an error, which has been logged.\n*" +
-            error.message +
-            "*"
-          );
-        });
+      message.channel.send(`No recording for <@${userId}>.`);
     }
   }
-});
 
-bot.login(process.env['CLIENT_TOKEN']
-<<<<<<< HEAD
-);
-=======
-);
->>>>>>> f70080722d35350e7daeee36f0c8ed194ba9db63
+  delete gameData[channelId];
+  saveGameData();
+}
+
+async function sendDiceImages(message, rolls) {
+  for (const roll of rolls) {
+    const imagePath = path.join(__dirname, `images/dice_${roll}.png`);
+    try {
+      await message.channel.send({ files: [imagePath] });
+    } catch (error) {
+      console.error('Error sending dice image:', error);
+    }
+  }
+}
+
+async function sendCandleStatus(message, gameData) {
+  const channelId = message.channel.id;
+  if (!gameData[channelId]) return;
+
+  const scene = gameData[channelId].scene;
+
+  for (let i = 10; i >= 1; i--) {
+    let imagePath;
+    if (i >= scene) {
+      imagePath = path.join(__dirname, 'images/lit_candle.gif');
+    } else {
+      imagePath = path.join(__dirname, 'images/unlit_candle.gif');
+    }
+    try {
+      await message.channel.send({ files: [imagePath] });
+    } catch (error) {
+      console.error('Error sending candle image:', error);
+    }
+  }
+}
+
+client.login(process.env.DISCORD_TOKEN);

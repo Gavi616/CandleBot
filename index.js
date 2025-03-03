@@ -11,34 +11,60 @@ let gameData = {};
 
 function loadGameData() {
   try {
-    const data = fs.readFileSync('gameData.json', 'utf8');
-    gameData = JSON.parse(data);
+      const data = fs.readFileSync('gameData.json', 'utf8');
+      gameData = JSON.parse(data);
+      console.log('Game data loaded successfully:', gameData);
   } catch (err) {
-    console.error('Error loading game data:', err);
-    gameData = {};
+      console.error('Error loading game data:', err);
+      gameData = {};
   }
 }
 
 function saveGameData() {
-  fs.writeFileSync('gameData.json', JSON.stringify(gameData));
+  try {
+      fs.writeFileSync('gameData.json', JSON.stringify(gameData));
+      console.log('Game data saved successfully:', gameData);
+  } catch (err) {
+      console.error('Error saving game data:', err);
+  }
 }
 
 client.once('ready', () => {
   console.log('Ten Candles Bot is ready!');
-  loadGameData();
+  try {
+      loadGameData();
+  } catch (loadError) {
+      console.error('Error during loadGameData in ready event:', loadError);
+  }
 });
 
 client.on('messageCreate', async (message) => {
+  console.log('Message received:', message.content);
   if (message.author.bot) return;
-
-  if (command === 'help') {
-    message.channel.send({ embeds: [helpEmbed.help] });
-  }
 
   const channelId = message.channel.id;
   const userId = message.author.id;
 
-  if (message.channel.type === Discord.ChannelType.DM) {
+  if (message.channel.type !== Discord.ChannelType.DM) { // Check if it's not a DM
+    if (message.content.startsWith(prefix)) {
+      const args = message.content.slice(prefix.length).trim().split(/ +/);
+      const command = args.shift().toLowerCase();
+
+      if (command === 'help') {
+        console.log('Help command received.');
+        message.channel.send({ embeds: [helpEmbed.help] });
+        console.log('Help message sent.');
+      } else if (command === 'startgame') {
+        startGame(message);
+      } else if (command === 'action') {
+        action(message, args);
+      } else if (command === 'endgame') {
+        endGame(message);
+      } else if (command === 'nextstep') {
+        nextStep(message);
+      }
+    }
+  } else { // DM logic
     if (gameData[Object.keys(gameData).find(key => gameData[key].players[userId])]) {
       const currentGame = gameData[Object.keys(gameData).find(key => gameData[key].players[userId])];
       if (currentGame.characterGenStep === 1) {
@@ -70,21 +96,6 @@ client.on('messageCreate', async (message) => {
           message.reply('Text recording received!');
         }
       }
-    }
-  } else {
-    if (!message.content.startsWith(prefix) || message.author.bot) return;
-
-    const args = message.content.slice(prefix.length).trim().split(/ +/);
-    const command = args.shift().toLowerCase();
-
-    if (command === 'startgame') {
-      startGame(message);
-    } else if (command === 'action') {
-      action(message, args);
-    } else if (command === 'endgame') {
-      endGame(message);
-    } else if (command === 'nextstep') {
-      nextStep(message);
     }
   }
 });
@@ -410,18 +421,18 @@ async function endGame(message) {
 }
 
 async function sendDiceImages(message, rolls) {
-  for (const roll of rolls) {
+/*   for (const roll of rolls) {
     const imagePath = path.join(__dirname, `images/dice_${roll}.png`);
     try {
       await message.channel.send({ files: [imagePath] });
     } catch (error) {
       console.error('Error sending dice image:', error);
     }
-  }
+  } */
 }
 
 async function sendCandleStatus(message, gameData) {
-  const channelId = message.channel.id;
+/*   const channelId = message.channel.id;
   if (!gameData[channelId]) return;
 
   const scene = gameData[channelId].scene;
@@ -438,7 +449,7 @@ async function sendCandleStatus(message, gameData) {
     } catch (error) {
       console.error('Error sending candle image:', error);
     }
-  }
+  } */
 }
 
 client.login(process.env.DISCORD_TOKEN);

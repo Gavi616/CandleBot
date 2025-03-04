@@ -6,7 +6,7 @@ const helpEmbed = new EmbedBuilder()
   .setDescription('List of available commands:')
   .addFields(
     { name: '.help', value: 'Shows this help message.' },
-    { name: '.startgame <GM ID> <Player IDs (space-separated)>', value: 'Starts a new Ten Candles game. Requires 2 to 10 players and a GM.\nExample: `.startgame @GM @Player1 @Player2` ...' },
+    { name: '.startgame <GM ID> <Player IDs (space-separated)>', value: 'Starts a new Ten Candles game. Requires 2 to 10 players and a GM.\nExample: `.startgame @GM @Player1 @Player2 ...`' },
     { name: '.nextstep', value: 'Advances to the next step of character generation.' },
 	{ name: '.gamestatus', value: 'Displays the current game\'s status (scene or character generation step).' },
     { name: '.action [-trait] [-moment] [-brink] [-hope]', value: 'Rolls dice for an action. Determines narration rights.\nExample: `.action -trait`' },

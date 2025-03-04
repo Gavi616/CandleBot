@@ -20,15 +20,30 @@ const client = new Client({
 
 const prefix = '.';
 const isTesting = false;
+
 const defaultVirtues = [
   'Courageous', 'Compassionate', 'Just', 'Wise', 'Temperate', 'Hopeful', 'Faithful', 'Loving', 'Loyal', 'Honest',
   'Generous', 'Patient', 'Diligent', 'Forgiving', 'Kind', 'Optimistic', 'Reliable', 'Respectful', 'Selfless', 'Sincere',
   'Tolerant', 'Trustworthy', 'Understanding', 'Vigilant', 'Witty', 'Adaptable', 'Ambitious', 'Charitable', 'Creative', 'Decisive'
 ];
+
 const defaultVices = [
   'Greedy', 'Wrathful', 'Envious', 'Slothful', 'Proud', 'Gluttonous', 'Lustful', 'Treacherous', 'Deceitful', 'Cowardly',
   'Jealous', 'Malicious', 'Pessimistic', 'Reckless', 'Resentful', 'Rude', 'Selfish', 'Stubborn', 'Suspicious', 'Vain',
   'Vengeful', 'Wasteful', 'Withdrawn', 'Arrogant', 'Bitter', 'Careless', 'Cruel', 'Dishonest', 'Frivolous', 'Hateful'
+];
+
+const defaultMoments = [
+  "Find a way to signal for help.",
+  "Locate a safe place to rest.",
+  "Protect a vulnerable person.",
+  "Discover the source of the strange noises.",
+  "Retrieve a lost item of importance.",
+  "Find a way to communicate with the outside world.",
+  "Repair a broken piece of equipment.",
+  "Find a hidden cache of supplies.",
+  "Escape from a dangerous location.",
+  "Provide light in the darkness to help a friend."
 ];
 
 let gameData = {};
@@ -37,11 +52,12 @@ function loadGameData() {
   try {
     const data = fs.readFileSync('gameData.json', 'utf8');
     gameData = JSON.parse(data);
-    console.log('Game data loaded successfully:', gameData);
+    console.log('Game data loaded successfully.');
+    printActiveGames();
   } catch (err) {
     console.error('Error loading game data:', err);
     gameData = {};
-    console.log('Game data created successfully:', gameData);
+    console.log('Game data initialized.');
   }
 }
 
@@ -51,9 +67,32 @@ function saveGameData() {
       gameData[channelId].lastSaved = new Date().toISOString();
     }
     fs.writeFileSync('gameData.json', JSON.stringify(gameData));
-    console.log('Game data saved successfully:', gameData);
+    console.log('Game data saved successfully.');
+    printActiveGames();
   } catch (err) {
     console.error('Error saving game data:', err);
+  }
+}
+
+function printActiveGames() {
+  if (Object.keys(gameData).length === 0) {
+    console.log('-- No Active Games --');
+  } else {
+    console.log('--- Active Games ---');
+    for (const channelId in gameData) {
+      client.channels.fetch(channelId)
+        .then(channel => {
+          if (channel && channel.guild) {
+            console.log(`Server: ${channel.guild.name}, Channel: ${channel.name}`);
+          } else {
+            console.log(`Channel ID: ${channelId} (Channel or Guild not found)`);
+          }
+        })
+        .catch(error => {
+          console.error(`Error fetching channel ${channelId}:`, error);
+          console.log(`Channel ID: ${channelId} (Error fetching channel)`);
+        });
+    }
   }
 }
 
@@ -93,7 +132,7 @@ client.on('messageCreate', async (message) => {
         cancelGame(message);
       }
     }
-  } else { // DM logic
+  } else {
     if (gameData[Object.keys(gameData).find(key => gameData[key].players[userId])]) {
       const currentGame = gameData[Object.keys(gameData).find(key => gameData[key].players[userId])];
       if (currentGame.characterGenStep === 1) {
@@ -314,7 +353,12 @@ async function startGame(message) {
     }
   }
 
-  message.channel.send('A new Ten Candles game has started!\n\nLet\'s begin character generation.\nUse the `.nextstep` command to proceed.')
+  message.channel.send('**The World of Ten Candles**\n' +
+    'Your characters will face unimaginable terrors in the dying of the light.\n\n' +
+    '**Though you know your characters will die, you must have hope that they will survive.**\n\n' +
+    '**Ten Candles** focuses around shared narrative control.\n' +
+    'Everyone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\n' +
+    'Let\'s begin character generation.\nUse the `.nextstep` command to proceed.')
     .then(() => {
       sendCharacterGenStep(message, channelId);
     })
@@ -342,7 +386,7 @@ async function gameStatus(message) {
   if (game.characterGenStep > 0) {
     message.reply(`Character Generation Step: ${game.characterGenStep}\nGM: ${gm.user.username}\nPlayers: ${playerNames}\nUse the \`.nextstep\` command to proceed.`);
   } else {
-    message.reply(`Scene: ${game.scene}\nGM: ${gm.user.username}\nPlayers: ${playerNames}\nUse the appropriate command to proceed.`); // Replace with your scene-specific command
+    message.reply(`Scene: ${game.scene}\nGM: ${gm.user.username}\nPlayers: ${playerNames}\nUse the \`.action\` command to take action and move the game forward.`);
   }
 }
 
@@ -370,15 +414,15 @@ async function cancelGame(message) {
       if (response === 'yes') {
         delete gameData[channelId];
         saveGameData();
-        message.channel.send('Game cancelled by GM.');
+        message.channel.send(`Game in ${message.channel.name} has been cancelled by the GM.`);
       } else {
-        message.channel.send('Game cancellation aborted by GM.');
+        message.channel.send('Game cancellation was aborted by GM.');
       }
     } else {
-      message.channel.send('Game cancellation timed out. Game not cancelled.');
+      message.channel.send(`Game in ${message.channel.name} cancellation timed out. Game not cancelled.`);
     }
   } catch (error) {
-    console.error('Error requesting GM confirmation:', error);
+    console.error('Error requesting GM confirmation to cancel game:', error);
     message.channel.send('Failed to request GM confirmation. Game not cancelled.');
   }
 }
@@ -390,7 +434,7 @@ async function sendCharacterGenStep(message, channelId) {
   const gmId = gameData[channelId].gmId;
 
   if (step === 1) {
-    message.channel.send('\n**Step One: Players Write Traits (Light Three Candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.');
+    message.channel.send('\n**Step One: Players Write Traits (Light Three Candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have 5 minutes to complete this step.');
 
     for (const playerId of playerOrder) {
       try {
@@ -400,7 +444,7 @@ async function sendCharacterGenStep(message, channelId) {
         await user.send('Please provide your Virtue and Vice, separated by a comma (e.g., "Courage, Greed").');
 
         const filter = m => m.author.id === playerId;
-        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 300000, errors: ['time'] }); // 5 minutes
 
         if (collected.size > 0) {
           const [virtue, vice] = collected.first().content.split(',').map(s => s.trim());
@@ -423,13 +467,49 @@ async function sendCharacterGenStep(message, channelId) {
     const swappedTraits = swapTraits(players, playerOrder);
     gameData[channelId].players = swappedTraits;
     saveGameData();
-    message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. Use `.nextstep` when finished.');
+    message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. Use `.nextstep` when you are ready to continue.');
+
+    for (const playerId of playerOrder) {
+      try {
+        const player = await message.guild.members.fetch(playerId);
+        const user = player.user;
+        await user.send(`Your Virtue is: ${swappedTraits[playerId].virtue}\nYour Vice is: ${swappedTraits[playerId].vice}\nWrite each of them on an index card.`);
+      } catch (error) {
+        console.error(`Error DMing player ${playerId} their swapped traits:`, error);
+      }
+    }
   } else if (step === 3) {
-    message.channel.send('**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.');
+    message.channel.send('**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.\nYou have 5 minutes to complete this step.');
+    await askPlayersForCharacterInfo(message, channelId);
+    gameData[channelId].characterGenStep++;
+    saveGameData();
+    sendCharacterGenStep(message, channelId);
   } else if (step === 4) {
-    message.channel.send('**Step Four: Players Plan Moments (Light Three Candles)**\nAn event that would be reasonable to achieve, and kept succinct and clear to provide strong direction. However, all Moments should also have the potential for failure.\nPlayers, please DM me your Moment.');
+    message.channel.send('**Step Four: Players Plan Moments (Light Three Candles)**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.\nYou have 5 minutes to respond.');
+
+    for (const playerId of playerOrder) {
+      try {
+        const player = await message.guild.members.fetch(playerId);
+        const user = player.user;
+        const dmChannel = await user.createDM();
+        await user.send('Please DM me your Moment.');
+
+        const filter = m => m.author.id === playerId;
+        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 300000, errors: ['time'] });
+
+        if (collected.size > 0) {
+          gameData[channelId].players[playerId].moment = collected.first().content;
+        } else {
+          assignRandomMoment(user, gameData[channelId].players[playerId]);
+        }
+      } catch (error) {
+        console.error(`Error handling Moment for player ${playerId}:`, error);
+        assignRandomMoment(user, gameData[channelId].players[playerId]);
+      }
+    }
+    saveGameData();
   } else if (step === 5) {
-    message.channel.send('**Step Five: Players and GM Discover Brinks (Light Three Candles)**\nCheck your DMs for personalized instructions on this step. You have five minutes to respond.');
+    message.channel.send('**Step Five: Players and GM Discover Brinks (Light Three Candles)**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
 
     const players = gameData[channelId].players;
     const playerOrder = gameData[channelId].playerOrder;
@@ -482,7 +562,7 @@ async function sendCharacterGenStep(message, channelId) {
     for (const userId of [gmId, ...playerOrder]) {
       const user = client.users.cache.get(userId);
       if (user && user.dmChannel) {
-        dmCollectors.push(user.dmChannel.awaitMessages({ filter, max: 1, time: 300000 })); // 5 minutes
+        dmCollectors.push(user.dmChannel.awaitMessages({ filter, max: 1, time: 300000 }));
       } else {
         console.error(`Could not create DM collector for user ${userId}`);
       }
@@ -524,10 +604,10 @@ async function sendCharacterGenStep(message, channelId) {
           gameData[channelId].gm.brink = brinkResponses[gmId] || "No Brink was given";
         } else {
           const nextPlayerId = playerOrder[(playerOrder.indexOf(playerId) + 1) % playerOrder.length];
-          players[playerId].brink = brinkResponses[nextPlayerId] || "No Brink was given";
+          players[playerId].brink = brinkResponses[nextPlayerId] || "No Brink was given, continuing..";
         }
       }
-      players[threatPlayerId].brink = brinkResponses[threatPlayerId] || "No Brink was given";
+      players[threatPlayerId].brink = brinkResponses[threatPlayerId] || "No Brink was given, continuing..";
 
       saveGameData();
       gameData[channelId].characterGenStep++;
@@ -537,9 +617,26 @@ async function sendCharacterGenStep(message, channelId) {
     const swappedBrinks = swapBrinks(players, playerOrder, gmId);
     gameData[channelId].players = swappedBrinks;
     saveGameData();
-    message.channel.send('**Step Six: Brinks Swapped**\nBrinks have been swapped. Players may now arrange their Traits, Moment, and Brink cards. Brink must go on the bottom of the stack, face down.');
+    message.channel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down.');
+
+    for (const playerId of playerOrder) {
+      try {
+        const player = await message.guild.members.fetch(playerId);
+        const user = player.user;
+        await user.send(`Your swapped Brink is: ${swappedBrinks[playerId].brink}\nPlease write it on an index card.`);
+      } catch (error) {
+        console.error(`Error DMing player ${playerId} for swapped brink:`, error);
+      }
+    }
+    try {
+      const gm = message.guild.members.cache.get(gmId);
+      const user = gm.user;
+      await user.send(`Your swapped Brink is: ${swappedBrinks[playerOrder[0]].brink}\nPlease write it on an index card.`);
+    } catch (error) {
+      console.error(`Error DMing GM ${gmId} for swapped brink:`, error);
+    }
   } else if (step === 7) {
-    message.channel.send('**Step Seven: Inventory Supplies (Light the Final Candle)**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). It begins.');
+    message.channel.send('**Step Seven: Inventory Supplies (Light the Final Candle)**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). **It begins.**');
   } else if (step === 8) {
     message.channel.send('**Final Recordings**\nPlayers, please check your DMs to send in your final recordings (audio or text).');
 
@@ -551,20 +648,20 @@ async function sendCharacterGenStep(message, channelId) {
         if (dmMessage.attachments.size > 0 && dmMessage.attachments.first().contentType.startsWith('audio/')) {
           players[dmMessage.author.id].recording = dmMessage.attachments.first().url;
           saveGameData();
-          dmMessage.channel.send('Audio recording received!');
+          dmMessage.channel.send('Your audio recording was received!');
           recordingsReceived++;
         } else if (dmMessage.content) {
           players[dmMessage.author.id].recording = dmMessage.content;
           saveGameData();
-          dmMessage.channel.send('Text recording received!');
+          dmMessage.channel.send('Your text message was received!');
           recordingsReceived++;
         }
 
         if (recordingsReceived === Object.keys(players).length) {
-          message.channel.send('All final recordings received! Proceeding to game start.');
+          message.channel.send('All final recordings were received! Proceeding to start the game.');
           gameData[channelId].characterGenStep = 9;
           saveGameData();
-          setTimeout(() => { // Add 5-second delay
+          setTimeout(() => {
             sendCharacterGenStep(message, channelId);
           }, 5000);
         }
@@ -573,7 +670,7 @@ async function sendCharacterGenStep(message, channelId) {
 
     for (const userId in players) {
       try {
-        client.users.cache.get(userId).send('Please record your final message for the world you will inevitably leave behind in-character and send it as an audio file or a text message.');
+        client.users.cache.get(userId).send('Please record your final message for the world you will inevitably leave behind in-character. Send it via DM as an audio file or a text message when prompted.');
       } catch (error) {
         console.error(`Error DMing user ${userId}:`, error);
       }
@@ -587,7 +684,7 @@ async function sendCharacterGenStep(message, channelId) {
       'Examples: `.action -trait || .action`\n\n' +
       'The candles will be extinguished as the scenes progress.\n\n' +
       '**When to Use `.playrecordings`:**\n' +
-      'Once all Player Characters have perished, the GM should use the `.playrecordings` command to play their final messages.'
+      'Once all Player Characters have perished, the GM should use the `.playrecordings` command to play their final messages and close the game session.'
     );
     gameData[channelId].dicePool = 10;
     gameData[channelId].scene = 1;
@@ -722,20 +819,18 @@ async function action(message, args) {
   let gmSixes = gmRolls.filter((roll) => roll === 6).length;
 
   let totalSixes = sixes;
-  if (hopeDieRoll > 0 && hopeDieRoll >= 5) {
-    totalSixes++;
+  if (hopeDieRoll >= 5) {
+      totalSixes++; // Treat 5 or 6 as a success (6)
   }
 
   let narrationRights = '';
   if (totalSixes > gmSixes) {
-    narrationRights = 'You have narration rights.';
-  } else if (totalSixes < gmSixes) {
-    narrationRights = 'The GM has narration rights.';
+      narrationRights = 'You have narration rights.';
   } else {
-    narrationRights = 'The GM has narration rights.';
+      narrationRights = 'The GM has narration rights.';
   }
 
-  response += `\nGM Rolled: <span class="math-inline">\{gmRolls\.join\(', '\)\} \(</span>{gmSixes} sixes)\n${narrationRights}`;
+  response += `\nGM Rolled: ${gmRolls.join(', ')} (${gmSixes} sixes)\n${narrationRights}`;
 
   if (gameData[channelId].scene === 10 && dicePool === 1) {
     if (ones > 0) {
@@ -852,6 +947,11 @@ async function playRecordings(message) {
   }
 
   playNextRecording(0);
+}
+
+function assignRandomMoment(user, player) {
+  player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
+  user.send(`You timed out. A random Moment has been assigned: "${player.moment}"`);
 }
 
 async function askPlayersForCharacterInfo(message, channelId) {

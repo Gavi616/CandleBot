@@ -11,7 +11,7 @@ const helpEmbed = new EmbedBuilder()
 	{ name: '.gamestatus', value: 'Displays the current game\'s status (scene or character generation step).' },
     { name: '.action [-trait] [-moment] [-brink] [-hope]', value: 'Rolls dice for an action. Determines narration rights.\nExample: `.action -trait`' },
 	{ name: '.playrecordings', value: 'Plays final recordings after all characters have perished.' },
-    { name: '.cancelgame', value: 'Cancels the current game and deletes all game data after confirmation.' }
+    { name: '.cancelgame', value: 'Cancels the current game and deletes all game data (after GM confirmation).' }
   );
 
 function sendDiceEmbed(message, diceResults, imagePath) {

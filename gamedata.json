@@ -1,1 +1,45 @@
-{ }
+{
+    "973337999985217537": {
+        "dicePool": -1,
+        "scene": 0,
+        "characterGenStep": 6,
+        "players": {
+            "877545709644173372": {
+                "consent": true,
+                "playerUsername": "wyldwoodwitch",
+                "virtue": "Honesty",
+                "vice": "ambitious",
+                "moment": "When I find the light in my soul.",
+                "brink": "I have seen them, the darkness on the horizon. It gathers like insects on a decaying corpse. They wish to tear the land apart a d break the peoples fighting spirt and take advantage of the chaos. I will fight back and rise above their shadows.",
+                "name": "Luke Brooks",
+                "look": "Handsome and svelte",
+                "concept": "A model that desperately wants to be seen as a rugged cowboy.",
+                "recording": ""
+            },
+            "559527331371155458": {
+                "consent": true,
+                "playerUsername": "5h4p35h1f7",
+                "virtue": "Honesty",
+                "vice": "ambitious",
+                "moment": "To unite their region under their banner",
+                "brink": "I have seen them, the darkness on the horizon. It gathers like insects on a decaying corpse. They wish to tear the land apart a d break the peoples fighting spirt and take advantage of the chaos. I will fight back and rise above their shadows.",
+                "name": "Ditrain Tholber",
+                "look": "short and lanky with shallow eyes and big toothy smile",
+                "concept": "A lesser noble from a an outskirts region trying to garner the hope of the people",
+                "recording": ""
+            }
+        },
+        "playerOrder": [
+            "877545709644173372",
+            "559527331371155458"
+        ],
+        "gmId": "583340515869589522",
+        "gm": {
+            "consent": true,
+            "gmUsername": "gavinthegm",
+            "theme": "",
+            "brink": "I saw you steal a loaf of bread."
+        },
+        "lastSaved": "2025-03-04T21:37:52.894Z"
+    }
+}

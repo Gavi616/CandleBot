@@ -1,8 +1,8 @@
 {
     "973337999985217537": {
-        "dicePool": -1,
-        "scene": 0,
-        "characterGenStep": 6,
+        "dicePool": 2,
+        "scene": 3,
+        "characterGenStep": 8,
         "players": {
             "877545709644173372": {
                 "consent": true,

@@ -2,8 +2,8 @@ import 'dotenv/config';
 import { Client, GatewayIntentBits, EmbedBuilder, ChannelType } from 'discord.js';
 import fs from 'fs';
 import path from 'path';
+import { fileURLToPath } from 'url';
 import { helpEmbed } from './embed.js';
-import * as Jimp from 'jimp';
 
 const client = new Client({
   intents: [
@@ -19,7 +19,7 @@ const client = new Client({
 });
 
 const prefix = '.';
-const isTesting = true;
+const isTesting = false;
 
 const defaultVirtues = [
   'Courageous', 'Compassionate', 'Just', 'Wise', 'Temperate', 'Hopeful', 'Faithful', 'Loving', 'Loyal', 'Honest',
@@ -370,8 +370,8 @@ async function startGame(message) {
 async function gameStatus(message) {
   const channelId = message.channel.id;
   if (!gameData[channelId]) {
-      message.reply('No game is in progress in this channel.');
-      return;
+    message.reply('No game is in progress in this channel.');
+    return;
   }
 
   const game = gameData[channelId];
@@ -382,14 +382,14 @@ async function gameStatus(message) {
   let playerMentions = playerIds.map(playerId => `<@${playerId}>`).join(', ');
 
   const content = game.characterGenStep > 0
-      ? `Character Generation Step: ${game.characterGenStep}\nGM: ${gmMention}\nPlayers: ${playerMentions}\nUse the \`.nextstep\` command to proceed.`
-      : `Scene: ${game.scene}\nGM: ${gmMention}\nPlayers: ${playerMentions}\nUse the \`.action\` command to take action and move the game forward.`;
+    ? `Character Generation Step: ${game.characterGenStep}\nGM: ${gmMention}\nPlayers: ${playerMentions}\nUse the \`.nextstep\` command to proceed.`
+    : `Scene: ${game.scene}\nGM: ${gmMention}\nPlayers: ${playerMentions}\nUse the \`.action\` command to take action and move the game forward.`;
 
   message.channel.send({
-      content: content,
-      allowedMentions: {
-          parse: [], // Disallow parsing of mentions (no beep / notification)
-      },
+    content: content,
+    allowedMentions: {
+      parse: [], // Disallow parsing of mentions (no beep / notification)
+    },
   });
 }
 
@@ -759,35 +759,49 @@ function nextStep(message) {
 
 async function action(message, args) {
   const channelId = message.channel.id;
+  const playerId = message.author.id;
+  const playerNumericId = parseInt(playerId);
 
   if (!gameData[channelId]) {
-      message.reply('No game is in progress in this channel. Use `.startgame` to begin.');
-      return;
+    message.reply('No game is in progress in this channel. Use `.startgame` to begin.');
+    return;
   }
 
-  // Bypass character generation step check if isTesting is true
-  if (!isTesting && gameData[channelId].characterGenStep < 8) {
-      message.reply('Character generation is not complete. Please use the `.nextstep` command to proceed.');
-      return;
+  if (!gameData[channelId].players || !gameData[channelId].players[playerNumericId]) {
+    console.log(`User "${message.author.username}" (ID: ${playerId}) tried to use .action but is not a player.`);
+    return;
+  }
+
+  if (!gameData[channelId].players) {
+    gameData[channelId].players = {};
+  }
+
+  if (!gameData[channelId].players[playerId]) {
+    gameData[channelId].players[playerId] = { hopeDieActive: false };
+  }
+
+  if (gameData[channelId].characterGenStep < 8) {
+    message.reply('Character generation is not complete. Please use the `.nextstep` command to proceed.');
+    return;
   }
 
   let dicePool = gameData[channelId].dicePool;
   let hopeDieRoll = 0;
   let rerollOnes = false;
-  let numOnesRerolled = 0;
 
   if (args.includes('-trait')) {
     rerollOnes = true;
   }
 
   if (args.includes('-moment')) {
+    // ... to do
   }
 
   if (args.includes('-brink')) {
     rerollOnes = true;
   }
 
-  if (args.includes('-hope') && gameData[channelId].hopeDieActive) {
+  if (isTesting || gameData[channelId].players[playerId].hopeDieActive) {
     hopeDieRoll = Math.floor(Math.random() * 6) + 1;
   }
 
@@ -801,7 +815,8 @@ async function action(message, args) {
   }
 
   let sixes = rolls.filter((roll) => roll >= 6).length;
-  let ones = rolls.filter((roll) => roll === 1).length;
+
+  let ones = rolls.filter((roll, index) => roll === 1 && (hopeDieRoll !== 1 || index !== 0)).length;
 
   if (rerollOnes) {
     const onesIndices = rolls.reduce((indices, roll, index) => {
@@ -818,39 +833,85 @@ async function action(message, args) {
     });
 
     sixes = rolls.filter((roll) => roll >= 6).length;
-    ones = rolls.filter((roll) => roll === 1).length;
+    ones = rolls.filter((roll, index) => roll === 1 && (hopeDieRoll !== 1 || index !== 0)).length;
   }
 
-  gameData[channelId].dicePool -= rolls.length - (hopeDieRoll ? 1 : 0);
+  let playerRolls = rolls.filter((roll, index) => hopeDieRoll === 0 || index !== 0);
 
-  let response = `Rolled: ${rolls.join(', ')}\n`;
-  if (sixes > 0) {
-    response += `Success! (${sixes} sixes)\n`;
+  let diceEmojis = playerRolls.map(roll => {
+    switch (roll) {
+      case 1: return '⚀';
+      case 2: return '⚁';
+      case 3: return '⚂';
+      case 4: return '⚃';
+      case 5: return '⚄';
+      case 6: return '⚅';
+      default: return '';
+    }
+  }).join('');
+
+  let hopeDieEmoji = hopeDieRoll > 0 ? (() => {
+    switch (hopeDieRoll) {
+      case 1: return '⚀';
+      case 2: return '⚁';
+      case 3: return '⚂';
+      case 4: return '⚃';
+      case 5: return '⚄';
+      case 6: return '⚅';
+      default: return '';
+    }
+  })() : '';
+
+  const gmDiceCount = gameData[channelId].scene - 1;
+  const gmRolls = [];
+  let gmSixes = 0;
+  for (let i = 0; i < gmDiceCount; i++) {
+    const roll = Math.floor(Math.random() * 6) + 1;
+    gmRolls.push(roll);
+    if (roll >= 6) {
+      gmSixes++;
+    }
+  }
+
+  let gmDiceEmojis = gmRolls.map(roll => {
+    switch (roll) {
+      case 1: return '⚀';
+      case 2: return '⚁';
+      case 3: return '⚂';
+      case 4: return '⚃';
+      case 5: return '⚄';
+      case 6: return '⚅';
+      default: return '';
+    }
+  }).join('');
+
+  let totalSixes = sixes;
+  if (hopeDieRoll >= 5) {
+    totalSixes++;
+  }
+
+  let messageContent = `**${totalSixes > 0 ? `Success!` : `Failure.`}**\n`;
+  messageContent += `You rolled (${playerRolls.length} dice${hopeDieEmoji ? ' + Hope die' : ''}): ${diceEmojis}${hopeDieEmoji ? ` + ${hopeDieEmoji}` : ''}\n`;
+  messageContent += `GM rolled (${gmDiceCount} dice): ${gmDiceEmojis}\n`;
+
+  let remainingDice = gameData[channelId].dicePool - ones;
+
+  if (remainingDice <= 0) {
+    messageContent += "The scene ends after this action is narrated.\n";
+    gameData[channelId].scene++;
+    gameData[channelId].dicePool = gameData[channelId].scene;
   } else {
-    response += `Failure. (No sixes)\n`;
+    messageContent += `${ones > 0 ? `${ones} di${ones === 1 ? 'e' : 'ce'} removed, ${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.` : `${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.`}\n`;
+    gameData[channelId].dicePool = remainingDice;
   }
-  response += `Dice remaining: ${gameData[channelId].dicePool}\n`;
 
-  // Add the sendDiceImages calls here, inside the action function:
-  await sendDiceImages(message, rolls.filter((roll, index) => hopeDieRoll === 0 || index !== 0)); // Player Rolls
-  if (hopeDieRoll > 0) {
-    await sendDiceImages(message, [hopeDieRoll], false, true); // Hope Die
+  if (gmSixes >= totalSixes && gmDiceCount > 0) {
+    messageContent += `<@${gameData[channelId].gmUserId}, the GM, narrates this action.`;
+  } else {
+    messageContent += `<@${message.author.id}>, the acting player, narrates this action.`;
   }
-  const gmRolls = [Math.floor(Math.random() * 6) + 1, Math.floor(Math.random() * 6) + 1]; // Example GM rolls
-  await sendDiceImages(message, gmRolls, true); // GM Rolls
 
-    // Testing sendDiceImages function
-    try {
-      const testRolls = [1, 3, 6];
-      await sendDiceImages(message, testRolls); // Player rolls (black and white)
-      await sendDiceImages(message, [4], false, true); // Hope die (blue)
-      await sendDiceImages(message, [2, 5], true); // GM rolls (red)
-  } catch (testError) {
-      console.error('Error during test of sendDiceImages:', testError);
-  }
-  // End of testing code
-
-  message.channel.send(response);
+  message.channel.send({ content: messageContent, allowedMentions: { repliedUser: false } });
 }
 
 async function playRecordings(message) {
@@ -864,7 +925,7 @@ async function playRecordings(message) {
   }
 
   if (game.scene < 1) {
-    message.reply('The game has not started yet. Use `.nextstep` to begin.');
+    message.reply('The game has not started yet. Use `.nextstep` to continue.');
     return;
   }
 
@@ -979,27 +1040,25 @@ async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, q
   }
 }
 
-async function sendDiceImages(message, rolls, isGM = false, isHope = false) {
+async function sendDiceImages(message, rolls, red = false, blue = false) {
+  const __filename = fileURLToPath(import.meta.url);
+  const __dirname = path.dirname(__filename);
+
+  let files = [];
+
   for (const roll of rolls) {
-    const imagePath = path.join(__dirname, `images/dice_image_bw_${roll}.png`);
-    try {
-      const image = await Jimp.default.read(imagePath);
-
-      if (isGM) {
-        // Recolor to red
-        image.color([{ apply: 'red', params: [100] }]);
-      } else if (isHope) {
-        // Recolor to blue
-        image.color([{ apply: 'blue', params: [100] }]);
-      }
-
-      const buffer = await image.getBufferAsync(Jimp.MIME_PNG);
-      await message.channel.send({ files: [{ attachment: buffer, name: `dice_${roll}.png` }] });
-    } catch (error) {
-      console.error('Error processing dice image:', error);
-      message.channel.send(`Error displaying dice roll ${roll}.`);
+    let imageName = `dice_image_bw_${roll}.png`;
+    if (red) {
+      imageName = `dice_image_red_${roll}.png`;
+    } else if (blue) {
+      imageName = `dice_image_blue_${roll}.png`;
     }
+
+    const imagePath = path.join(__dirname, `images/${imageName}`);
+
+    files.push({ attachment: imagePath, name: imageName });
   }
+  return files;
 }
 
 async function sendCandleStatus(message, gameData) {

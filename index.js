@@ -19,7 +19,7 @@ const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.8.0';
+const version = '0.8.9';
 const isTesting = false;
 
 const defaultVirtues = [
@@ -261,26 +261,16 @@ async function startGame(message) {
 
   saveGameData();
 
+  // GM Consent
   try {
+    const gm = message.guild.members.cache.get(gmId);
     const dmChannel = await gm.user.createDM();
-
     await gm.user.send(`You have been designated as the GM for a Ten Candles game in ${message.guild.name}. Do you consent to participate? (yes/no) You have 60 seconds to respond.`);
 
-    const filter = m => {
-      const filterResult = m.author.id === gmId && m.content.toLowerCase() === 'yes';
-      return filterResult;
-    };
+    const filter = m => m.author.id === gmId && m.content.toLowerCase() === 'yes';
     const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
 
-    if (collected.size > 0) {
-      const response = collected.first().content;
-      const isConsent = response.toLowerCase() === 'yes';
-      await gm.user.send(`Received your response: "${response}". Consent: ${isConsent ? 'Granted' : 'Denied'}`);
-
-      gameData[channelId].gm.consent = isConsent;
-    } else {
-      gameData[channelId].gm.consent = false;
-    }
+    gameData[channelId].gm.consent = collected.size > 0 && collected.first().content.toLowerCase() === 'yes';
 
     if (!gameData[channelId].gm.consent) {
       message.channel.send('The GM did not consent. Game cancelled.');
@@ -300,7 +290,8 @@ async function startGame(message) {
     return;
   }
 
-  for (const playerId of playerIds) {
+  // Player Consents (Concurrent)
+  const playerConsentPromises = playerIds.map(async (playerId) => {
     try {
       const player = await message.guild.members.fetch(playerId);
       const user = player.user;
@@ -309,40 +300,30 @@ async function startGame(message) {
         message.channel.send(`Player <@${playerId}> is a bot and cannot be a player. Game cancelled.`);
         delete gameData[channelId];
         saveGameData();
-        return;
+        return false; // Indicate failure
       }
 
-      if (isTesting) { // Bypass consent for players in testing mode
+      if (isTesting) {
         gameData[channelId].players[playerId].consent = true;
         console.log(`Player <@${playerId}> consent bypassed in testing mode.`);
-      } else {
-        const dmChannel = await user.createDM();
-
-        await user.send(`You have been added as a player to a Ten Candles game in ${message.guild.name}. Do you consent to participate? (yes/no) You have 60 seconds to respond.`);
-
-        const filter = m => {
-          const filterResult = m.author.id === playerId && m.content.toLowerCase() === 'yes';
-          return filterResult;
-        };
-        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
-
-        if (collected.size > 0) {
-          const response = collected.first().content;
-          const isConsent = response.toLowerCase() === 'yes';
-          await user.send(`Received your response: "${response}". Consent: ${isConsent ? 'Granted' : 'Denied'}`);
-
-          gameData[channelId].players[playerId].consent = isConsent;
-        } else {
-          gameData[channelId].players[playerId].consent = false;
-        }
-
-        if (!gameData[channelId].players[playerId].consent) {
-          message.channel.send(`Player <@${playerId}> did not consent. Game cancelled.`);
-          delete gameData[channelId];
-          saveGameData();
-          return;
-        }
+        return true; // Indicate success
       }
+
+      const dmChannel = await user.createDM();
+      await user.send(`You have been added as a player to a Ten Candles game in ${message.guild.name}. Do you consent to participate? (yes/no) You have 60 seconds to respond.`);
+
+      const filter = m => m.author.id === playerId && m.content.toLowerCase() === 'yes';
+      const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+
+      gameData[channelId].players[playerId].consent = collected.size > 0 && collected.first().content.toLowerCase() === 'yes';
+
+      if (!gameData[channelId].players[playerId].consent) {
+        message.channel.send(`Player <@${playerId}> did not consent. Game cancelled.`);
+        delete gameData[channelId];
+        saveGameData();
+        return false; // Indicate failure
+      }
+      return true; // Indicate success
     } catch (error) {
       console.error(`Error requesting player ${playerId} consent:`, error);
       if (error.message === 'time') {
@@ -352,8 +333,15 @@ async function startGame(message) {
       }
       delete gameData[channelId];
       saveGameData();
-      return;
+      return false; // Indicate failure
     }
+  });
+
+  const playerConsentResults = await Promise.all(playerConsentPromises);
+
+  if (playerConsentResults.includes(false)) {
+    // A player did not consent or an error occurred
+    return; // Stop the startGame function
   }
 
   message.channel.send('**The World of Ten Candles**\n' +
@@ -453,7 +441,8 @@ async function sendCharacterGenStep(message, channelId) {
   if (step === 1) {
     message.channel.send('\n**Step One: Players Write Traits (light three candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have 5 minutes to complete this step.');
     sendCandleStatus(message, 3);
-    for (const playerId of playerOrder) {
+
+    const traitPromises = playerOrder.map(async (playerId) => {
       try {
         const player = await message.guild.members.fetch(playerId);
         const user = player.user;
@@ -478,10 +467,12 @@ async function sendCharacterGenStep(message, channelId) {
         console.error(`Error handling Virtue and Vice for player ${playerId}:`, error);
         assignRandomTraits(user, players[playerId]);
       }
-    }
+    });
+    await Promise.all(traitPromises);
     saveGameData();
+
   } else if (step === 2) {
-    const swappedTraits = swapTraits(players, gameData[channelId], message.guild); // Pass guild object
+    const swappedTraits = swapTraits(players, gameData[channelId], message.guild);
     gameData[channelId].players = swappedTraits;
     saveGameData();
     message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. Use `.nextstep` when you are ready to continue.');
@@ -495,7 +486,7 @@ async function sendCharacterGenStep(message, channelId) {
     message.channel.send('**Step Four: Players Plan Moments (light three more candles)**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.\nYou have 5 minutes to respond.');
 
     sendCandleStatus(message, 6);
-    for (const playerId of playerOrder) {
+    const momentPromises = playerOrder.map(async (playerId) => {
       try {
         const player = await message.guild.members.fetch(playerId);
         const user = player.user;
@@ -514,7 +505,8 @@ async function sendCharacterGenStep(message, channelId) {
         console.error(`Error handling Moment for player ${playerId}:`, error);
         assignRandomMoment(user, gameData[channelId].players[playerId]);
       }
-    }
+    });
+    await Promise.all(momentPromises);
     saveGameData();
   } else if (step === 5) {
     message.channel.send('**Step Five: Players and GM Discover Brinks (light three more candles)**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
@@ -628,7 +620,7 @@ async function sendCharacterGenStep(message, channelId) {
     saveGameData();
     message.channel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down.');
 
-    for (const playerId of playerOrder) {
+    const brinkSwapPromises = playerOrder.map(async (playerId) => {
       try {
         const player = await message.guild.members.fetch(playerId);
         const user = player.user;
@@ -636,7 +628,10 @@ async function sendCharacterGenStep(message, channelId) {
       } catch (error) {
         console.error(`Error DMing player ${playerId} for swapped brink:`, error);
       }
-    }
+    });
+
+    await Promise.all(brinkSwapPromises);
+
     try {
       const gm = message.guild.members.cache.get(gmId);
       const user = gm.user;
@@ -723,20 +718,17 @@ async function swapTraits(players, game, guild) {
     swappedPlayers[nextPlayerId].vice = players[currentPlayerId].vice;
   }
 
-  for (let i = 0; i < playerOrder.length; i++) {
-    const recipientId = playerOrder[i];
-    const senderId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length]; // Get previous player (wrapping around)
-
+  const swapTraitPromises = playerOrder.map(async (recipientId, i) => {
+    const senderId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length];
     try {
       const recipientUser = (await guild.members.fetch(recipientId)).user;
-
       await recipientUser.send(`You received the Virtue "${swappedPlayers[recipientId].virtue}" from <@${senderId}>.`);
       await recipientUser.send(`You received the Vice "${swappedPlayers[recipientId].vice}" from <@${senderId}>.`);
-
     } catch (error) {
       console.error(`Error sending trait swap DMs to player ${recipientId}:`, error);
     }
-  }
+  });
+  await Promise.all(swapTraitPromises);
   return swappedPlayers;
 }
 
@@ -834,7 +826,7 @@ async function action(message, args) {
     hopeDieRoll = Math.floor(Math.random() * 6) + 1;
   }
 
-  if (useVitrue || useVice) {
+  if (useVirtue || useVice) {
     rerollOnes = true;
   }
 

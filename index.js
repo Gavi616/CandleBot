@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import { Client, GatewayIntentBits, EmbedBuilder, ChannelType } from 'discord.js';
 import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
+//import path from 'path';
+//import { fileURLToPath } from 'url';
 import { helpEmbed } from './embed.js';
 
 const client = new Client({
@@ -19,6 +19,7 @@ const client = new Client({
 });
 
 const prefix = '.';
+const version = '0.8.0';
 const isTesting = false;
 
 const defaultVirtues = [
@@ -97,7 +98,8 @@ function printActiveGames() {
 }
 
 client.once('ready', () => {
-  console.log('Ten Candles Bot is ready!');
+  const startupTimestamp = new Date().toLocaleString();
+  console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
   try {
     loadGameData();
   } catch (loadError) {
@@ -229,6 +231,7 @@ async function startGame(message) {
     scene: 0,
     characterGenStep: 1,
     players: {},
+    diceLost: 0,
     playerOrder: playerIds,
     gmId: gmId,
     gm: {
@@ -243,8 +246,11 @@ async function startGame(message) {
       consent: false,
       playerUsername: message.guild.members.cache.get(playerId).user.username,
       virtue: '',
+      virtueBurned: false,
       vice: '',
+      viceBurned: false,
       moment: '',
+      momentBurned: false,
       brink: '',
       name: '',
       look: '',
@@ -445,8 +451,8 @@ async function sendCharacterGenStep(message, channelId) {
   const gmId = gameData[channelId].gmId;
 
   if (step === 1) {
-    message.channel.send('\n**Step One: Players Write Traits (Light Three Candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have 5 minutes to complete this step.');
-
+    message.channel.send('\n**Step One: Players Write Traits (light three candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have 5 minutes to complete this step.');
+    sendCandleStatus(message, 3);
     for (const playerId of playerOrder) {
       try {
         const player = await message.guild.members.fetch(playerId);
@@ -486,8 +492,9 @@ async function sendCharacterGenStep(message, channelId) {
     saveGameData();
     sendCharacterGenStep(message, channelId);
   } else if (step === 4) {
-    message.channel.send('**Step Four: Players Plan Moments (Light Three Candles)**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.\nYou have 5 minutes to respond.');
+    message.channel.send('**Step Four: Players Plan Moments (light three more candles)**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.\nYou have 5 minutes to respond.');
 
+    sendCandleStatus(message, 6);
     for (const playerId of playerOrder) {
       try {
         const player = await message.guild.members.fetch(playerId);
@@ -510,8 +517,9 @@ async function sendCharacterGenStep(message, channelId) {
     }
     saveGameData();
   } else if (step === 5) {
-    message.channel.send('**Step Five: Players and GM Discover Brinks (Light Three Candles)**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
+    message.channel.send('**Step Five: Players and GM Discover Brinks (light three more candles)**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
 
+    sendCandleStatus(message, 9);
     const players = gameData[channelId].players;
     const playerOrder = gameData[channelId].playerOrder;
     const gmId = gameData[channelId].gmId;
@@ -637,7 +645,8 @@ async function sendCharacterGenStep(message, channelId) {
       console.error(`Error DMing GM ${gmId} for swapped brink:`, error);
     }
   } else if (step === 7) {
-    message.channel.send('**Step Seven: Inventory Supplies (Light the Final Candle)**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). **It begins.**');
+    message.channel.send('**Step Seven: Inventory Supplies (light the final candle)**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). **It begins.**');
+    sendCandleStatus(message, 10);
   } else if (step === 8) {
     message.channel.send('**Final Recordings**\nPlayers, please check your DMs to send in your final recordings (audio or text).');
 
@@ -671,7 +680,7 @@ async function sendCharacterGenStep(message, channelId) {
 
     for (const userId in players) {
       try {
-        client.users.cache.get(userId).send('Please record your final message for the world you will inevitably leave behind in-character. Send it via DM as an audio file or a text message when prompted.');
+        client.users.cache.get(userId).send('Please record your final message for the world, in character. Send it via DM as an audio file or a text message when prompted.');
       } catch (error) {
         console.error(`Error DMing user ${userId}:`, error);
       }
@@ -681,9 +690,11 @@ async function sendCharacterGenStep(message, channelId) {
       '**Game Start**\n' +
       'Character generation is complete! Ten candles are lit, and the game begins.\n\n' +
       '**How to Use `.action`:**\n' +
-      'Use the `.action` command to perform actions. Use modifiers such as `-trait`, `-moment`, `-brink`, and `-hope` as needed.\n' +
-      'Examples: `.action -trait || .action`\n\n' +
-      'The candles will be extinguished as the scenes progress.\n\n' +
+      'Use the `.action` command to perform actions. Use modifiers such as `-burnvirtue`, `-burnvice`, `-burnmoment` and `-brink` as needed.\n' +
+      'Buring a Virtue or Vice from the top of your stack allows your `.action` to reroll all ones.\n' +
+      'Buring your Moment from the top of your stack will give you a valuable Hope die is the `.action` succeeds!\n' +
+      'Example(s): `.action` or `.action -burnvice`\n\n' +
+      'Candles will be extinguished as the scenes progress.\n\n' +
       '**When to Use `.playrecordings`:**\n' +
       'Once all Player Characters have perished, the GM should use the `.playrecordings` command to play their final messages and close the game session.'
     );
@@ -748,7 +759,7 @@ function nextStep(message) {
   }
 
   if (gameData[channelId].characterGenStep >= 8) {
-    message.reply('Character generation is already complete.');
+    message.reply('Character generation is already complete. Use `.action` to continue the game.');
     return;
   }
 
@@ -781,7 +792,7 @@ async function action(message, args) {
   }
 
   if (gameData[channelId].characterGenStep < 8) {
-    message.reply('Character generation is not complete. Please use the `.nextstep` command to proceed.');
+    message.reply('Character generation is not complete. Please use `.nextstep` to proceed.');
     return;
   }
 
@@ -789,20 +800,42 @@ async function action(message, args) {
   let hopeDieRoll = 0;
   let rerollOnes = false;
 
-  if (args.includes('-trait')) {
-    rerollOnes = true;
+  let useMoment = false;
+  let useVirtue = false;
+  let useVice = false;
+  let useBrink = false;
+
+  if (args.includes('-burnmoment') && !gameData[channelId].players[playerNumericId].hopeDieActive && !gameData[channelId].players[playerNumericId].momentBurned) {
+    message.channel.send(`<@${playerId}>, please burn your Moment now.`);
+    gameData[channelId].players[playerNumericId].momentBurned = true;
+    useMoment = true;
   }
 
-  if (args.includes('-moment')) {
-    // ... to do
+  if (args.includes('-burnvirtue') && !gameData[channelId].players[playerNumericId].virtueBurned) {
+    message.channel.send(`<@${playerId}>, please burn your Virtue now.`);
+    gameData[channelId].players[playerNumericId].virtueBurned = true;
+    useVirtue = true;
+  }
+
+  if (args.includes('-burnvice') && !gameData[channelId].players[playerNumericId].viceBurned) {
+    message.channel.send(`<@${playerId}>, please burn your Vice now.`);
+    gameData[channelId].players[playerNumericId].viceBurned = true;
+    rerollOnes = true;
   }
 
   if (args.includes('-brink')) {
-    rerollOnes = true;
+    useBrink = true;
+    if (gameData[channelId].players[playerNumericId].hopeDieActive) {
+      message.channel.send(`<@${playerId}>, you are embracing your Brink. If this roll fails, you will lose your Hope die.`);
+    }
   }
 
   if (isTesting || gameData[channelId].players[playerId].hopeDieActive) {
     hopeDieRoll = Math.floor(Math.random() * 6) + 1;
+  }
+
+  if (useVitrue || useVice) {
+    rerollOnes = true;
   }
 
   let rolls = [];
@@ -890,6 +923,38 @@ async function action(message, args) {
     totalSixes++;
   }
 
+  // Moment success check
+  if (useMoment && totalSixes > 0) {
+    gameData[channelId].players[playerNumericId].hopeDieActive = true;
+    message.channel.send(`<@${playerId}> has successfully achieved their Moment and gains a Hope die for future rolls.`);
+  } else if (useMoment && totalSixes === 0) {
+    gameData[channelId].players[playerNumericId].hopeDieActive = false;
+    message.channel.send(`<@${playerId}> has failed to live their Moment and cannot gain a Hope die.`);
+  }
+
+  // Brink messages
+  if (useBrink) {
+    message.channel.send(`<@${playerId}> embraces their Brink!`);
+  }
+
+  if (totalSixes === 0) {
+    // Failed Roll - Brink Reminder
+    if (gameData[channelId].players[playerNumericId].momentBurned &&
+      gameData[channelId].players[playerNumericId].virtueBurned &&
+      gameData[channelId].players[playerNumericId].viceBurned) {
+      message.channel.send(`<@${playerId}>, you have failed this roll. You can embrace your Brink to reroll all dice.`);
+    }
+    gameData[channelId].diceLost = ones;
+  } else {
+    gameData[channelId].diceLost = 0;
+  }
+
+  // Hope Die Loss Check
+  if (useBrink && totalSixes === 0 && gameData[channelId].players[playerNumericId].hopeDieActive) {
+    gameData[channelId].players[playerNumericId].hopeDieActive = false;
+    message.channel.send(`<@${playerId}>, you have failed your Brink roll and lost your Hope die.`);
+  }
+
   let messageContent = `**${totalSixes > 0 ? `Success!` : `Failure.`}**\n`;
   messageContent += `You rolled (${playerRolls.length} dice${hopeDieEmoji ? ' + Hope die' : ''}): ${diceEmojis}${hopeDieEmoji ? ` + ${hopeDieEmoji}` : ''}\n`;
   messageContent += `GM rolled (${gmDiceCount} dice): ${gmDiceEmojis}\n`;
@@ -897,11 +962,12 @@ async function action(message, args) {
   let remainingDice = gameData[channelId].dicePool - ones;
 
   if (remainingDice <= 0) {
-    messageContent += "The scene ends after this action is narrated.\n";
+    messageContent += "A candle will be extinguished ending the scene after this action is narrated.\n";
     gameData[channelId].scene++;
     gameData[channelId].dicePool = gameData[channelId].scene;
+    sendCandleStatus(message, 11 - gameData[channelId].scene);
   } else {
-    messageContent += `${ones > 0 ? `${ones} di${ones === 1 ? 'e' : 'ce'} removed, ${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.` : `${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.`}\n`;
+    messageContent += `${ones > 0 ? `${ones} di${ones === 1 ? 'e' : 'ce'} removed from the communal dice pool. ${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.` : `${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.`}\n`;
     gameData[channelId].dicePool = remainingDice;
   }
 
@@ -993,8 +1059,8 @@ async function askPlayersForCharacterInfo(message, channelId) {
 
   for (const playerId of playerIds) {
     try {
-      const player = await message.guild.members.fetch(playerId); // Fetch the member
-      const user = player.user; // Get the user object
+      const player = await message.guild.members.fetch(playerId);
+      const user = player.user;
 
       // Ask for Name
       await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'name', "What's your character's name or nickname?");
@@ -1040,45 +1106,11 @@ async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, q
   }
 }
 
-async function sendDiceImages(message, rolls, red = false, blue = false) {
-  const __filename = fileURLToPath(import.meta.url);
-  const __dirname = path.dirname(__filename);
-
-  let files = [];
-
-  for (const roll of rolls) {
-    let imageName = `dice_image_bw_${roll}.png`;
-    if (red) {
-      imageName = `dice_image_red_${roll}.png`;
-    } else if (blue) {
-      imageName = `dice_image_blue_${roll}.png`;
-    }
-
-    const imagePath = path.join(__dirname, `images/${imageName}`);
-
-    files.push({ attachment: imagePath, name: imageName });
-  }
-  return files;
-}
-
-async function sendCandleStatus(message, gameData) {
-  const channelId = message.channel.id;
-  if (!gameData[channelId]) return;
-
-  const scene = gameData[channelId].scene;
-
-  for (let i = 10; i >= 1; i--) {
-    let imagePath;
-    if (i >= scene) {
-      imagePath = path.join(__dirname, 'images/lit_candle.gif');
-    } else {
-      imagePath = path.join(__dirname, 'images/unlit_candle.gif');
-    }
-    try {
-      await message.channel.send({ files: [imagePath] });
-    } catch (error) {
-      console.error('Error sending candle image:', error);
-    }
+async function sendCandleStatus(message, litCandles) {
+  if (litCandles > 0) {
+    message.channel.send(`There are ${litCandles} lit candle${litCandles === 1 ? '' : 's'}.`);
+  } else {
+    message.channel.send('All candles have been extinguished.');
   }
 }
 

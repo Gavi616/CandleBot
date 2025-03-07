@@ -19,7 +19,7 @@ const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.8.9';
+const version = '0.8.999';
 const isTesting = false;
 
 const defaultVirtues = [
@@ -112,12 +112,34 @@ client.on('messageCreate', async (message) => {
 
   const channelId = message.channel.id;
   const userId = message.author.id;
+  const userName = message.author.username; // Get username
 
   if (message.channel.type !== ChannelType.DM) {
     if (message.content.startsWith(prefix)) {
       const args = message.content.slice(prefix.length).trim().split(/ +/);
       const command = args.shift().toLowerCase();
 
+      // Check if the command requires a game in progress
+      const gameRequiredCommands = ['action', 'playrecordings', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died'];
+
+      if (gameRequiredCommands.includes(command)) {
+        // Check if a game exists in the channel
+        if (!gameData[channelId]) {
+          message.author.send("No game is in progress in that channel.");
+          console.log(`${userName} (${userId}) tried to use .${command} in ${message.channel.name}, but there is no game.`);
+          return; // Stop processing the command
+        }
+
+        // Check if the user is a participant (player or GM)
+        const game = gameData[channelId];
+        if (!game.players[userId] && game.gmId !== userId) {
+          message.author.send("You are not a participant in that game.");
+          console.log(`${userName} (${userId}) tried to use .${command} in ${message.channel.name}, but is not a participant.`);
+          return; // Stop processing the command
+        }
+      }
+
+      // Command handling logic
       if (command === 'help') {
         message.channel.send({ embeds: [helpEmbed.help] });
       } else if (command === 'startgame') {
@@ -130,8 +152,30 @@ client.on('messageCreate', async (message) => {
         nextStep(message);
       } else if (command === 'gamestatus') {
         gameStatus(message);
+      } else if (command === 'removeplayer') {
+        removePlayer(message, args);
+      } else if (command === 'leavegame') {
+        leaveGame(message, args);
       } else if (command === 'cancelgame') {
         cancelGame(message);
+      } else if (command === 'died') {
+        died(message, args);
+      }
+    }
+  }
+
+  // .x command listener (for Direct Messaging)
+  if (message.channel.type === ChannelType.DM) {
+    const game = Object.values(gameData).find(game => {
+      if (game.gmId === userId) return true;
+      if (game.players && game.players[userId]) return true;
+      return false;
+    });
+
+    if (game && message.content.toLowerCase() === '.x') {
+      const gameChannel = client.channels.cache.get(Object.keys(gameData).find(key => gameData[key] === game));
+      if (gameChannel) {
+        gameChannel.send(`One or more players and/or the GM are ready to move on, please wrap up the scene quickly.`);
       }
     }
   } else {
@@ -256,6 +300,8 @@ async function startGame(message) {
       look: '',
       concept: '',
       recording: '',
+      hopeDice: 0,
+      isDead: false,
     };
   }
 
@@ -265,12 +311,12 @@ async function startGame(message) {
   try {
     const gm = message.guild.members.cache.get(gmId);
     const dmChannel = await gm.user.createDM();
-    await gm.user.send(`You have been designated as the GM for a Ten Candles game in ${message.guild.name}. Do you consent to participate? (yes/no) You have 60 seconds to respond.`);
+    await gm.user.send(`You have been designated as the GM role for a Ten Candles game in ${message.guild.name}. Do you consent to participate? (y/n) You have 60 seconds to respond.`);
 
-    const filter = m => m.author.id === gmId && m.content.toLowerCase() === 'yes';
-    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+    const gmFilter = m => m.author.id === gmId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
+    const gmCollected = await dmChannel.awaitMessages({ gmFilter, max: 1, time: 60000, errors: ['time'] });
 
-    gameData[channelId].gm.consent = collected.size > 0 && collected.first().content.toLowerCase() === 'yes';
+    gameData[channelId].gm.consent = gmCollected.size > 0 && gmCollected.first().content.toLowerCase().startsWith('y');
 
     if (!gameData[channelId].gm.consent) {
       message.channel.send('The GM did not consent. Game cancelled.');
@@ -310,12 +356,12 @@ async function startGame(message) {
       }
 
       const dmChannel = await user.createDM();
-      await user.send(`You have been added as a player to a Ten Candles game in ${message.guild.name}. Do you consent to participate? (yes/no) You have 60 seconds to respond.`);
+      await user.send(`You have been added as a player to a Ten Candles game in ${message.guild.name}. Do you consent to participate? (y/n) You have 60 seconds to respond.`);
 
-      const filter = m => m.author.id === playerId && m.content.toLowerCase() === 'yes';
+      const filter = m => m.author.id === playerId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
       const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
 
-      gameData[channelId].players[playerId].consent = collected.size > 0 && collected.first().content.toLowerCase() === 'yes';
+      gameData[channelId].players[playerId].consent = collected.size > 0 && collected.first().content.toLowerCase().startsWith('y');
 
       if (!gameData[channelId].players[playerId].consent) {
         message.channel.send(`Player <@${playerId}> did not consent. Game cancelled.`);
@@ -389,34 +435,22 @@ async function gameStatus(message) {
 
 async function cancelGame(message) {
   const channelId = message.channel.id;
-  const game = gameData[channelId];
-
-  if (!game) {
-    message.reply('No game is in progress in this channel.');
-    return;
-  }
-
-  const gmId = game.gmId;
-  const gm = message.guild.members.cache.get(gmId);
+  const gmId = gameData[channelId].gmId;
 
   try {
+    const gm = message.guild.members.cache.get(gmId);
     const dmChannel = await gm.user.createDM();
-    await gm.user.send(`Are you sure you want to cancel the game in ${message.channel.name}? (yes/no) You have 60 seconds to respond.`);
+    await gm.user.send(`Are you sure you want to cancel the game in ${message.channel.name}? (y/n) You have 60 seconds to respond.`);
 
-    const filter = m => m.author.id === gmId && ['yes', 'no'].includes(m.content.toLowerCase());
+    const filter = m => m.author.id === gmId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
     const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
 
-    if (collected.size > 0) {
-      const response = collected.first().content.toLowerCase();
-      if (response === 'yes') {
-        delete gameData[channelId];
-        saveGameData();
-        message.channel.send(`Game in ${message.channel.name} has been cancelled by the GM.`);
-      } else {
-        message.channel.send('Game cancellation was aborted by GM.');
-      }
+    if (collected.size > 0 && collected.first().content.toLowerCase().startsWith('y')) {
+      delete gameData[channelId];
+      saveGameData();
+      message.channel.send(`Game in ${message.channel.name} has been cancelled by the GM.`);
     } else {
-      message.channel.send(`Game in ${message.channel.name} cancellation timed out. Game not cancelled.`);
+      message.channel.send('Game cancellation was aborted by GM.');
     }
   } catch (error) {
     console.error('Error requesting GM confirmation to cancel game:', error);
@@ -429,6 +463,140 @@ function getVirtualTableOrder(game, withGM = true) {
     return [...game.playerOrder, game.gmId];
   } else {
     return [...game.playerOrder];
+  }
+}
+
+async function died(message, args) {
+  const channelId = message.channel.id;
+  const game = gameData[channelId];
+
+  if (!game) {
+      message.reply('No game is in progress in this channel.');
+      return;
+  }
+
+  if (message.author.id !== game.gmId) {
+      message.reply('Only the GM can use this command.');
+      return;
+  }
+
+  if (args.length < 1) {
+      message.reply('Usage: .died <Player ID> [-martyr] [Cause of Death]');
+      return;
+  }
+
+  const playerIdToDie = args[0].replace(/<@!?(\d+)>/, '$1');
+  const isMartyr = args.includes('-martyr');
+  const causeOfDeath = args.slice(1).filter(arg => arg !== '-martyr').join(' ') || 'an unknown cause.';
+
+  if (!game.players[playerIdToDie]) {
+      message.reply('Invalid Player ID. Please mention a valid player in this game.');
+      return;
+  }
+
+  game.players[playerIdToDie].isDead = true;
+
+  if (isMartyr && game.players[playerIdToDie].hopeDice > 0) {
+      // Martyrdom and Hope Die Gifting
+      await handleMartyrdom(message, playerIdToDie, game);
+  }
+
+  saveGameData();
+
+  const playerName = game.players[playerIdToDie].name;
+  const martyrMessage = isMartyr ? ' (Martyred)' : '';
+  message.channel.send(`**${playerName || `<@${playerIdToDie}>'s unnamed character`} has died from ${causeOfDeath}${martyrMessage}!**\nPlease work with the GM to narrate your character's death.`);
+}
+
+async function handleMartyrdom(message, playerIdToDie, game) {
+  const player = game.players[playerIdToDie];
+  const dmChannel = await message.guild.members.cache.get(playerIdToDie).user.createDM();
+
+  await dmChannel.send('Choose a player to gift your Hope die(s) to (mention them):');
+
+  const filter = m => m.author.id === playerIdToDie && m.mentions.users.size > 0;
+  const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+
+  if (collected.size > 0) {
+      const recipientId = collected.first().mentions.users.first().id;
+
+      if (game.players[recipientId]) {
+          game.players[recipientId].hopeDice += player.hopeDice;
+          player.hopeDice = 0; // Remove hope dice from the dead player.
+          saveGameData();
+          await dmChannel.send(`Your Hope die(s) have been gifted to <@${recipientId}>.`);
+          message.channel.send(`<@${playerIdToDie}> has gifted their Hope die(s) to <@${recipientId}>.`);
+      } else {
+          await dmChannel.send('Invalid recipient.');
+      }
+  } else {
+      await dmChannel.send('No recipient chosen.');
+  }
+}
+
+async function leaveGame(message, args) {
+  const channelId = message.channel.id;
+  const game = gameData[channelId];
+  const playerId = message.author.id;
+
+  if (!game) {
+    message.reply('No game is in progress in this channel.');
+    return;
+  }
+
+  if (!game.players[playerId]) {
+    message.reply('You are not a player in this game.');
+    return;
+  }
+
+  const reason = args.join(' ') || 'No reason provided.';
+
+  delete game.players[playerId];
+  game.playerOrder = game.playerOrder.filter(id => id !== playerId);
+
+  saveGameData();
+
+  message.channel.send(`<@${playerId}> has left the game. Reason: ${reason}`);
+}
+
+async function removePlayer(message, args) {
+  const channelId = message.channel.id;
+  const game = gameData[channelId];
+
+  if (!game) {
+    message.reply('No game is in progress in this channel.');
+    return;
+  }
+
+  if (message.author.id !== game.gmId) {
+    message.reply('Only the GM can use this command.');
+    return;
+  }
+
+  if (args.length < 1) {
+    message.reply('Usage: .removeplayer <Player ID> [Reason]');
+    return;
+  }
+
+  const playerIdToRemove = args[0].replace(/<@!?(\d+)>/, '$1'); // Extract player ID from mention
+
+  if (!game.players[playerIdToRemove]) {
+    message.reply('Invalid Player ID. Please mention a valid player in this game.');
+    return;
+  }
+
+  let reason = args.slice(1).join(' '); // Extract the reason (if any)
+
+  delete game.players[playerIdToRemove];
+
+  game.playerOrder = game.playerOrder.filter(id => id !== playerIdToRemove);
+
+  saveGameData();
+
+  if (reason) {
+    message.channel.send(`<@${playerIdToRemove}> has been removed from the game. Reason: ${reason}`);
+  } else {
+    message.channel.send(`<@${playerIdToRemove}> has been removed from the game.`);
   }
 }
 
@@ -795,7 +963,8 @@ async function action(message, args) {
   let useMoment = false;
   let useVirtue = false;
   let useVice = false;
-  let useBrink = false;
+
+  gameData[channelId].players[playerNumericId].brinkUsedThisRoll = false;
 
   if (args.includes('-burnmoment') && !gameData[channelId].players[playerNumericId].hopeDieActive && !gameData[channelId].players[playerNumericId].momentBurned) {
     message.channel.send(`<@${playerId}>, please burn your Moment now.`);
@@ -815,13 +984,6 @@ async function action(message, args) {
     rerollOnes = true;
   }
 
-  if (args.includes('-brink')) {
-    useBrink = true;
-    if (gameData[channelId].players[playerNumericId].hopeDieActive) {
-      message.channel.send(`<@${playerId}>, you are embracing your Brink. If this roll fails, you will lose your Hope die.`);
-    }
-  }
-
   if (isTesting || gameData[channelId].players[playerId].hopeDieActive) {
     hopeDieRoll = Math.floor(Math.random() * 6) + 1;
   }
@@ -832,7 +994,11 @@ async function action(message, args) {
 
   let rolls = [];
   if (hopeDieRoll) {
-    rolls.push(hopeDieRoll);
+      rolls.push(hopeDieRoll);
+  }
+  //Roll all hope dice.
+  for (let i = 0; i < gameData[channelId].players[playerNumericId].hopeDice; i++){
+      rolls.push(Math.floor(Math.random() * 6) + 1);
   }
 
   for (let i = 0; i < dicePool; i++) {
@@ -842,6 +1008,89 @@ async function action(message, args) {
   let sixes = rolls.filter((roll) => roll >= 6).length;
 
   let ones = rolls.filter((roll, index) => roll === 1 && (hopeDieRoll !== 1 || index !== 0)).length;
+
+  // --- Add Trait Burning Logic Here ---
+  if (totalPlayerSixes === 0 && ones > 0) { // Check for ones and failed action.
+    const player = gameData[channelId].players[playerId];
+
+    if ((!player.virtueBurned && player.virtue) || (!player.viceBurned && player.vice)) {
+      await message.reply('You rolled at least one 1 and failed. Would you like to burn an unburnt Virtue or Vice to reroll all ones? (y/n)');
+
+      const filter = m => m.author.id === playerId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
+      const collected = await message.channel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+
+      if (collected.size > 0 && collected.first().content.toLowerCase().startsWith('y')) {
+        await message.reply('Which trait would you like to burn? (virtue/vice)');
+
+        const traitFilter = m => m.author.id === playerId && (m.content.toLowerCase().startsWith('v'));
+        const traitCollected = await message.channel.awaitMessages({ traitFilter, max: 1, time: 60000, errors: ['time'] });
+
+        if (traitCollected.size > 0 && traitCollected.first().content.toLowerCase().startsWith('v')) {
+          if (!player.virtueBurned && player.virtue) {
+            player.virtueBurned = true;
+            saveGameData();
+            message.reply('Virtue burned! Please narrate how this impacts the scene.');
+          } else if (!player.viceBurned && player.vice) {
+            player.viceBurned = true;
+            saveGameData();
+            message.reply('Vice burned! Please narrate how this impacts the scene.');
+          }
+
+          // Reroll ones
+          const rerollDice = [];
+          for (let i = 0; i < ones; i++) {
+            rerollDice.push(Math.floor(Math.random() * 6) + 1);
+          }
+          //replace the ones with the new rolls.
+          let onesIndex = 0;
+          for (let i = 0; i < rolls.length; i++) {
+            if (rolls[i] === 1) {
+              rolls[i] = rerollDice[onesIndex];
+              onesIndex++;
+            }
+          }
+          messageContent += `\n${player.playerUsername} rerolled ones: ${rerollDice.join(', ')}`;
+          ones = 0;
+          for (const die of rolls) {
+            if (die === 1) {
+              ones++;
+            }
+          }
+        } else if (traitCollected.size > 0 && traitCollected.first().content.toLowerCase().startsWith('v') === false) {
+          if (!player.viceBurned && player.vice) {
+            player.viceBurned = true;
+            saveGameData();
+            message.reply('Vice burned! Please narrate how this impacts the scene.');
+          } else if (!player.virtueBurned && player.virtue) {
+            player.virtueBurned = true;
+            saveGameData();
+            message.reply('Virtue burned! Please narrate how this impacts the scene.');
+          }
+
+          // Reroll ones
+          const rerollDice = [];
+          for (let i = 0; i < ones; i++) {
+            rerollDice.push(Math.floor(Math.random() * 6) + 1);
+          }
+          //replace the ones with the new rolls.
+          let onesIndex = 0;
+          for (let i = 0; i < rolls.length; i++) {
+            if (rolls[i] === 1) {
+              rolls[i] = rerollDice[onesIndex];
+              onesIndex++;
+            }
+          }
+          messageContent += `\n${player.playerUsername} rerolled ones: ${rerollDice.join(', ')}`;
+          ones = 0;
+          for (const die of rolls) {
+            if (die === 1) {
+              ones++;
+            }
+          }
+        }
+      }
+    }
+  }
 
   if (rerollOnes) {
     const onesIndices = rolls.reduce((indices, roll, index) => {
@@ -910,66 +1159,133 @@ async function action(message, args) {
     }
   }).join('');
 
-  let totalSixes = sixes;
+  let totalPlayerSixes = sixes;
   if (hopeDieRoll >= 5) {
-    totalSixes++;
+    totalPlayerSixes++;
   }
 
-  // Moment success check
-  if (useMoment && totalSixes > 0) {
-    gameData[channelId].players[playerNumericId].hopeDieActive = true;
-    message.channel.send(`<@${playerId}> has successfully achieved their Moment and gains a Hope die for future rolls.`);
-  } else if (useMoment && totalSixes === 0) {
-    gameData[channelId].players[playerNumericId].hopeDieActive = false;
-    message.channel.send(`<@${playerId}> has failed to live their Moment and cannot gain a Hope die.`);
+    // Moment success check
+    if (useMoment && totalPlayerSixes > 0) {
+      gameData[channelId].players[playerNumericId].hopeDice++;
+      message.channel.send(`<@${playerId}> has successfully achieved their Moment and gains a Hope die for future rolls.`);
+  } else if (useMoment && totalPlayerSixes === 0) {
+      gameData[channelId].players[playerNumericId].hopeDice = 0;
+      message.channel.send(`<@${playerId}> has failed to live their Moment and loses all hope dice.`);
   }
 
-  // Brink messages
-  if (useBrink) {
-    message.channel.send(`<@${playerId}> embraces their Brink!`);
-  }
-
-  if (totalSixes === 0) {
-    // Failed Roll - Brink Reminder
+  if (totalPlayerSixes === 0) {
+    // Failed Roll - Brink Prompt (DM)
     if (gameData[channelId].players[playerNumericId].momentBurned &&
       gameData[channelId].players[playerNumericId].virtueBurned &&
-      gameData[channelId].players[playerNumericId].viceBurned) {
-      message.channel.send(`<@${playerId}>, you have failed this roll. You can embrace your Brink to reroll all dice.`);
+      gameData[channelId].players[playerNumericId].viceBurned &&
+      !gameData[channelId].players[playerNumericId].brinkUsedThisRoll) { // Check the flag
+
+      try {
+        const player = await message.guild.members.fetch(playerId);
+        const dmChannel = await player.user.createDM();
+
+        await dmChannel.send('You have failed this `.action` roll. Embrace your Brink for a full reroll? (y/n) You have 60 seconds to decide.');
+
+        const filter = m => m.author.id === playerId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
+        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+
+        if (collected.size > 0 && collected.first().content.toLowerCase() === 'y') {
+          gameData[channelId].players[playerNumericId].brinkUsedThisRoll = true; // Set the flag
+          await action(message, args); // Rerun the action function only once.
+          return; // Exit the current action function
+        } else {
+          await dmChannel.send('You chose not to embrace your Brink, for now.');
+          message.channel.send(`<@${playerId}> chose not to embrace their Brink. The scene will end.`); //Inform the channel of the choice.
+        }
+      } catch (error) {
+        if (error.message === 'time') {
+          await message.guild.members.fetch(playerId).then(player => player.user.send('You did not respond in time. The scene will end.'));
+          message.channel.send(`<@${playerId}>, did not respond in time. The scene will end.`);
+        } else {
+          console.error('Error during Brink prompt (DM):', error);
+          await message.guild.members.fetch(playerId).then(player => player.user.send('An error occurred. The scene will end.'));
+          message.channel.send(`<@${playerId}>, an error occurred. The scene will end.`);
+        }
+      }
     }
-    gameData[channelId].diceLost = ones;
+
+    if (gameData[channelId].scene === 10) { // Check for Last Stand (only one candle left)
+      gameData[channelId].players[playerId].isDead = true;
+      saveGameData();
+      message.channel.send(`**${gameData[channelId].players[playerId].name || `<@${playerId}>'s unnamed character`} has died!**\nPlease work with the GM to narrate your character's death.`);
+    } else {
+      // Normal Candle Extinguishing
+      gameData[channelId].diceLost = ones;
+      //Darken a candle and advance a scene.
+      messageContent += "A candle will be extinguished ending the scene after this action is narrated.\n";
+      gameData[channelId].scene++;
+      gameData[channelId].dicePool = gameData[channelId].scene;
+      sendCandleStatus(message, 11 - gameData[channelId].scene);
+      await startTruthsSystem(message, channelId); // Start the truths system
+    }
   } else {
     gameData[channelId].diceLost = 0;
   }
 
-  // Hope Die Loss Check
-  if (useBrink && totalSixes === 0 && gameData[channelId].players[playerNumericId].hopeDieActive) {
-    gameData[channelId].players[playerNumericId].hopeDieActive = false;
-    message.channel.send(`<@${playerId}>, you have failed your Brink roll and lost your Hope die.`);
-  }
-
-  let messageContent = `**${totalSixes > 0 ? `Success!` : `Failure.`}**\n`;
+  let messageContent = `**${totalPlayerSixes > 0 ? `Success!` : `Failure.`}**\n`;
   messageContent += `You rolled (${playerRolls.length} dice${hopeDieEmoji ? ' + Hope die' : ''}): ${diceEmojis}${hopeDieEmoji ? ` + ${hopeDieEmoji}` : ''}\n`;
   messageContent += `GM rolled (${gmDiceCount} dice): ${gmDiceEmojis}\n`;
 
-  let remainingDice = gameData[channelId].dicePool - ones;
+  messageContent += `${ones > 0 ? `${ones} di${ones === 1 ? 'e' : 'ce'} removed from the communal dice pool. ${gameData[channelId].dicePool - ones} di${gameData[channelId].dicePool - ones === 1 ? 'e remains' : 'ce remain'}.` : `${gameData[channelId].dicePool - ones} di${gameData[channelId].dicePool - ones === 1 ? 'e remains' : 'ce remain'}.`}\n`;
+  gameData[channelId].dicePool -= ones;
 
-  if (remainingDice <= 0) {
-    messageContent += "A candle will be extinguished ending the scene after this action is narrated.\n";
-    gameData[channelId].scene++;
-    gameData[channelId].dicePool = gameData[channelId].scene;
-    sendCandleStatus(message, 11 - gameData[channelId].scene);
+  if (gmSixes >= totalPlayerSixes && gmDiceCount > 0) {
+    messageContent += `<@${gameData[channelId].gmUserId}, the GM, wins narration rights for this action.`;
   } else {
-    messageContent += `${ones > 0 ? `${ones} di${ones === 1 ? 'e' : 'ce'} removed from the communal dice pool. ${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.` : `${remainingDice} di${remainingDice === 1 ? 'e remains' : 'ce remain'}.`}\n`;
-    gameData[channelId].dicePool = remainingDice;
-  }
-
-  if (gmSixes >= totalSixes && gmDiceCount > 0) {
-    messageContent += `<@${gameData[channelId].gmUserId}, the GM, narrates this action.`;
-  } else {
-    messageContent += `<@${message.author.id}>, the acting player, narrates this action.`;
+    messageContent += `<@${message.author.id}>, the acting player, wins narration rights for this action.`;
   }
 
   message.channel.send({ content: messageContent, allowedMentions: { repliedUser: false } });
+}
+
+async function startTruthsSystem(message, channelId) {
+  const game = gameData[channelId];
+  const playerOrder = game.playerOrder;
+  const gmId = game.gmId;
+  const litCandles = 11 - game.scene;
+
+  let truthSpeakerIndex = 0;
+  if (game.diceLost > 0) {
+    truthSpeakerIndex = playerOrder.indexOf(message.author.id);
+  } else {
+    truthSpeakerIndex = playerOrder.indexOf(gmId);
+  }
+
+  let truthOrderMessage = "";
+  for (let i = 0; i < litCandles - 1; i++) {
+    const speakerId = playerOrder[truthSpeakerIndex];
+    const player = game.players[speakerId];
+    if (player) { //check if the player still exists.
+      truthOrderMessage += `Truth ${i + 1}>: <@${speakerId}>${player.isDead ? " (Ghost)" : ""}\n`;
+    }
+    truthSpeakerIndex = (truthSpeakerIndex + 1) % playerOrder.length;
+  }
+
+  // Final Truth (Collective)
+  const livingPlayers = playerOrder.filter(playerId => game.players[playerId] && !game.players[playerId].isDead);
+  let finalTruthMessage = "";
+  if (livingPlayers.length > 0) {
+    finalTruthMessage = "All together: **And we are alive.**";
+  }
+
+  let fullMessage = `GM only: **These things are true. The world is dark.**\n\n`;
+
+  if (truthOrderMessage) {
+    fullMessage += `Establishing Truths order: ${truthOrderMessage}\n\n`;
+  }
+
+  fullMessage += `${finalTruthMessage}`;
+
+  message.channel.send(fullMessage);
+
+  // Reset dice lost.
+  game.diceLost = 0;
+  saveGameData();
 }
 
 async function playRecordings(message) {

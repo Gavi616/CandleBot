@@ -120,21 +120,31 @@ client.on('messageCreate', async (message) => {
       const command = args.shift().toLowerCase();
 
       // Check if the command requires a game in progress
-      const gameRequiredCommands = ['action', 'playrecordings', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died'];
+      const gameRequiredCommands = ['action', 'playrecordings', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x'];
 
       if (gameRequiredCommands.includes(command)) {
         // Check if a game exists in the channel
         if (!gameData[channelId]) {
-          message.author.send("No game is in progress in that channel.");
-          console.log(`${userName} (${userId}) tried to use .${command} in ${message.channel.name}, but there is no game.`);
+          message.author.send(`Message removed. There is no **Ten Candles** game in progress in #${message.channel.name}.`);
+          try {
+            await message.delete(); // Delete the command message
+          } catch (deleteError) {
+            console.error(`Failed to delete message in #${message.channel.name}:`, deleteError);
+          }
+          console.log(`${userName} (${userId}) tried to use .${command} in ${message.channel.name}, but there is no game in progress.`);
           return; // Stop processing the command
         }
 
         // Check if the user is a participant (player or GM)
         const game = gameData[channelId];
         if (!game.players[userId] && game.gmId !== userId) {
-          message.author.send("You are not a participant in that game.");
-          console.log(`${userName} (${userId}) tried to use .${command} in ${message.channel.name}, but is not a participant.`);
+          message.author.send(`Message removed. You are not a participant in the **Ten Candles** game in #${message.channel.name}.`);
+          try {
+            await message.delete(); // Delete the command message
+          } catch (deleteError) {
+            console.error(`Failed to delete message in #${message.channel.name}:`, deleteError);
+          }
+          console.log(`${userName} (${userId}) tried to use .${command} in #${message.channel.name}, but is not a participant.`);
           return; // Stop processing the command
         }
       }
@@ -164,7 +174,6 @@ client.on('messageCreate', async (message) => {
     }
   }
 
-  // .x command listener (for Direct Messaging)
   if (message.channel.type === ChannelType.DM) {
     const game = Object.values(gameData).find(game => {
       if (game.gmId === userId) return true;
@@ -172,11 +181,14 @@ client.on('messageCreate', async (message) => {
       return false;
     });
 
-    if (game && message.content.toLowerCase() === '.x') {
+    // .x and .me command listener (for Direct Messaging)
+    if (message.content.toLowerCase() === '.x') {
       const gameChannel = client.channels.cache.get(Object.keys(gameData).find(key => gameData[key] === game));
       if (gameChannel) {
         gameChannel.send(`One or more players and/or the GM are ready to move on, please wrap up the scene quickly.`);
       }
+    } else if (message.content.toLowerCase() === '.me') {
+      me(message);
     }
   } else {
     if (gameData[Object.keys(gameData).find(key => gameData[key].players[userId])]) {
@@ -433,6 +445,67 @@ async function gameStatus(message) {
   });
 }
 
+async function me(message) {
+  const playerId = message.author.id;
+  const playerNumericId = parseInt(playerId);
+  let channelId = message.channel.id; // Initialize channelId
+
+  if (message.channel.type !== 1) { // Check if it's a DM
+    try {
+      await message.author.send('This command can only be used in a direct message.');
+    } catch (error) {
+      console.error('Could not send DM to user:', error);
+    }
+    return;
+  }
+
+  let game;
+  for (const channel in gameData) {
+    if (gameData[channel].players && gameData[channel].players[playerNumericId]) {
+      game = gameData[channel];
+      channelId = channel;
+      break;
+    }
+  }
+
+  if (!game) {
+    message.reply('You are not currently in a game.');
+    return;
+  }
+
+  const player = game.players[playerNumericId];
+
+  const characterEmbed = new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle(`Character Sheet: ${player.name || message.author.username}`)
+    .addFields(
+      { name: 'Virtue', value: player.virtue || 'Not set', inline: true },
+      { name: 'Vice', value: player.vice || 'Not set', inline: true },
+      { name: 'Moment', value: player.moment || 'Not set' },
+      { name: 'Brink', value: player.brink || 'Not set' },
+      { name: 'Hope Dice', value: player.hopeDice.toString() || '0' },
+      { name: 'Recordings', value: player.recordings || 'Not set' },
+      { name: 'Is Dead', value: player.isDead ? 'Yes' : 'No' },
+      { name: 'Virtue Burned', value: player.virtueBurned ? 'Yes' : 'No', inline: true },
+      { name: 'Vice Burned', value: player.viceBurned ? 'Yes' : 'No', inline: true },
+      { name: 'Moment Burned', value: player.momentBurned ? 'Yes' : 'No' },
+    )
+    .setTimestamp();
+
+  try {
+    await message.author.send({ embeds: [characterEmbed] }); // Send DM
+    if (message.channel.type !== 1) {
+      await message.delete(); // Delete original message
+    }
+
+  } catch (error) {
+    console.error('Could not send character sheet DM:', error);
+    if (message.channel.type !== 1) {
+      await message.reply('Could not send character sheet DM. Please enable DMs.'); // Inform in channel if DM fails.
+    }
+  }
+}
+
 async function cancelGame(message) {
   const channelId = message.channel.id;
   const gmId = gameData[channelId].gmId;
@@ -471,18 +544,18 @@ async function died(message, args) {
   const game = gameData[channelId];
 
   if (!game) {
-      message.reply('No game is in progress in this channel.');
-      return;
+    message.reply('No game is in progress in this channel.');
+    return;
   }
 
   if (message.author.id !== game.gmId) {
-      message.reply('Only the GM can use this command.');
-      return;
+    message.reply('Only the GM can use this command.');
+    return;
   }
 
   if (args.length < 1) {
-      message.reply('Usage: .died <Player ID> [-martyr] [Cause of Death]');
-      return;
+    message.reply('Usage: .died <Player ID> [-martyr] [Cause of Death]');
+    return;
   }
 
   const playerIdToDie = args[0].replace(/<@!?(\d+)>/, '$1');
@@ -490,15 +563,15 @@ async function died(message, args) {
   const causeOfDeath = args.slice(1).filter(arg => arg !== '-martyr').join(' ') || 'an unknown cause.';
 
   if (!game.players[playerIdToDie]) {
-      message.reply('Invalid Player ID. Please mention a valid player in this game.');
-      return;
+    message.reply('Invalid Player ID. Please mention a valid player in this game.');
+    return;
   }
 
   game.players[playerIdToDie].isDead = true;
 
   if (isMartyr && game.players[playerIdToDie].hopeDice > 0) {
-      // Martyrdom and Hope Die Gifting
-      await handleMartyrdom(message, playerIdToDie, game);
+    // Martyrdom and Hope Die Gifting
+    await handleMartyrdom(message, playerIdToDie, game);
   }
 
   saveGameData();
@@ -518,19 +591,19 @@ async function handleMartyrdom(message, playerIdToDie, game) {
   const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
 
   if (collected.size > 0) {
-      const recipientId = collected.first().mentions.users.first().id;
+    const recipientId = collected.first().mentions.users.first().id;
 
-      if (game.players[recipientId]) {
-          game.players[recipientId].hopeDice += player.hopeDice;
-          player.hopeDice = 0; // Remove hope dice from the dead player.
-          saveGameData();
-          await dmChannel.send(`Your Hope die(s) have been gifted to <@${recipientId}>.`);
-          message.channel.send(`<@${playerIdToDie}> has gifted their Hope die(s) to <@${recipientId}>.`);
-      } else {
-          await dmChannel.send('Invalid recipient.');
-      }
+    if (game.players[recipientId]) {
+      game.players[recipientId].hopeDice += player.hopeDice;
+      player.hopeDice = 0; // Remove hope dice from the dead player.
+      saveGameData();
+      await dmChannel.send(`Your Hope die(s) have been gifted to <@${recipientId}>.`);
+      message.channel.send(`<@${playerIdToDie}> has gifted their Hope die(s) to <@${recipientId}>.`);
+    } else {
+      await dmChannel.send('Invalid recipient.');
+    }
   } else {
-      await dmChannel.send('No recipient chosen.');
+    await dmChannel.send('No recipient chosen.');
   }
 }
 
@@ -994,11 +1067,11 @@ async function action(message, args) {
 
   let rolls = [];
   if (hopeDieRoll) {
-      rolls.push(hopeDieRoll);
+    rolls.push(hopeDieRoll);
   }
   //Roll all hope dice.
-  for (let i = 0; i < gameData[channelId].players[playerNumericId].hopeDice; i++){
-      rolls.push(Math.floor(Math.random() * 6) + 1);
+  for (let i = 0; i < gameData[channelId].players[playerNumericId].hopeDice; i++) {
+    rolls.push(Math.floor(Math.random() * 6) + 1);
   }
 
   for (let i = 0; i < dicePool; i++) {
@@ -1164,13 +1237,13 @@ async function action(message, args) {
     totalPlayerSixes++;
   }
 
-    // Moment success check
-    if (useMoment && totalPlayerSixes > 0) {
-      gameData[channelId].players[playerNumericId].hopeDice++;
-      message.channel.send(`<@${playerId}> has successfully achieved their Moment and gains a Hope die for future rolls.`);
+  // Moment success check
+  if (useMoment && totalPlayerSixes > 0) {
+    gameData[channelId].players[playerNumericId].hopeDice++;
+    message.channel.send(`<@${playerId}> has successfully achieved their Moment and gains a Hope die for future rolls.`);
   } else if (useMoment && totalPlayerSixes === 0) {
-      gameData[channelId].players[playerNumericId].hopeDice = 0;
-      message.channel.send(`<@${playerId}> has failed to live their Moment and loses all hope dice.`);
+    gameData[channelId].players[playerNumericId].hopeDice = 0;
+    message.channel.send(`<@${playerId}> has failed to live their Moment and loses all hope dice.`);
   }
 
   if (totalPlayerSixes === 0) {

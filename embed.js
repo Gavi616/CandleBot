@@ -16,5 +16,6 @@ export const helpEmbed = {
             { name: '.leavegame [Reason]', value: 'Players may remove themselves from the game.' },
             { name: '.died <Player ID> [-martyr] [Cause]', value: 'GM marks PC as dead, but may still establish truths. -martyr gifts Hope die.' },
             { name: '.x (via direct message only)', value: 'Anonymously signals that you would like to wrap up the scene.' },
+            { name: '.me (via direct message only)', value: 'Generates a current character sheet for your character.' },
         )
 };

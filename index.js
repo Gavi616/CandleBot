@@ -225,6 +225,10 @@ client.on('messageCreate', async (message) => {
 });
 
 async function handleCharacterGenStep1DM(message, game) {
+  if(!game.traitsRequested){ //If we have not asked for traits yet, just return.
+    return;
+  }
+
   const userId = message.author.id;
   const channelId = Object.keys(gameData).find(key => gameData[key] === game);
   const players = game.players;
@@ -410,12 +414,12 @@ export async function startGame(message) {
     return;
   }
 
-  if (!isTesting && new Set(playerIds).size !== playerIds.length) {
+  if (new Set(playerIds).size !== playerIds.length) {
     message.reply('Duplicate players found. Each player must be a unique user. No game was started.');
     return;
   }
 
-  if (!isTesting && playerIds.includes(gmId)) {
+  if (playerIds.includes(gmId)) {
     message.reply('The GM cannot also be a player. No game was started.');
     return;
   }
@@ -433,13 +437,24 @@ export async function startGame(message) {
     return;
   }
 
-  const offlinePlayers = playerIds.filter(playerId => {
-    const player = message.guild.members.cache.get(playerId);
-    return player.presence?.status === 'offline';
+  // Check if all players are in the server and online
+  const playerFetchPromises = playerIds.map(async playerId => {
+    try {
+      const member = await message.guild.members.fetch(playerId);
+      return { playerId, isOnline: member.presence?.status !== 'offline', isPresent: true };
+    } catch (error) {
+      // Handle the case where the member is not found in the guild
+      console.error(`Failed to fetch member ${playerId}:`, error);
+      return { playerId, isOnline: false, isPresent: false };
+    }
   });
 
-  if (offlinePlayers.length > 0) {
-    message.reply(`The following players must be online to start a game: ${offlinePlayers.map(id => `<@${id}>`).join(', ')}. No game was started.`);
+  const playerStatuses = await Promise.all(playerFetchPromises);
+  const problemPlayers = playerStatuses.filter(status => !status.isPresent || !status.isOnline);
+
+  if (problemPlayers.length > 0) {
+    const problemPlayerMentions = problemPlayers.map(status => `<@${status.playerId}>`).join(', ');
+    message.reply(`Unable to start game due to issues with the following player(s): ${problemPlayerMentions}. Please ensure they are valid users in this server and are online.`);
     return;
   }
 
@@ -454,6 +469,7 @@ export async function startGame(message) {
     characterGenStep: 1,
     players: {},
     diceLost: 0,
+    traitsRequested: false,
     playerOrder: playerIds,
     gmId: gmId,
     gameMode: gameMode,
@@ -876,6 +892,7 @@ async function sendCharacterGenStep(message, channelId) {
   const gmId = gameData[channelId].gmId;
 
   if (step === 1) {
+    gameData[channelId].traitsRequested = true;
     message.channel.send('\n**Step One: Players Write Traits (light three candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have 5 minutes to complete this step.');
     sendCandleStatus(message, 3);
     saveGameData();

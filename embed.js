@@ -1,21 +1,26 @@
 import { EmbedBuilder } from 'discord.js';
 
 export const helpEmbed = {
-    help: new EmbedBuilder()
-        .setColor(0x0099FF)
-        .addFields(
-            { name: '.startgame <GM ID> <Player IDs space-separated>', value: 'Starts a Ten Candles game session in the current channel.' },
-            { name: '.nextstep', value: 'Advances character generation.' },
-            { name: '.action', value: 'Allows a player to make an action roll against the GM for narration rights.' },
-            { name: '  -burnvirtue *or* -burnvice', value: '`.action` modifiers burns a specific Trait card to reroll all ones.' },
-            { name: '  -burnmoment', value: '`.action` modifier burns the player\'s Moment card to try for a Hope die.' },
-            { name: '.playrecordings', value: 'Once all candles are extinguished & all characters have perished.' },
-            { name: '.cancelgame', value: 'Ends the current game (GM\'s approval required).' },
-            { name: '.gamestatus', value: 'Displays the current game\'s status.' },
-            { name: '.removeplayer <Player ID> [Reason]', value: 'GM may remove a player from the game.' },
-            { name: '.leavegame [Reason]', value: 'Players may remove themselves from the game.' },
-            { name: '.died <Player ID> [-martyr] [Cause]', value: 'GM marks PC as dead, but may still establish truths. -martyr gifts Hope die.' },
-            { name: '.x (via direct message only)', value: 'Anonymously signals that you would like to wrap up the scene.' },
-            { name: '.me (via direct message only)', value: 'Generates a current character sheet for your character.' },
-        )
+  help: new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle('Ten Candles Bot Help')
+    .setDescription(
+      'Commands for playing Ten Candles. Use `.` as the prefix.\n\n' +
+      '**Character Generation:**\n' +
+      '`startgame <GM ID> <Player IDs>`: Starts a Ten Candles game.\n' +
+      '`nextstep`: Advances character generation.\n\n' +
+      '**Gameplay:**\n' +
+      '`action [-burnvirtue | -burnvice | -burnmoment]`: Makes an action roll for success/failure and narration rights.\nModifiers: reroll ones (-burnvirtue or -burnvice), or try for a Hope die (-burnmoment).\n' +
+      '`playrecordings`: Plays the Final Recordings (when all candles are out).\n\n' +
+      '**Game Management:**\n' +
+      '`cancelgame`: Cancel the game (with GM approval).\n' +
+      '`gamestatus`: Shows the game\'s status.\n' +
+      '`removeplayer <Player ID> [Reason]`: GM removes a player. Reason is optional.\n' +
+      '`leavegame [Reason]`: Player leaves the game. Reason is optional.\n' +
+      '`died <Player ID> [-martyr] [Cause]`: Mark a PC as dead. Add `-martyr` to gift Hope die(s). Cause is optional.\n\n' +
+      '**Direct Message (DM) Commands:**\n' +
+      '`x`: Signals anonymously to wrap up the scene.\n' +
+      '`me`: View your character sheet.\n'
+    )
+    .setTimestamp()
 };

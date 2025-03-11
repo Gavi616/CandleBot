@@ -1,5 +1,7 @@
 import 'dotenv/config';
-import { Client, EmbedBuilder, ChannelType, GatewayIntentBits } from 'discord.js'; // Added GatewayIntentBits here
+import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, VoiceChannel, } from 'discord.js';
+import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection } from '@discordjs/voice';
+import ytdl from 'ytdl-core';
 import fs from 'fs';
 import { helpEmbed } from './embed.js';
 
@@ -17,7 +19,7 @@ export const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.8.999';
+const version = '0.9.0';
 const isTesting = false;
 
 const defaultVirtues = [
@@ -44,6 +46,21 @@ const defaultMoments = [
   "Escape from a dangerous location.",
   "Provide light in the darkness to help a friend."
 ];
+
+function sanitizeString(str) {
+  if (typeof str !== 'string') {
+    return ''; // Return an empty string if not a string
+  }
+
+  // Remove control characters (except newline and tab, if you want to keep them)
+  str = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\uFFFF]/g, ''); // Removes all control characters except \t \n
+  // Escape double quotes
+  str = str.replace(/"/g, '\\"');
+  // Escape backslashes
+  str = str.replace(/\\/g, '\\\\');
+
+  return str;
+}
 
 let gameData = {};
 
@@ -118,7 +135,7 @@ client.on('messageCreate', async (message) => {
       const command = args.shift().toLowerCase();
 
       // Check if the command requires a game in progress
-      const gameRequiredCommands = ['action', 'playrecordings', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x'];
+      const gameRequiredCommands = ['conflict', 'playrecordings', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x'];
 
       if (gameRequiredCommands.includes(command)) {
         // Check if a game exists in the channel
@@ -152,8 +169,8 @@ client.on('messageCreate', async (message) => {
         message.channel.send({ embeds: [helpEmbed.help] });
       } else if (command === 'startgame') {
         await startGame(message);
-      } else if (command === 'action') {
-        await action(message, args);
+      } else if (command === 'conflict') {
+        await conflict(message, args);
       } else if (command === 'playrecordings') {
         await playRecordings(message);
       } else if (command === 'nextstep') {
@@ -198,7 +215,9 @@ client.on('messageCreate', async (message) => {
     } else if (game && game.characterGenStep === 4) {
       await handleCharacterGenStep4DM(message, game);
     } else if (game && game.characterGenStep === 5) {
-      // Handled within sendCharacterGenStep();
+      await handleCharacterGenStep5DM(message, game);
+    } else if (game && game.characterGenStep === 6) {
+      await handleCharacterGenStep6DM(message, game);
     } else if (game && game.characterGenStep === 8) {
       await handleCharacterGenStep8DM(message, game);
     }
@@ -212,8 +231,8 @@ async function handleCharacterGenStep1DM(message, game) {
 
   const [virtue, vice] = message.content.split(',').map(s => s.trim());
   if (virtue && vice) {
-    players[userId].virtue = virtue;
-    players[userId].vice = vice;
+    players[userId].virtue = sanitizeString(virtue);
+    players[userId].vice = sanitizeString(vice);
     saveGameData();
     try {
       await message.reply('Traits received!');
@@ -243,7 +262,7 @@ async function handleCharacterGenStep4DM(message, game) {
   const channelId = Object.keys(gameData).find(key => gameData[key] === game);
   const players = game.players;
 
-  players[userId].moment = message.content;
+  players[userId].moment = sanitizeString(message.content);
   saveGameData();
   try {
     await message.reply('Moment received!');
@@ -261,26 +280,87 @@ async function handleCharacterGenStep4DM(message, game) {
   }
 }
 
+async function handleCharacterGenStep5DM(message, game) {
+  const userId = message.author.id;
+  const channelId = Object.keys(gameData).find(key => gameData[key] === game);
+  const players = game.players;
+  const playerOrder = game.playerOrder;
+  const gmId = game.gmId;
+
+  const brinkResponses = game.brinkResponses || {};
+  brinkResponses[userId] = sanitizeString(message.content);
+  game.brinkResponses = brinkResponses;
+
+  const allBrinksReceived = Object.keys(brinkResponses).length === playerOrder.length + 1;
+
+  if (allBrinksReceived) {
+    // Distribute Brinks
+    const threatPlayerId = playerOrder.find(id => id in brinkResponses && id !== gmId);
+    for (const playerId of playerOrder) {
+      if (playerId === threatPlayerId) {
+        game.gm.brink = brinkResponses[gmId];
+      } else {
+        const nextPlayerId = playerOrder[(playerOrder.indexOf(playerId) + 1) % playerOrder.length];
+        players[playerId].brink = brinkResponses[nextPlayerId];
+      }
+    }
+    players[threatPlayerId].brink = brinkResponses[threatPlayerId];
+    saveGameData();
+    const gameChannel = client.channels.cache.get(channelId);
+    if (gameChannel) {
+      gameChannel.send('Brinks have been distributed. Proceeding to the next step.');
+      gameData[channelId].characterGenStep++;
+      sendCharacterGenStep({ channel: gameChannel }, channelId);
+    }
+  }
+}
+
+async function handleCharacterGenStep6DM(message, game) {
+  const channelId = Object.keys(gameData).find(key => gameData[key] === game);
+  const gameChannel = client.channels.cache.get(channelId);
+  if (gameChannel) {
+    sendCharacterGenStep({ channel: gameChannel }, channelId);
+  }
+}
+
 async function handleCharacterGenStep8DM(message, game) {
   const userId = message.author.id;
   const players = game.players;
   const channelId = Object.keys(gameData).find(key => gameData[key] === game);
 
-  if (message.attachments.size > 0 && message.attachments.first().contentType.startsWith('audio/')) {
-    players[userId].recording = message.attachments.first().url;
-    saveGameData();
-    try {
-      await message.channel.send('Your audio recording was received!');
-    } catch (error) {
-      console.error(`Error replying to player ${userId}:`, error);
+  if (game.gameMode === 'text-only') {
+    if (message.attachments.size > 0) {
+      try {
+        await message.channel.send('Audio attachments are not supported in text-only mode. Please send a text message instead.');
+      } catch (error) {
+        console.error(`Error replying to player ${userId}:`, error);
+      }
+    } else if (message.content) {
+      players[userId].recording = sanitizeString(message.content);
+      saveGameData();
+      try {
+        await message.channel.send('Your text message was received!');
+      } catch (error) {
+        console.error(`Error replying to player ${userId}:`, error);
+      }
     }
-  } else if (message.content) {
-    players[userId].recording = message.content;
-    saveGameData();
-    try {
-      await message.channel.send('Your text message was received!');
-    } catch (error) {
-      console.error(`Error replying to player ${userId}:`, error);
+  } else if (game.gameMode === 'voice-plus-text') {
+    if (message.attachments.size > 0 && message.attachments.first().contentType.startsWith('audio/')) {
+      players[userId].recording = message.attachments.first().url;
+      saveGameData();
+      try {
+        await message.channel.send('Your audio recording was received!');
+      } catch (error) {
+        console.error(`Error replying to player ${userId}:`, error);
+      }
+    } else if (message.content) {
+      players[userId].recording = sanitizeString(message.content);
+      saveGameData();
+      try {
+        await message.channel.send('Your text message was received!');
+      } catch (error) {
+        console.error(`Error replying to player ${userId}:`, error);
+      }
     }
   }
 
@@ -363,6 +443,11 @@ export async function startGame(message) {
     return;
   }
 
+  // Detect if the command is used in a voice channel
+  const voiceChannel = message.member.voice.channel;
+  const gameMode = voiceChannel ? 'voice-plus-text' : 'text-only';
+  const voiceChannelId = voiceChannel ? voiceChannel.id : null;
+
   gameData[channelId] = {
     dicePool: -1,
     scene: 0,
@@ -371,6 +456,10 @@ export async function startGame(message) {
     diceLost: 0,
     playerOrder: playerIds,
     gmId: gmId,
+    gameMode: gameMode,
+    voiceChannelId: voiceChannelId,
+    textChannelId: channelId,
+    brinkResponses: {},
     gm: {
       consent: false,
       gmUsername: gm.user.username,
@@ -483,21 +572,38 @@ export async function startGame(message) {
     return; // Stop the startGame function
   }
 
-  message.channel.send('**The World of Ten Candles**\n' +
-    'Your characters will face unimaginable terrors in the dying of the light.\n\n' +
-    '**Though you know your characters will die, you must have hope that they will survive.**\n\n' +
-    '**Ten Candles** focuses around shared narrative control.\n' +
-    'Everyone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\n' +
-    'Let\'s begin character generation.\nUse the `.nextstep` command to proceed.')
-    .then(() => {
-      sendCharacterGenStep(message, channelId);
-    })
-    .catch((error) => {
-      console.error('Error sending initial message:', error);
-      message.channel.send('Failed to send initial message. Check the console for details. Game cancelled.');
-      delete gameData[channelId];
-      saveGameData();
-    });
+  let confirmationMessage = '**The World of Ten Candles**\n';
+  confirmationMessage += 'Your characters will face unimaginable terrors in the dying of the light.\n\n';
+  confirmationMessage += '**Though you know your characters will die, you must have hope that they will survive.**\n\n';
+  confirmationMessage += '**Ten Candles** focuses around shared narrative control.\n';
+  confirmationMessage += 'Everyone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\n';
+  confirmationMessage += 'Let\'s begin character generation.\nUse the `.nextstep` command to proceed.';
+
+  if (gameMode === 'voice-plus-text') {
+    confirmationMessage += `\n\n**Voice Channel:** <#${voiceChannelId}> has been set up for audio playback.`;
+    message.channel.send(confirmationMessage)
+      .then(() => {
+        sendCharacterGenStep(message, channelId);
+      })
+      .catch((error) => {
+        console.error('Error sending initial message:', error);
+        message.channel.send('Failed to send initial message. Check the console for details. Game cancelled.');
+        delete gameData[channelId];
+        saveGameData();
+      });
+  } else {
+    confirmationMessage += '\n\n**Text-Only Mode:** Audio playback is not supported in this channel. Final recordings will be text-only.';
+    message.channel.send(confirmationMessage)
+      .then(() => {
+        sendCharacterGenStep(message, channelId);
+      })
+      .catch((error) => {
+        console.error('Error sending initial message:', error);
+        message.channel.send('Failed to send initial message. Check the console for details. Game cancelled.');
+        delete gameData[channelId];
+        saveGameData();
+      });
+  }
 }
 
 async function gameStatus(message) {
@@ -516,7 +622,7 @@ async function gameStatus(message) {
 
   const content = game.characterGenStep > 0
     ? `Character Generation Step: ${game.characterGenStep}\nGM: ${gmMention}\nPlayers: ${playerMentions}\nUse the \`.nextstep\` command to proceed.`
-    : `Scene: ${game.scene}\nGM: ${gmMention}\nPlayers: ${playerMentions}\nUse the \`.action\` command to take action and move the game forward.`;
+    : `Scene: ${game.scene}\nGM: ${gmMention}\nPlayers: ${playerMentions}\nUse the \`.conflict\` command to take an action and move the game forward.`;
 
   message.channel.send({
     content: content,
@@ -772,41 +878,12 @@ async function sendCharacterGenStep(message, channelId) {
   if (step === 1) {
     message.channel.send('\n**Step One: Players Write Traits (light three candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have 5 minutes to complete this step.');
     sendCandleStatus(message, 3);
-
-    const traitPromises = playerOrder.map(async (playerId) => {
-      try {
-        const player = await message.guild.members.fetch(playerId);
-        const user = player.user;
-        const dmChannel = await user.createDM();
-        await user.send('Please provide your Virtue and Vice, separated by a comma (e.g., "Courageous, Greedy").');
-
-        const filter = m => m.author.id === playerId;
-        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 300000, errors: ['time'] }); // 5 minutes
-
-        if (collected.size > 0) {
-          const [virtue, vice] = collected.first().content.split(',').map(s => s.trim());
-          if (virtue && vice) {
-            players[playerId].virtue = virtue;
-            players[playerId].vice = vice;
-          } else {
-            assignRandomTraits(user, players[playerId]);
-          }
-        } else {
-          assignRandomTraits(user, players[playerId]);
-        }
-      } catch (error) {
-        console.error(`Error handling Virtue and Vice for player ${playerId}:`, error);
-        assignRandomTraits(user, players[playerId]);
-      }
-    });
-    await Promise.all(traitPromises);
     saveGameData();
-
   } else if (step === 2) {
+    message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. Use `.nextstep` when you are ready to continue.');
     const swappedTraits = swapTraits(players, gameData[channelId], message.guild);
     gameData[channelId].players = swappedTraits;
     saveGameData();
-    message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. Use `.nextstep` when you are ready to continue.');
   } else if (step === 3) {
     message.channel.send('**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.\nYou have 5 minutes to complete this step.');
     await askPlayersForCharacterInfo(message, channelId);
@@ -841,7 +918,6 @@ async function sendCharacterGenStep(message, channelId) {
     saveGameData();
   } else if (step === 5) {
     message.channel.send('**Step Five: Players and GM Discover Brinks (light three more candles)**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
-
     sendCandleStatus(message, 9);
     const players = gameData[channelId].players;
     const playerOrder = gameData[channelId].playerOrder;
@@ -877,80 +953,11 @@ async function sendCharacterGenStep(message, channelId) {
     } catch (error) {
       console.error(`Error DMing GM ${gmId}:`, error);
     }
-
-    // Collect Brink responses
-    const brinkResponses = {};
-    const collectedMessages = []; // Store collected messages
-    const filter = m => {
-      if (m.author.id === gmId) {
-        return true;
-      }
-      return playerOrder.includes(m.author.id);
-    };
-
-    const dmCollectors = [];
-
-    // Create DM collectors for each user
-    for (const userId of [gmId, ...playerOrder]) {
-      const user = client.users.cache.get(userId);
-      if (user && user.dmChannel) {
-        dmCollectors.push(user.dmChannel.awaitMessages({ filter, max: 1, time: 300000 }));
-      } else {
-        console.error(`Could not create DM collector for user ${userId}`);
-      }
-    }
-
-    try {
-      const results = await Promise.all(dmCollectors);
-      results.forEach(collected => {
-        if (collected.size > 0) {
-          const message = collected.first();
-          brinkResponses[message.author.id] = message.content;
-          collectedMessages.push(message);
-        }
-      });
-
-      // Distribute Brinks
-      for (const playerId of playerOrder) {
-        if (playerId === threatPlayerId) {
-          gameData[channelId].gm.brink = brinkResponses[gmId];
-        } else {
-          const nextPlayerId = playerOrder[(playerOrder.indexOf(playerId) + 1) % playerOrder.length];
-          players[playerId].brink = brinkResponses[nextPlayerId];
-        }
-      }
-      players[threatPlayerId].brink = brinkResponses[threatPlayerId];
-
-      saveGameData();
-      message.channel.send('Brinks have been distributed. Proceeding to the next step.');
-      gameData[channelId].characterGenStep++;
-      sendCharacterGenStep(message, channelId);
-
-    } catch (error) {
-      console.error('Error collecting Brink responses:', error);
-      message.channel.send('Brink collection timed out. Proceeding to the next step with available data.');
-
-      // Distribute available Brinks
-      for (const playerId of playerOrder) {
-        if (playerId === threatPlayerId) {
-          gameData[channelId].gm.brink = brinkResponses[gmId] || "No Brink was given";
-        } else {
-          const nextPlayerId = playerOrder[(playerOrder.indexOf(playerId) + 1) % playerOrder.length];
-          players[playerId].brink = brinkResponses[nextPlayerId] || "No Brink was given, continuing..";
-        }
-      }
-      players[threatPlayerId].brink = brinkResponses[threatPlayerId] || "No Brink was given, continuing..";
-
-      saveGameData();
-      gameData[channelId].characterGenStep++;
-      sendCharacterGenStep(message, channelId);
-    }
   } else if (step === 6) {
+    message.channel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down.');
     const swappedBrinks = swapBrinks(players, playerOrder, gmId);
     gameData[channelId].players = swappedBrinks;
     saveGameData();
-    message.channel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down.');
-
     const brinkSwapPromises = playerOrder.map(async (playerId) => {
       try {
         const player = await message.guild.members.fetch(playerId);
@@ -990,11 +997,11 @@ async function sendCharacterGenStep(message, channelId) {
     message.channel.send(
       '**Game Start**\n' +
       'Character generation is complete! Ten candles are lit, and the game begins.\n\n' +
-      '**How to Use `.action`:**\n' +
-      'Use the `.action` command to perform actions. Use modifiers such as `-burnvirtue`, `-burnvice`, `-burnmoment` and `-brink` as needed.\n' +
-      'Buring a Virtue or Vice from the top of your stack allows your `.action` to reroll all ones.\n' +
-      'Buring your Moment from the top of your stack will give you a valuable Hope die is the `.action` succeeds!\n' +
-      'Example(s): `.action` or `.action -burnvice`\n\n' +
+      '**How to Use `.conflict`:**\n' +
+      'Use the `.conflict` command to perform actions. Use modifiers such as `-burnvirtue`, `-burnvice` and `-burnmoment` as needed.\n' +
+      'Buring a Virtue or Vice from the top of your stack allows your `.conflict` to reroll all ones.\n' +
+      'Buring your Moment from the top of your stack will give you a valuable Hope die is the `.conflict` succeeds!\n' +
+      'Example(s): `.conflict` or `.conflict -burnvice`\n\n' +
       'Candles will be extinguished as the scenes progress.\n\n' +
       '**When to Use `.playrecordings`:**\n' +
       'Once all Player Characters have perished, the GM should use the `.playrecordings` command to play their final messages and close the game session.'
@@ -1057,7 +1064,7 @@ export function nextStep(message) {
   }
 
   if (gameData[channelId].characterGenStep >= 8) {
-    message.reply('Character generation is already complete. Use `.action` to continue the game.');
+    message.reply('Character generation is already complete. Use `.conflict` to continue the game.');
     return;
   }
 
@@ -1066,7 +1073,7 @@ export function nextStep(message) {
   sendCharacterGenStep(message, channelId);
 }
 
-export async function action(message, args) {
+export async function conflict(message, args) {
   const channelId = message.channel.id;
   const playerId = message.author.id;
   const playerNumericId = parseInt(playerId);
@@ -1082,7 +1089,7 @@ export async function action(message, args) {
   }
 
   if (!gameData[channelId].players || !gameData[channelId].players[playerNumericId]) {
-    console.log(`User "${message.author.username}" (ID: ${playerId}) tried to use \`.action\` but is not a player.`);
+    console.log(`User "${message.author.username}" (ID: ${playerId}) tried to use \`.conflict\` but is not a player.`);
     return;
   }
 
@@ -1214,7 +1221,7 @@ export async function action(message, args) {
         const player = await message.guild.members.fetch(playerId);
         const dmChannel = await player.user.createDM();
 
-        await dmChannel.send('You have failed this `.action` roll. Embrace your Brink for a full reroll? (y/n) You have 60 seconds to decide.');
+        await dmChannel.send('You have failed this `.conflict` roll. Embrace your Brink for a full reroll? (y/n) You have 60 seconds to decide.');
 
         const filter = m => m.author.id === playerId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
         const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
@@ -1267,7 +1274,7 @@ export async function action(message, args) {
       // Normal Candle Extinguishing
       gameData[channelId].diceLost = ones;
       //Darken a candle and advance a scene.
-      messageContent += "A candle will be extinguished ending the scene after this action is narrated.\n";
+      messageContent += "A candle will be extinguished ending the scene after this conflict is narrated.\n";
       gameData[channelId].scene++;
       gameData[channelId].dicePool = gameData[channelId].scene;
       sendCandleStatus(message, 11 - gameData[channelId].scene);
@@ -1285,9 +1292,9 @@ export async function action(message, args) {
   gameData[channelId].dicePool -= ones;
 
   if (gmSixes >= totalPlayerSixes && gmDiceCount > 0) {
-    messageContent += `<@${gameData[channelId].gmId}, the GM, wins narration rights for this action.`;
+    messageContent += `<@${gameData[channelId].gmId}, the GM, wins narration rights for this conflict.`;
   } else {
-    messageContent += `<@${message.author.id}>, the acting player, wins narration rights for this action.`;
+    messageContent += `<@${message.author.id}>, the acting player, wins narration rights for this conflict.`;
   }
 
   message.channel.send({ content: messageContent, allowedMentions: { repliedUser: false } });
@@ -1338,6 +1345,80 @@ async function startTruthsSystem(message, channelId) {
   saveGameData();
 }
 
+async function slowType(channel, text, charDelay = 50, wordDelay = 500) {
+  if (typeof text !== 'string' || text.trim() === '') {
+    console.warn('slowType: Received empty or invalid text. Skipping slow typing.');
+    return;
+  }
+
+  let currentMessage = '';
+  const words = text.split(' ');
+  const sentMessage = await channel.send('...'); // Send an initial message so we have something to edit
+
+  for (let i = 0; i < words.length; i++) {
+    const word = words[i];
+    for (const char of word) {
+      currentMessage += char;
+      await sentMessage.edit(currentMessage);
+      const randomCharDelay = charDelay + Math.floor(Math.random() * 50);
+      await new Promise(resolve => setTimeout(resolve, randomCharDelay));
+    }
+    if (i < words.length - 1) {
+      currentMessage += ' ';
+      await sentMessage.edit(currentMessage);
+      const randomWordDelay = wordDelay + Math.floor(Math.random() * 200);
+      await new Promise(resolve => setTimeout(resolve, randomWordDelay));
+    }
+  }
+}
+
+async function playAudioFromUrl(url, voiceChannel) {
+  try {
+    if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
+      console.error(`Invalid voice channel.`);
+      return;
+    }
+
+    const connection = joinVoiceChannel({
+      channelId: voiceChannel.id,
+      guildId: voiceChannel.guild.id,
+      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+    });
+
+    // Validate the URL
+    if (!ytdl.validateURL(url)) {
+      console.error(`Invalid URL: ${url}`);
+      return;
+    }
+
+    //Check that the bot can play audio from this link.
+    const stream = ytdl(url, { filter: 'audioonly' });
+
+    //Create the Audio Player
+    const player = createAudioPlayer();
+    const resource = createAudioResource(stream);
+    player.play(resource);
+    connection.subscribe(player);
+
+    //Listen for errors.
+    player.on('error', error => {
+      console.error('Error:', error.message);
+    });
+
+    return new Promise((resolve, reject) => {
+      player.on(AudioPlayerStatus.Idle, () => {
+        resolve();
+      });
+
+      player.on('error', (error) => {
+        reject(error);
+      });
+    });
+  } catch (error) {
+    console.error('Error in playAudioFromUrl:', error);
+  }
+}
+
 export async function playRecordings(message) {
   const channelId = message.channel.id;
   const game = gameData[channelId];
@@ -1361,7 +1442,7 @@ export async function playRecordings(message) {
 
   const playerIds = Object.keys(players);
 
-  function playNextRecording(index) {
+  async function playNextRecording(index) {
     if (index >= playerIds.length) {
       delete gameData[channelId];
       saveGameData();
@@ -1370,41 +1451,72 @@ export async function playRecordings(message) {
 
     const userId = playerIds[index];
 
-    setTimeout(() => {
+    setTimeout(async () => {
       if (players[userId].recording) {
-        if (players[userId].recording.startsWith('http')) {
-          message.channel.send(`Recording for <@${userId}>:\n${players[userId].recording}`);
+        if (game.gameMode === 'voice-plus-text') {
+          // Handle voice+text mode logic
+          const voiceChannelId = game.voiceChannelId;
+
+          // Check if the bot is already in the voice channel
+          const existingConnection = getVoiceConnection(message.guild.id);
+          if (!existingConnection) {
+            const voiceChannel = client.channels.cache.get(voiceChannelId);
+            if (voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
+              try {
+                const connection = joinVoiceChannel({
+                  channelId: voiceChannelId,
+                  guildId: message.guild.id,
+                  adapterCreator: message.guild.voiceAdapterCreator,
+                });
+                console.log(`Joined voice channel: ${voiceChannel.name}`);
+              } catch (error) {
+                console.error('Failed to join voice channel:', error);
+                message.channel.send('Failed to join voice channel. Playing back in text only.');
+                game.gameMode = "text-only";
+              }
+            } else {
+              console.error(`Voice channel ${voiceChannelId} not found.`);
+              message.channel.send('Voice channel not found. Playing back in text only.');
+              game.gameMode = "text-only";
+            }
+          }
+
+          if (players[userId].recording.startsWith('http')) {
+            // It's an audio URL
+            try {
+              const voiceChannel = client.channels.cache.get(voiceChannelId);
+              await playAudioFromUrl(players[userId].recording, voiceChannel);
+              message.channel.send(`Recording for <@${userId}>: (Audio Played)`);
+            } catch (error) {
+              console.error(`Error playing audio recording for ${userId}:`, error);
+              message.channel.send(`Error playing recording for <@${userId}>. Check console for details.`);
+            }
+          } else {
+            message.channel.send(`Recording for <@${userId}>:\n*<@${userId}>'s final message...*`);
+            slowType(message.channel, players[userId].recording); // Use slowType here!
+          }
         } else {
-          message.channel.send(`Recording for <@${userId}>:\n"${players[userId].recording}"`);
-          message.channel.send(`*<@${userId}>'s final message read aloud:*`);
-          message.channel.send(players[userId].recording);
+          // Handle text-only mode logic
+          if (players[userId].recording.startsWith('http')) {
+            message.channel.send(`Recording for <@${userId}>:\n${players[userId].recording}`);
+          } else {
+            message.channel.send(`Recording for <@${userId}>:\n*<@${userId}>'s final message...*`);
+            slowType(message.channel, players[userId].recording);
+          }
         }
       } else {
         message.channel.send(`No playable recording for <@${userId}>.`);
       }
 
-      playNextRecording(index + 1);
+      await playNextRecording(index + 1);
     }, delay);
 
     delay = 3000;
   }
 
-  playNextRecording(0);
+  await playNextRecording(0);
 }
 
-client.on('messageCreate', async (dmMessage) => {
-  if (dmMessage.channel.type === ChannelType.DM && players[dmMessage.author.id]) {
-    if (dmMessage.attachments.size > 0 && dmMessage.attachments.first().contentType.startsWith('audio/')) {
-      players[dmMessage.author.id].recording = dmMessage.attachments.first().url;
-      saveGameData();
-      dmMessage.channel.send('Audio recording received!');
-    } else if (dmMessage.content) {
-      players[dmMessage.author.id].recording = dmMessage.content;
-      saveGameData();
-      dmMessage.channel.send('Text recording received!');
-    }
-  }
-});
 
 function assignRandomMoment(user, player) {
   player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
@@ -1449,7 +1561,7 @@ async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, q
 
     if (collected.size > 0) {
       const response = collected.first().content;
-      game.players[playerId][field] = response;
+      game.players[playerId][field] = sanitizeString(response);
       saveGameData();
     } else {
       throw new Error(`Player <@${playerId}> timed out while providing ${field}.`);
@@ -1483,7 +1595,7 @@ export async function sendCandleStatus(message, litCandles) {
   } else if (litCandles >= 1 && litCandles <= 9) {
     const words = numberToWords(litCandles);
     if (litCandles === 1) {
-        message.channel.send(`***There is ${words} lit candle.***`);
+      message.channel.send(`***There is ${words} lit candle.***`);
     } else {
       message.channel.send(`***There are ${words} lit candles.***`);
     }

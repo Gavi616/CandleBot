@@ -8,14 +8,14 @@ export function getHelpEmbed(isAdmin) {
       'Starting a Ten Candles session:\n' +
       '`.startgame <GM ID> <Player IDs>`: Starts a Ten Candles game.\n\n' +
       '**Character Generation:**\n' +
-      '`.nextstep`: Advances character generation.\n\n' +
+      '`.nextstep`: Advances character generation (GM only).\n\n' +
       '**Gameplay:**\n' +
       '`.conflict [-burnvirtue | -burnvice | -burnmoment]`: Makes a conflict roll for success / failure check as well as narration rights.\n' +
       '`.playrecordings`: Plays Final Recordings (when all candles are out).\n\n' +
       '**Game Management:**\n' +
       '`.cancelgame`: Cancel the game (GM approval required).\n' +
       '`.gamestatus`: Shows the game\'s status.\n' +
-      '`.removeplayer <Player ID> [Reason]`: GM removes a player.\n' +
+      '`.removeplayer <Player ID> [Reason]`: Removes a player (GM only).\n' +
       '`.leavegame [Reason]`: Player leaves the game.\n' +
       '`.died <Player ID> [-martyr] [Cause]`: Marks a PC as dead.\n\n' +
       '**Direct Message (DM) Commands:**\n' +

@@ -221,7 +221,7 @@ client.on('messageCreate', async (message) => {
       } else if (command === 'block') {
         if (message.member.permissions.has('Administrator')) {
           const userId = args[0].replace(/<@!?(\d+)>/, '$1');
-          const reason = args.slice(1).join(' ') || 'No reason provided.'; // Extract the reason
+          const reason = sanitizeString(args.slice(1).join(' ') || 'No reason provided.');
           blockUser(userId, message, reason);
         } else {
           message.reply("You do not have permission to use this command.");
@@ -257,7 +257,7 @@ client.on('messageCreate', async (message) => {
       me(message);
     }
 
-    //Check if there is a game and if that game is waiting for character info.
+    //Check if there is a game and if that game is waiting for character generation info.
     if (game && game.characterGenStep === 1) {
       await handleCharacterGenStep1DM(message, game);
     } else if (game && game.characterGenStep === 4) {
@@ -809,7 +809,7 @@ export async function died(message, args) {
 
   const playerIdToDie = args[0].replace(/<@!?(\d+)>/, '$1');
   const isMartyr = args.includes('-martyr');
-  const causeOfDeath = args.slice(1).filter(arg => arg !== '-martyr').join(' ') || 'an unknown cause.';
+  const causeOfDeath = sanitizeString(args.slice(1).filter(arg => arg !== '-martyr').join(' ') || 'an unknown cause.');
 
   if (!game.players[playerIdToDie]) {
     message.reply('Invalid Player ID. Please mention a valid player in this game.');
@@ -876,7 +876,7 @@ async function leaveGame(message, args) {
     return;
   }
 
-  const reason = args.join(' ') || 'No reason provided.';
+  const reason = sanitizeString(args.join(' ') || 'No reason provided.');
 
   delete game.players[playerId];
   game.playerOrder = game.playerOrder.filter(id => id !== playerId);
@@ -1778,7 +1778,7 @@ loadBlocklist();
 // New functions for blocklist management
 export function blockUser(userId, message, reason = 'No reason provided.') {
   if (!blocklist[userId]) {
-    blocklist[userId] = reason; // Store the reason along with the user ID
+    blocklist[userId] = sanitizeString(reason); // Store the reason along with the user ID
     saveBlocklist();
     if (message) {
       message.channel.send(`<@${userId}> has been added to the blocklist. Reason: ${reason}`);

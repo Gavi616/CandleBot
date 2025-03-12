@@ -10,10 +10,10 @@ export function getHelpEmbed(isAdmin) {
       '**Character Generation:**\n' +
       '`.nextstep`: Advances character generation.\n\n' +
       '**Gameplay:**\n' +
-      '`.conflict [-burnvirtue | -burnvice | -burnmoment]`: Makes a conflict roll for narration rights.\n' +
+      '`.conflict [-burnvirtue | -burnvice | -burnmoment]`: Makes a conflict roll for success / failure check as well as narration rights.\n' +
       '`.playrecordings`: Plays Final Recordings (when all candles are out).\n\n' +
       '**Game Management:**\n' +
-      '`.cancelgame`: Cancel the game (with GM approval).\n' +
+      '`.cancelgame`: Cancel the game (GM approval required).\n' +
       '`.gamestatus`: Shows the game\'s status.\n' +
       '`.removeplayer <Player ID> [Reason]`: GM removes a player.\n' +
       '`.leavegame [Reason]`: Player leaves the game.\n' +

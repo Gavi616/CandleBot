@@ -34,7 +34,7 @@ export const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.9.0';
+const version = '0.9.5';
 const isTesting = false;
 
 const defaultVirtues = [
@@ -1664,6 +1664,27 @@ export async function sendCandleStatus(message, litCandles) {
 }
 
 async function validateGameSetup(message, args) {
+  if (isTesting) {
+    const gmId = args[0].replace(/<@!?(\d+)>/, '$1');
+    const playerIds = args.slice(1).map(id => id.replace(/<@!?(\d+)>/, '$1'));
+  
+      // Basic checks (only if args were passed, to ensure gmID and playerIDs are available)
+      if(args.length >= 1){
+        const gm = message.guild.members.cache.get(gmId);
+          if (!gm) {
+            return { valid: false, reason: 'Testing Mode: Invalid GM ID. Please mention a valid user in this server. No game was started.' };
+        }
+      }
+  
+      if(args.length >= 2){
+        if (playerIds.length < 1 || playerIds.length > 10) {
+          return { valid: false, reason: 'Testing Mode: A **Ten Candles** game requires at least 1 player (max 10 players). No game was started.' };
+        }
+      }
+  
+    return { valid: true, gmId, playerIds };
+  }
+  
   const channelId = message.channel.id;
   const userId = message.author.id;
 

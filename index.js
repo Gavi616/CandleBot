@@ -1,9 +1,24 @@
 import 'dotenv/config';
-import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, VoiceChannel, } from 'discord.js';
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection } from '@discordjs/voice';
+import {
+  Client,
+  EmbedBuilder,
+  ChannelType,
+  GatewayIntentBits,
+  VoiceChannel,
+  ActionRowBuilder,
+  ButtonBuilder,
+  ButtonStyle,
+} from 'discord.js';
+import {
+  joinVoiceChannel,
+  createAudioPlayer,
+  createAudioResource,
+  AudioPlayerStatus,
+  getVoiceConnection
+} from '@discordjs/voice';
 import ytdl from 'ytdl-core';
 import fs from 'fs';
-import { helpEmbed } from './embed.js';
+import { getHelpEmbed } from './embed.js';
 
 export const client = new Client({
   intents: [
@@ -122,6 +137,22 @@ client.once('ready', () => {
   }
 });
 
+client.on('interactionCreate', async (interaction) => {
+  if (!interaction.isButton()) return;
+
+  // Find the gameData that this button press is associated with.
+  let channelId = null;
+  let game = null;
+  for (let key in gameData) {
+    const gameEntry = gameData[key];
+    if (gameEntry.gmId === interaction.user.id) {
+      channelId = key;
+      game = gameEntry;
+      break;
+    }
+  }
+});
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -166,6 +197,8 @@ client.on('messageCreate', async (message) => {
 
       // Command handling logic
       if (command === 'help') {
+        const isAdmin = message.member.permissions.has('Administrator');
+        const helpEmbed = getHelpEmbed(isAdmin);
         message.channel.send({ embeds: [helpEmbed.help] });
       } else if (command === 'startgame') {
         await startGame(message);
@@ -185,6 +218,21 @@ client.on('messageCreate', async (message) => {
         await cancelGame(message);
       } else if (command === 'died') {
         await died(message, args);
+      } else if (command === 'block') {
+        if (message.member.permissions.has('Administrator')) {
+          const userId = args[0].replace(/<@!?(\d+)>/, '$1');
+          const reason = args.slice(1).join(' ') || 'No reason provided.'; // Extract the reason
+          blockUser(userId, message, reason);
+        } else {
+          message.reply("You do not have permission to use this command.");
+        }
+      } else if (command === 'unblock') {
+        if (message.member.permissions.has('Administrator')) {
+          const userId = args[0].replace(/<@!?(\d+)>/, '$1');
+          unblockUser(userId, message);
+        } else {
+          message.reply("You do not have permission to use this command.");
+        }
       }
     }
   }
@@ -225,7 +273,7 @@ client.on('messageCreate', async (message) => {
 });
 
 async function handleCharacterGenStep1DM(message, game) {
-  if(!game.traitsRequested){ //If we have not asked for traits yet, just return.
+  if (!game.traitsRequested) { //If we have not asked for traits yet, just return.
     return;
   }
 
@@ -390,73 +438,13 @@ export async function startGame(message) {
   const channelId = message.channel.id;
   const args = message.content.split(' ').slice(1);
 
-  if (gameData[channelId]) {
-    message.reply('A **Ten Candles** game is already in progress here.');
+  const validationResult = await validateGameSetup(message, args);
+  if (!validationResult.valid) {
+    message.reply(validationResult.reason);
     return;
   }
 
-  if (args.length < 3) {
-    message.reply('A **Ten Candles** game requires a GM and at least 2 players. Usage: `.startgame <GM ID> <Player IDs (space-separated)>`');
-    return;
-  }
-
-  const gmId = args[0].replace(/<@!?(\d+)>/, '$1');
-  const playerIds = args.slice(1).map(id => id.replace(/<@!?(\d+)>/, '$1'));
-
-  if (playerIds.length < 2 || playerIds.length > 10) {
-    message.reply('A **Ten Candles** game requires a GM and at least 2 players (to a maximum of 10 players). No game was started.');
-    return;
-  }
-
-  const gm = message.guild.members.cache.get(gmId);
-  if (!gm) {
-    message.reply('Invalid GM ID. Please mention a valid user in this server. No game was started.');
-    return;
-  }
-
-  if (new Set(playerIds).size !== playerIds.length) {
-    message.reply('Duplicate players found. Each player must be a unique user. No game was started.');
-    return;
-  }
-
-  if (playerIds.includes(gmId)) {
-    message.reply('The GM cannot also be a player. No game was started.');
-    return;
-  }
-
-  for (const playerId of playerIds) {
-    const player = message.guild.members.cache.get(playerId);
-    if (!player) {
-      message.reply(`Invalid Player ID: <@${playerId}>. Please mention a valid user in this server. No game was started.`);
-      return;
-    }
-  }
-
-  if (gm.presence?.status === 'offline') {
-    message.reply('The GM must be online to start a game. No game was started.');
-    return;
-  }
-
-  // Check if all players are in the server and online
-  const playerFetchPromises = playerIds.map(async playerId => {
-    try {
-      const member = await message.guild.members.fetch(playerId);
-      return { playerId, isOnline: member.presence?.status !== 'offline', isPresent: true };
-    } catch (error) {
-      // Handle the case where the member is not found in the guild
-      console.error(`Failed to fetch member ${playerId}:`, error);
-      return { playerId, isOnline: false, isPresent: false };
-    }
-  });
-
-  const playerStatuses = await Promise.all(playerFetchPromises);
-  const problemPlayers = playerStatuses.filter(status => !status.isPresent || !status.isOnline);
-
-  if (problemPlayers.length > 0) {
-    const problemPlayerMentions = problemPlayers.map(status => `<@${status.playerId}>`).join(', ');
-    message.reply(`Unable to start game due to issues with the following player(s): ${problemPlayerMentions}. Please ensure they are valid users in this server and are online.`);
-    return;
-  }
+  const { gmId, playerIds } = validationResult;
 
   // Detect if the command is used in a voice channel
   const voiceChannel = message.member.voice.channel;
@@ -505,30 +493,84 @@ export async function startGame(message) {
 
   saveGameData();
 
-  // GM Consent
+  // GM Consent (Modified)
   try {
     const gm = message.guild.members.cache.get(gmId);
     const dmChannel = await gm.user.createDM();
-    await gm.user.send(`You have been designated as the GM role for a **Ten Candles** game in #${message.guild.name}. Do you consent to participate? (y/n) You have 60 seconds to respond.`);
 
-    const gmFilter = m => m.author.id === gmId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
-    const gmCollected = await dmChannel.awaitMessages({ gmFilter, max: 1, time: 60000, errors: ['time'] });
+    const consentEmbed = new EmbedBuilder()
+      .setColor(0x0099FF)
+      .setTitle('GM Consent Required')
+      .setDescription(
+        `You have been designated as the GM role for a **Ten Candles** game in #${message.guild.name}. Do you consent to participate?`
+      );
 
-    gameData[channelId].gm.consent = gmCollected.size > 0 && gmCollected.first().content.toLowerCase().startsWith('y');
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId('gm_consent_yes')
+          .setLabel('Yes')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId('gm_consent_no')
+          .setLabel('No')
+          .setStyle(ButtonStyle.Danger)
+      );
 
-    if (!gameData[channelId].gm.consent) {
-      message.channel.send('The GM did not consent. Game cancelled.');
-      delete gameData[channelId];
-      saveGameData();
-      return;
-    }
+    const consentMessage = await gm.user.send({
+      embeds: [consentEmbed],
+      components: [row],
+    });
+
+    const gmFilter = (interaction) =>
+      interaction.user.id === gmId && interaction.message.id === consentMessage.id;
+    const collector = dmChannel.createMessageComponentCollector({
+      filter: gmFilter,
+      time: 60000,
+    });
+
+    collector.on('collect', async (interaction) => {
+      await interaction.deferUpdate(); // Make sure the interaction isn't shown as failed
+      if (interaction.customId === 'gm_consent_yes') {
+        gameData[channelId].gm.consent = true;
+        await interaction.editReply({
+          content: 'You have consented to be the GM.',
+          embeds: [],
+          components: [],
+        });
+      } else if (interaction.customId === 'gm_consent_no') {
+        gameData[channelId].gm.consent = false;
+        await interaction.editReply({
+          content: 'You have declined to be the GM.',
+          embeds: [],
+          components: [],
+        });
+      }
+      collector.stop(); // Stop collecting responses after a button is clicked
+    });
+
+    collector.on('end', async (collected, reason) => {
+      if (reason === 'time') {
+        await consentMessage.edit({
+          content: 'GM consent timed out.',
+          embeds: [],
+          components: [],
+        });
+      }
+      if (!gameData[channelId]?.gm?.consent) {
+        message.channel.send('The GM did not consent. Game cancelled.');
+        delete gameData[channelId];
+        saveGameData();
+      }
+    });
+
+    // No need to check for text input, as we're using buttons now
+    return;
   } catch (error) {
     console.error('Error requesting GM consent:', error);
-    if (error.message === 'time') {
-      message.channel.send('GM consent timed out. Game cancelled.');
-    } else {
-      message.channel.send('GM consent failed. Please check the console for details. Game cancelled.');
-    }
+    message.channel.send(
+      'GM consent failed. Please check the console for details. Game cancelled.'
+    );
     delete gameData[channelId];
     saveGameData();
     return;
@@ -1618,6 +1660,145 @@ export async function sendCandleStatus(message, litCandles) {
     }
   } else {
     message.channel.send('***All candles have been extinguished.***');
+  }
+}
+
+async function validateGameSetup(message, args) {
+  const channelId = message.channel.id;
+  const userId = message.author.id;
+
+  if (blocklist[userId]) {
+    return { valid: false, reason: `You are blocked from using the \`.startgame\` command. Reason: ${blocklist[userId]}` };
+  }
+
+  // Check if the user is a player or the GM of another game.
+  let userIsParticipant = false;
+  for (const gameChannelId in gameData) {
+    const game = gameData[gameChannelId];
+    if (game.gmId === userId || game.players[userId]) {
+      userIsParticipant = true;
+      break;
+    }
+  }
+
+  //Allow users to use startgame if they are a participant in any game.
+  if (!userIsParticipant) {
+    return { valid: false, reason: 'You must be a current player or GM to start a game.' };
+  }
+
+  if (gameData[channelId]) {
+    return { valid: false, reason: 'A **Ten Candles** game is already in progress here.' };
+  }
+
+  if (args.length < 3) {
+    return { valid: false, reason: 'A **Ten Candles** game requires a GM and at least 2 players. Usage: `.startgame <GM ID> <Player IDs (space-separated)>`' };
+  }
+
+  const gmId = args[0].replace(/<@!?(\d+)>/, '$1');
+  const playerIds = args.slice(1).map(id => id.replace(/<@!?(\d+)>/, '$1'));
+
+  if (playerIds.length < 2 || playerIds.length > 10) {
+    return { valid: false, reason: 'A **Ten Candles** game requires a GM and at least 2 players (to a maximum of 10 players). No game was started.' };
+  }
+
+  const gm = message.guild.members.cache.get(gmId);
+  if (!gm) {
+    return { valid: false, reason: 'Invalid GM ID. Please mention a valid user in this server. No game was started.' };
+  }
+
+  if (new Set(playerIds).size !== playerIds.length) {
+    return { valid: false, reason: 'Duplicate players found. Each player must be a unique user. No game was started.' };
+  }
+
+  if (playerIds.includes(gmId)) {
+    return { valid: false, reason: 'The GM cannot also be a player. No game was started.' };
+  }
+
+  for (const playerId of playerIds) {
+    const player = message.guild.members.cache.get(playerId);
+    if (!player) {
+      return { valid: false, reason: `Invalid Player ID: <@${playerId}>. Please mention a valid user in this server. No game was started.` };
+    }
+  }
+
+  if (gm.presence?.status === 'offline') {
+    return { valid: false, reason: 'The GM must be online to start a game. No game was started.' };
+  }
+
+  // Check if all players are in the server and online
+  const playerFetchPromises = playerIds.map(async playerId => {
+    try {
+      const member = await message.guild.members.fetch(playerId);
+      return { playerId, isOnline: member.presence?.status !== 'offline', isPresent: true };
+    } catch (error) {
+      // Handle the case where the member is not found in the guild
+      console.error(`Failed to fetch member ${playerId}:`, error);
+      return { playerId, isOnline: false, isPresent: false };
+    }
+  });
+
+  const playerStatuses = await Promise.all(playerFetchPromises);
+  const problemPlayers = playerStatuses.filter(status => !status.isPresent || !status.isOnline);
+
+  if (problemPlayers.length > 0) {
+    const problemPlayerMentions = problemPlayers.map(status => `<@${status.playerId}>`).join(', ');
+    return { valid: false, reason: `Unable to start game due to issues with the following player(s): ${problemPlayerMentions}. Please ensure they are valid users in this server and are online.` };
+  }
+
+  return { valid: true, gmId, playerIds };
+}
+
+// Blocklist management
+let blocklist = {};
+
+function loadBlocklist() {
+  try {
+    const data = fs.readFileSync('blocklist.json', 'utf8');
+    blocklist = JSON.parse(data);
+    console.log('Blocklist loaded successfully.');
+  } catch (err) {
+    console.error('Error loading blocklist:', err);
+    blocklist = {}; // Initialize as an empty object
+    console.log('Blocklist initialized.');
+  }
+}
+
+function saveBlocklist() {
+  try {
+    fs.writeFileSync('blocklist.json', JSON.stringify(blocklist));
+    console.log('Blocklist saved successfully.');
+  } catch (err) {
+    console.error('Error saving blocklist:', err);
+  }
+}
+
+// Load blocklist on startup
+loadBlocklist();
+
+// New functions for blocklist management
+export function blockUser(userId, message, reason = 'No reason provided.') {
+  if (!blocklist[userId]) {
+    blocklist[userId] = reason; // Store the reason along with the user ID
+    saveBlocklist();
+    if (message) {
+      message.channel.send(`<@${userId}> has been added to the blocklist. Reason: ${reason}`);
+    }
+  } else {
+    if (message) {
+      message.channel.send(`<@${userId}> is already on the blocklist. Reason: ${blocklist[userId]}`);
+    }
+  }
+}
+
+export function unblockUser(userId, message) {
+  if (blocklist[userId]) {
+    delete blocklist[userId]; // Remove the user from the object
+    saveBlocklist();
+    if (message)
+      message.channel.send(`<@${userId}> has been removed from the blocklist.`);
+  } else {
+    if (message)
+      message.channel.send(`<@${userId}> is not on the blocklist.`);
   }
 }
 

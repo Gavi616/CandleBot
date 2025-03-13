@@ -61,7 +61,6 @@ export function saveGameData() {
     }
     fs.writeFileSync('gameData.json', JSON.stringify(gameData));
     console.log('Game data saved successfully.');
-    printActiveGames();
   } catch (err) {
     console.error('Error saving game data:', err);
   }
@@ -73,18 +72,16 @@ export function printActiveGames() {
   } else {
     console.log('--- Active Games ---');
     for (const channelId in gameData) {
-      client.channels.fetch(channelId)
-        .then(channel => {
-          if (channel && channel.guild) {
-            console.log(`Server: ${channel.guild.name}, Channel: ${channel.name}`);
-          } else {
-            console.log(`Channel ID: ${channelId} (Channel or Guild not found)`);
-          }
-        })
-        .catch(error => {
-          console.error(`Error fetching channel ${channelId}:`, error);
-          console.log(`Channel ID: ${channelId} (Error fetching channel)`);
-        });
+      const channel = client.channels.cache.get(channelId); // Check if the channel is cached first.
+      if (channel) {
+        if (channel.guild) {
+          console.log(`Server: ${channel.guild.name}, Channel: ${channel.name}`);
+        } else {
+          console.log(`Channel ID: ${channelId} (Guild not found)`);
+        }
+      } else {
+        console.log(`Channel ID: ${channelId} (Channel not found in cache)`);
+      }
     }
   }
 }

@@ -45,6 +45,18 @@ export let blocklist = {};
 client.once('ready', () => {
   const startupTimestamp = new Date().toLocaleString();
   console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
+  console.log(`Logged in as ${client.user.tag} (${client.user.id})`);
+  console.log(`Bot is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'}.`);
+  console.log(`Command prefix is ${prefix}`);
+  console.log(`Use ${prefix}help for a list of commands.`);
+
+  // Check for valid configuration file
+  if (!fs.existsSync('config.js')) {
+    console.error('Configuration file not found. Please create a config.js file with the required settings.');
+    return;
+  } else {
+    console.log('Configuration loaded successfully.');
+  }
 
   // Load blocklist on startup
   loadBlocklist();

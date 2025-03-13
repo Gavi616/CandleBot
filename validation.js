@@ -24,9 +24,9 @@ export async function validateGameSetup(message, args) {
     }
   }
 
-  // In multi argument mode, we need a GM and at least one player.
-  if (mentions.users.size < 2) { // GM + at least 1 players
-    return { valid: false, reason: 'A **Ten Candles** game requires a GM and at least 1 player. Usage: `.startgame <GM mention> <Player mentions (space-separated)>`' };
+  // We need a GM and at least two players.
+  if (mentions.users.size < 3) { // GM + at least 2 players
+    return { valid: false, reason: 'A **Ten Candles** game requires a GM and at least 2 players. Usage: `.startgame <GM mention> <Player mentions (space-separated)>`' };
   }
 
   // Convert the mentions collection to an array

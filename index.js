@@ -45,7 +45,7 @@ export let blocklist = {};
 client.once('ready', () => {
   const startupTimestamp = new Date().toLocaleString();
   console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
-  
+
   // Load blocklist on startup
   loadBlocklist();
 
@@ -53,7 +53,7 @@ client.once('ready', () => {
   try {
     loadGameData();
   } catch (loadError) {
-    console.error('Error during loadGameData in ready event:', loadError);
+    console.error('Error during loadGameData in ready event:', loadError.message);
   }
 });
 
@@ -65,11 +65,16 @@ client.on('interactionCreate', async (interaction) => {
   let game = null;
   for (let key in gameData) {
     const gameEntry = gameData[key];
-    if (gameEntry.gmId === interaction.user.id) {
+    if (gameEntry.gmId === interaction.user.id || gameEntry.players[interaction.user.id]) {
       channelId = key;
       game = gameEntry;
       break;
     }
+  }
+  if (!game) {
+    console.error("Game not found for interaction.", interaction);
+    await interaction.reply({ content: 'No game found.', ephemeral: true });
+    return;
   }
 });
 
@@ -97,7 +102,7 @@ client.on('messageCreate', async (message) => {
           try {
             await message.delete(); // Delete the command message
           } catch (deleteError) {
-            console.error(`Failed to delete message in #${message.channel.name}:`, deleteError);
+            console.error(`Failed to delete message in #${message.channel.name}: ${deleteError.message}`);
           }
           console.log(`${userName} (${userId}) tried to use .${command} in ${message.channel.name}, but there is no game in progress.`);
           return; // Stop processing the command
@@ -110,12 +115,13 @@ client.on('messageCreate', async (message) => {
           try {
             await message.delete(); // Delete the command message
           } catch (deleteError) {
-            console.error(`Failed to delete message in #${message.channel.name}:`, deleteError);
+            console.error(`Failed to delete message in #${message.channel.name}: ${deleteError.message}`);
           }
           console.log(`${userName} (${userId}) tried to use .${command} in #${message.channel.name}, but is not a participant.`);
           return; // Stop processing the command
         }
       }
+
       // Command handling logic
       if (command === 'help') {
         const isAdmin = message.member.permissions.has('Administrator');
@@ -185,7 +191,7 @@ async function me(message) {
   const playerId = message.author.id;
   const playerNumericId = parseInt(playerId);
 
-  if (message.channel.type !== 1) { // Check if it's a DM
+  if (message.channel.type !== ChannelType.DM) { // Check if it's a DM
     try {
       await message.author.send('This command can only be used in a direct message.');
     } catch (error) {
@@ -204,10 +210,9 @@ async function me(message) {
   }
 
   if (!game) {
-    message.reply('You are not currently in a game.');
+    message.author.send('You are not currently in a game.');
     return;
   }
-
   const player = game.players[playerNumericId];
 
   const characterEmbed = new EmbedBuilder()
@@ -229,13 +234,13 @@ async function me(message) {
 
   try {
     await message.author.send({ embeds: [characterEmbed] }); // Send DM
-    if (message.channel.type !== 1) {
+    if (message.channel.type !== ChannelType.DM) {
       await message.delete(); // Delete original message
     }
 
   } catch (error) {
-    console.error('Could not send character sheet DM:', error);
-    if (message.channel.type !== 1) {
+    console.error('Could not send character sheet DM:', error.message);
+    if (message.channel.type !== ChannelType.DM) {
       await message.reply('Could not send character sheet DM. Please enable DMs.'); // Inform in channel if DM fails.
     }
   }
@@ -293,7 +298,7 @@ function loadBlocklist() {
     blocklist = JSON.parse(data);
     console.log('Blocklist loaded successfully.');
   } catch (err) {
-    console.error('Error loading blocklist:', err);
+    console.error(`Error loading blocklist: ${err.message}`);
     blocklist = {}; // Initialize as an empty object
     console.log('Blocklist initialized.');
   }
@@ -304,11 +309,12 @@ function saveBlocklist() {
     fs.writeFileSync('blocklist.json', JSON.stringify(blocklist));
     console.log('Blocklist saved successfully.');
   } catch (err) {
-    console.error('Error saving blocklist:', err);
+    console.error(`Error saving blocklist: ${err.message}`);
   }
 }
 
-function blockUser(userId, message, reason = 'No reason provided.') {
+function blockUser(message, args, reason = 'No reason provided.') {
+  const userId = args[0];
   if (!blocklist[userId]) {
     blocklist[userId] = sanitizeString(reason); // Store the reason along with the user ID
     saveBlocklist();
@@ -322,7 +328,8 @@ function blockUser(userId, message, reason = 'No reason provided.') {
   }
 }
 
-function unblockUser(userId, message) {
+function unblockUser(message, args) {
+  const userId = args[0];
   if (blocklist[userId]) {
     delete blocklist[userId]; // Remove the user from the object
     saveBlocklist();

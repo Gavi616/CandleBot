@@ -1,5 +1,6 @@
 import { gameData, client } from './index.js';
 import { sanitizeString, sendCandleStatus, saveGameData } from './utils.js';
+import { TRAIT_TIMEOUT } from './config.js';
 
 const defaultVirtues = [
   'Courageous', 'Compassionate', 'Just', 'Wise', 'Temperate', 'Hopeful', 'Faithful', 'Loving', 'Loyal', 'Honest',
@@ -32,10 +33,11 @@ export async function sendCharacterGenStep(message, channelId) {
   const players = gameData[channelId].players;
   const playerOrder = gameData[channelId].playerOrder;
   const gmId = gameData[channelId].gmId;
+  const timeoutInMinutes = TRAIT_TIMEOUT / 60000; // Convert milliseconds to minutes for the timeout message
 
   if (step === 1) {
     gameData[channelId].traitsRequested = true;
-    message.channel.send('\n**Step One: Players Write Traits (light three candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have 5 minutes to complete this step.');
+    message.channel.send(`\n**Step One: Players Write Traits (light three candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have ${timeoutInMinutes} minutes to complete this step.`);
     sendCandleStatus(message, 3);
     saveGameData();
     const traitPromises = [];
@@ -49,13 +51,13 @@ export async function sendCharacterGenStep(message, channelId) {
     gameData[channelId].players = swappedTraits;
     saveGameData();
   } else if (step === 3) {
-    message.channel.send('**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.\nYou have 5 minutes to complete this step.');
+    message.channel.send(`**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.\nYou have 5 minutes to complete this step.`);
     await askPlayersForCharacterInfo(message, channelId);
     gameData[channelId].characterGenStep++;
     saveGameData();
     sendCharacterGenStep(message, channelId);
   } else if (step === 4) {
-    message.channel.send('**Step Four: Players Plan Moments (light three more candles)**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.\nYou have 5 minutes to respond.');
+    message.channel.send('**Step Four: Players Plan Moments (light three more candles)**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.\nYou have ${timeoutInMinutes} minutes to respond.');
 
     sendCandleStatus(message, 6);
     const momentPromises = playerOrder.map(async (playerId) => {
@@ -66,7 +68,7 @@ export async function sendCharacterGenStep(message, channelId) {
         await user.send('Please DM me your Moment.');
 
         const filter = m => m.author.id === playerId;
-        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 300000, errors: ['time'] });
+        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: TRAIT_TIMEOUT, errors: ['time'] });
 
         if (collected.size > 0) {
           gameData[channelId].players[playerId].moment = collected.first().content;
@@ -75,6 +77,8 @@ export async function sendCharacterGenStep(message, channelId) {
         }
       } catch (error) {
         console.error(`Error handling Moment for player ${playerId}:`, error);
+        const player = await message.guild.members.fetch(playerId);
+        const user = player.user;
         assignRandomMoment(user, gameData[channelId].players[playerId]);
       }
     });
@@ -129,17 +133,19 @@ export async function sendCharacterGenStep(message, channelId) {
         await user.send(`Your swapped Brink is: ${swappedBrinks[playerId].brink}\nPlease write it on an index card.`);
       } catch (error) {
         console.error(`Error DMing player ${playerId} for swapped brink:`, error);
+        message.channel.send(`Could not DM player ${playerId} for swapped brink.`); //Inform the channel.
       }
     });
 
     await Promise.all(brinkSwapPromises);
 
     try {
-      const gm = message.guild.members.cache.get(gmId);
+      const gm = await message.guild.members.fetch(gmId);
       const user = gm.user;
       await user.send(`Your "I have seen them.." is: ${swappedBrinks[playerOrder[0]].brink}\nPlease write it on an index card.`);
     } catch (error) {
       console.error(`Error DMing GM ${gmId} for swapped brink:`, error);
+      message.channel.send(`Could not DM the GM for swapped brink.`);//Inform the channel.
     }
   } else if (step === 7) {
     message.channel.send('**Step Seven: Inventory Supplies (light the final candle)**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). *Your GM must use `.nextstep` to continue.*\n**It begins.**');
@@ -150,17 +156,25 @@ export async function sendCharacterGenStep(message, channelId) {
     const players = gameData[channelId].players;
     const gameMode = gameData[channelId].gameMode;
 
+    const finalRecordingPromises = [];
     for (const userId in players) {
-      try {
-        if (gameMode === "text-only") {
-          client.users.cache.get(userId).send('Please record your final message for the world, in character. Send it via DM as a text message.');
-        } else { // Assuming "voice-plus-text" is the only other option
-          client.users.cache.get(userId).send('Please record your final message for the world, in character. Send it via DM as an audio file or a text message.');
-        }
-      } catch (error) {
-        console.error(`Error DMing user ${userId}:`, error);
-      }
+      finalRecordingPromises.push(
+        (async () => {
+          try {
+            const user = await client.users.fetch(userId);
+            if (gameMode === "text-only") {
+              await user.send('Please record your final message for the world, in character. Send it via DM as a text message.');
+            } else { // Assuming "voice-plus-text" is the only other option
+              await user.send('Please record your final message for the world, in character. Send it via DM as an audio file or a text message.');
+            }
+          } catch (error) {
+            console.error(`Error DMing user ${userId}:`, error);
+            message.channel.send(`Could not DM user ${userId} for final recordings.`);//Inform the channel.
+          }
+        })()
+      );
     }
+    await Promise.all(finalRecordingPromises);
   } else if (step === 9) {
     message.channel.send(
       '**Game Start**\n' +
@@ -179,9 +193,10 @@ export async function sendCharacterGenStep(message, channelId) {
     saveGameData();
     sendCandleStatus(message, 10);
     // Send command usage messages to players and GM
-    for (const playerId of playerOrder) {
-      const player = await message.guild.members.fetch(playerId);
-      const playerMessage = `**Mechanics**
+    const commandUsagePromises = playerOrder.map(async (playerId) => {
+      try {
+        const player = await message.guild.members.fetch(playerId);
+        const playerMessage = `**Mechanics**
     Resolving a Conflict: Use \`.conflict\` after you have declared the action you'd like to take to roll the communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).
     Burning Traits: A trait can be burned in order to reroll all dice which come up 1 in a conflict.
     Moment: If you live your Moment successfully, gain a Hope Die to add to your conflict rolls.
@@ -198,12 +213,12 @@ export async function sendCharacterGenStep(message, channelId) {
     Truths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped.", "Our flashlights illuminated the water, but there were no waves." or "We filled the pickup’s tank by mouth-siphoning gas from cars on the highway".
     After the last truth everyone left alive speaks, “and we are alive.”
     Dice Pools Refresh: The Players’ pool of dice refills to the number of lit candles. The GM’s pool equals the number of unlit candles.`;
-      try {
         await player.user.send(playerMessage);
       } catch (error) {
         console.error(`Error DMing player ${playerId}:`, error);
+        message.channel.send(`Could not DM player ${playerId} for command usage message.`);//Inform the channel.
       }
-    }
+    });
 
     // Send GM command usage message
     try {
@@ -225,14 +240,12 @@ Establish # truths equal to lit candles.
 Truths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped.", "Our flashlights illuminated the water, but there were no waves." or "We filled the pickup’s tank by mouth-siphoning gas from cars on the highway".
 After the last truth everyone left alive speaks, “and we are alive.”
 Dice Pools Refresh: The Players’ pool of dice refills to the number of lit candles. The GM’s pool equals the number of unlit candles.`;
-      try {
-        await gm.user.send(gmMessage);
-      } catch (error) {
-        console.error(`Error DMing GM ${gmId}:`, error);
-      }
+      await gm.user.send(gmMessage);
     } catch (error) {
-      console.error(`Error fetching GM ${gmId}:`, error);
+      console.error(`Error DMing GM ${gmId}:`, error);
+      message.channel.send(`Could not DM GM ${gmId} for command usage message.`);//Inform the channel.
     }
+    await Promise.all(commandUsagePromises);
   }
 }
 

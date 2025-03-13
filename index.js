@@ -45,6 +45,11 @@ export let blocklist = {};
 client.once('ready', () => {
   const startupTimestamp = new Date().toLocaleString();
   console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
+  
+  // Load blocklist on startup
+  loadBlocklist();
+
+  // Load game data on startup
   try {
     loadGameData();
   } catch (loadError) {
@@ -77,10 +82,12 @@ client.on('messageCreate', async (message) => {
 
   if (message.channel.type !== ChannelType.DM) {
     if (message.content.startsWith(prefix)) {
-      const args = message.content.slice(prefix.length).trim().split(/ +/);
+      const args = message.content.slice(prefix.length).split(/ +/);
       const command = args.shift().toLowerCase();
 
       // Check if the command requires a game in progress
+      const game = gameData[channelId];
+
       const gameRequiredCommands = ['conflict', 'playrecordings', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x'];
 
       if (gameRequiredCommands.includes(command)) {
@@ -139,39 +146,39 @@ client.on('messageCreate', async (message) => {
       }
     }
   }
-    if (message.channel.type === ChannelType.DM) {
-      const game = Object.values(gameData).find(game => {
-        if (game.gmId === userId) return true;
-        if (game.players && game.players[userId]) return true;
-        return false;
-      });
+  if (message.channel.type === ChannelType.DM) {
+    const game = Object.values(gameData).find(game => {
+      if (game.gmId === userId) return true;
+      if (game.players && game.players[userId]) return true;
+      return false;
+    });
 
-      // .x and .me command listener (for Direct Messaging)
-      if (message.content.toLowerCase() === '.x') {
-        const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
-        if (gameChannelId) {
-          const gameChannel = client.channels.cache.get(gameChannelId);
-          if (gameChannel) {
-            gameChannel.send(`One or more players and/or the GM are ready to move on, please wrap up the scene quickly.`);
-          }
+    // .x and .me command listener (for Direct Messaging)
+    if (message.content.toLowerCase() === '.x') {
+      const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
+      if (gameChannelId) {
+        const gameChannel = client.channels.cache.get(gameChannelId);
+        if (gameChannel) {
+          gameChannel.send(`One or more players and/or the GM are ready to move on, please wrap up the scene quickly.`);
         }
-      } else if (message.content.toLowerCase() === '.me') {
-        me(message);
       }
-
-      //Check if there is a game and if that game is waiting for character generation info.
-      if (game && game.characterGenStep === 1) {
-        await handleCharacterGenStep1DM(message, game);
-      } else if (game && game.characterGenStep === 4) {
-        await handleCharacterGenStep4DM(message, game);
-      } else if (game && game.characterGenStep === 5) {
-        await handleCharacterGenStep5DM(message, game);
-      } else if (game && game.characterGenStep === 6) {
-        await handleCharacterGenStep6DM(message, game);
-      } else if (game && game.characterGenStep === 8) {
-        await handleCharacterGenStep8DM(message, game);
-      }
+    } else if (message.content.toLowerCase() === '.me') {
+      me(message);
     }
+
+    //Check if there is a game and if that game is waiting for character generation info.
+    if (game && game.characterGenStep === 1) {
+      await handleCharacterGenStep1DM(message, game);
+    } else if (game && game.characterGenStep === 4) {
+      await handleCharacterGenStep4DM(message, game);
+    } else if (game && game.characterGenStep === 5) {
+      await handleCharacterGenStep5DM(message, game);
+    } else if (game && game.characterGenStep === 6) {
+      await handleCharacterGenStep6DM(message, game);
+    } else if (game && game.characterGenStep === 8) {
+      await handleCharacterGenStep8DM(message, game);
+    }
+  }
 });
 
 async function me(message) {
@@ -300,9 +307,6 @@ function saveBlocklist() {
     console.error('Error saving blocklist:', err);
   }
 }
-
-// Load blocklist on startup
-loadBlocklist();
 
 function blockUser(userId, message, reason = 'No reason provided.') {
   if (!blocklist[userId]) {

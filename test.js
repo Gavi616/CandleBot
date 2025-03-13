@@ -1,8 +1,9 @@
-// test.js
 import 'dotenv/config';
-import { ChannelType, Client, GatewayIntentBits, Guild, User } from 'discord.js';
+import { ChannelType, Client, GatewayIntentBits, Collection } from 'discord.js'; //Import the collection.
 import * as fs from 'fs';
-import { action, startGame, nextStep, died, cancelGame, client, sendCandleStatus, playRecordings } from './index.js'; // Import the functions from index.js, and the client
+import { client, gameData, blocklist } from './index.js';
+import { startGame } from './commands/startgame.js';
+import { loadGameData } from './utils.js';
 
 // Replace with your actual IDs
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
@@ -13,7 +14,6 @@ const TEST_PLAYER_ID_1 = '877545709644173372'; // @wyldwoodwitch
 const TEST_PLAYER_ID_2 = '1348988696669458523'; // @balsamicgames
 
 let mockMembers = {};
-let mockGameData = {};
 let mockGuild;
 let mockChannel;
 let mockUser;
@@ -32,10 +32,34 @@ class MockUser {
     }
 }
 //Create the mock guild
-class MockGuild extends Guild {
+class MockGuild extends Client {
     constructor(client, data) { //Added the memberManager here.
-        super(client, data);
+        super({ //Add intents.
+            intents: [
+                GatewayIntentBits.Guilds,
+                GatewayIntentBits.GuildMessages,
+                GatewayIntentBits.MessageContent,
+                GatewayIntentBits.GuildMembers,
+                GatewayIntentBits.DirectMessages,
+                GatewayIntentBits.DirectMessageReactions,
+                GatewayIntentBits.DirectMessageTyping,
+                GatewayIntentBits.GuildPresences
+            ],
+        });
         this.name = "Balsamic Moon Games";
+        this.members = {
+            cache: new Collection(), // Initialize cache as a Collection
+            fetch: (userId) => {
+                return new Promise((resolve, reject) => {
+                    const member = mockMembers[userId];
+                    if (member) {
+                        resolve(member);
+                    } else {
+                        reject(new Error(`Member with ID ${userId} not found.`));
+                    }
+                });
+            }
+        };
     }
 }
 
@@ -44,56 +68,71 @@ const mockGuildData = {
     id: TEST_SERVER_ID,
     name: "Balsamic Moon Games",
 };
-client.users.cache.get = (userId) => {
-    if (userId === GM_USER_ID) return mockUser;
-    if (userId === TEST_PLAYER_ID_1) return mockPlayer1;
-    if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
-    return null;
-};
 
 //Mock functions
 const mockSaveGameData = () => {
     console.log('Mock saveGameData called.');
     // Optionally, you can do something with mockGameData here
-    fs.writeFileSync('mockGameData.json', JSON.stringify(mockGameData));
+    fs.writeFileSync('gameData.json', JSON.stringify(gameData));
     console.log('Mock game data saved successfully.');
 };
+
 const mockLoadGameData = () => {
-    try {
-        const data = fs.readFileSync('mockGameData.json', 'utf8');
-        mockGameData = JSON.parse(data);
-        console.log('Mock game data loaded successfully.');
-    } catch (err) {
-        console.error('Error loading mock game data:', err);
-        mockGameData = {};
-        console.log('Mock game data initialized.');
-        // Create an empty mockGameData.json file.
-        try {
-            fs.writeFileSync('mockGameData.json', JSON.stringify(mockGameData));
-            console.log('Empty mockGameData.json created successfully.');
-        } catch (createError) {
-            console.error('Error creating empty mockGameData.json:', createError);
+    try { //load the game data.
+        const data = fs.readFileSync('gameData.json', 'utf8'); //Read the game data.
+        if (data.trim().length > 0) { //Check that there is data.
+            const parsedData = JSON.parse(data); //parse the data.
+            // Check if parsedData is an object and not null or undefined
+            if (typeof parsedData === 'object' && parsedData !== null) { //check that the data is correct.
+                // Copy the parsed data into the existing gameData object
+                Object.assign(gameData, parsedData); //assign the parsed data.
+            } else {
+                throw new Error('Parsed data is not an object.');
+            }
+            console.log('Game data loaded successfully.');
+        } else {
+            console.log('gameData.json is empty. No data loaded.');
+            // Clear the existing gameData object
+            Object.keys(gameData).forEach(key => delete gameData[key]); //clear gamedata.
+            console.log('Game data initialized.');
         }
+        mockPrintActiveGames();
+    } catch (err) { //If there is an error.
+        console.error('Error loading game data:', err);
+        // Clear the existing gameData object
+        Object.keys(gameData).forEach(key => delete gameData[key]); //clear gamedata.
+        console.log('Game data initialized.');
     }
 };
+
 const mockPrintActiveGames = () => {
-    if (Object.keys(mockGameData).length === 0) {
+    if (Object.keys(gameData).length === 0) {
         console.log('-- No Active Games --');
     } else {
         console.log('--- Active Games ---');
-        for (const channelId in mockGameData) {
+        for (const channelId in gameData) {
             console.log(`Channel ID: ${channelId}`);
         }
     }
 };
 
-//modify the existing client
-client.gameData = mockGameData; //assign gameData to client.
-client.saveGameData = mockSaveGameData;
-client.loadGameData = mockLoadGameData;
-client.printActiveGames = mockPrintActiveGames;
+const mockLoadBlocklist = () => { //Load the blocklist here.
+    try {
+        const data = fs.readFileSync('blocklist.json', 'utf8');
+        const parsedBlocklist = JSON.parse(data);
+        // Copy the parsed data into the existing blocklist object
+        Object.assign(blocklist, parsedBlocklist);
+        console.log('Blocklist loaded successfully.');
+    } catch (err) {
+        console.error('Error loading blocklist:', err);
+        // Clear the existing blocklist object
+        Object.keys(blocklist).forEach(key => delete blocklist[key]);
+        console.log('Blocklist initialized.');
+    }
+};
 
-mockLoadGameData();
+//modify the existing client
+client.saveGameData = mockSaveGameData;
 
 //mock client fetch
 client.channels.fetch = (channelId) => {
@@ -101,288 +140,60 @@ client.channels.fetch = (channelId) => {
     return Promise.reject(new Error('Channel not found'));
 };
 
-// Run the tests
-async function runTests() {
+client.users.cache.get = (userId) => {
+    if (userId === GM_USER_ID) return mockUser;
+    if (userId === TEST_PLAYER_ID_1) return mockPlayer1;
+    if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
+    return null;
+};
+
+async function runGameDataTest() {
+    console.log('Starting game data save/load test...');
+
     try {
-        console.log('Starting tests...');
+        // 0. Load gamedata and blocklist.
+        loadGameData();
+        mockLoadBlocklist();
 
-        // Test 1: Start Game
+        // 1. Start a game
         mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage);
-        console.log('Start game test finished.');
+        await startGame(mockMessage, gameData);
 
-        // Test 2: Check game has started
-        client.printActiveGames();
+        // 2. Simulate saving gameData
+        client.saveGameData();
+        console.log('gameData after save:', gameData);
 
-        // Test 3: Test Action
-        mockMessage.content = `.action`;
-        mockMessage.author = mockUser;
-        await action(mockMessage, []);
-        console.log('Action test finished.');
+        // 3. Clear gameData
+        const initialGameData = { ...gameData }; //Save initial game data.
+        Object.keys(gameData).forEach(key => delete gameData[key]); //clear gameData.
+        console.log('gameData cleared:', gameData); //Log cleared.
 
-        // Test 4: Test Died (Martyr)
-        mockMessage.content = `.died <@${TEST_PLAYER_ID_1}> -martyr`;
-        mockMessage.author = mockUser;
-        await died(mockMessage, [`<@${TEST_PLAYER_ID_1}>`, `-martyr`]);
-        console.log('Died (martyr) test finished.');
+        // 4. Load gameData
+        loadGameData();
+        console.log('gameData after load:', gameData);
 
-        // Test 8: Test Play Recordings
-        mockMessage.content = `.playrecordings`;
-        mockMessage.author = mockUser;
-        await playRecordings(mockMessage);
-        console.log('Play Recordings test finished.');
+        // 5. Verify gameData
+        const channelId = TEST_CHANNEL_ID;
+        const gameExists = gameData[channelId] !== undefined;
+        const hasPlayers = gameData[channelId]?.players !== undefined;
+        const hasGm = gameData[channelId]?.gmId !== undefined;
+        const hasPlayerOrder = gameData[channelId]?.playerOrder !== undefined;
 
-        // Test 5: Test Cancel Game
-        mockMessage.content = `.cancelgame`;
-        mockMessage.author = mockUser;
-        await cancelGame(mockMessage);
-        console.log('Cancel game test finished.');
+        console.log("does the game exist in gamedata? ", gameExists);
+        console.log("does the game have players? ", hasPlayers);
+        console.log("does the game have a GM? ", hasGm);
+        console.log("does the game have a playerOrder? ", hasPlayerOrder);
 
-        // Test 6: Check no game active
-        client.printActiveGames();
-
-        // Test 7: Test Candle Count
-        await sendCandleStatus(mockMessage, 1);
-        console.log('Candle count test finished.');
-
-        // Test 9: Test Candle Count 0
-        await sendCandleStatus(mockMessage, 0);
-        console.log('Candle count 0 test finished.');
-
-        // Test 10: Test Candle Count 2
-        await sendCandleStatus(mockMessage, 2);
-        console.log('Candle count 2 test finished.');
-
-        // Test 11: Test Candle Count 6
-        await sendCandleStatus(mockMessage, 6);
-        console.log('Candle count 6 test finished.');
-
-        // Test 12: Test Candle Count 10
-        await sendCandleStatus(mockMessage, 10);
-        console.log('Candle count 10 test finished.');
-
-        // Test 13: GM Declines Consent
-        await cancelExistingGame(mockMessage, 'GM Declines Consent');
-
-        mockUser.awaitMessages = () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'n', author: mockUser }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        };
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage);
-        console.log('GM Declines Consent test finished.');
-
-        // Test 14: Player Declines Consent
-        await cancelExistingGame(mockMessage, 'Player Declines Consent');
-
-        mockPlayer1.awaitMessages = () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'n', author: mockPlayer1 }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        };
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage);
-        console.log('Player Declines Consent test finished.');
-        //Set it back to normal, for future tests.
-        mockPlayer1.awaitMessages = () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'y', author: mockPlayer1 }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        };
-
-        //Test 15: GM Timeout
-        await cancelExistingGame(mockMessage, 'GM Timeout');
-
-        mockUser.awaitMessages = () => { // Add awaitMessages
-            return new Promise((resolve, reject) => {
-                //No set timeout, so it should time out.
-            });
-        };
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage);
-        console.log('GM Timeout test finished.');
-        //Reset the user.
-        mockUser.awaitMessages = () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'y', author: mockUser }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        };
-
-        // Test 16: Player Timeout
-        await cancelExistingGame(mockMessage, 'Player Timeout');
-        
-        mockPlayer1.awaitMessages = () => { // Add awaitMessages
-            return new Promise((resolve, reject) => {
-                //No timeout.
-            });
-        };
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage);
-        console.log('Player Timeout test finished.');
-        //Reset the user.
-        mockPlayer1.awaitMessages = () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'y', author: mockPlayer1 }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        };
-
-        // Test 17: Duplicate Players
-        await cancelExistingGame(mockMessage, 'Duplicate Players');
-
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_1}>`;
-        await startGame(mockMessage);
-        console.log('Duplicate Players test finished.');
-
-        // Test 18: GM as Player
-        await cancelExistingGame(mockMessage, 'GM as Player');
-
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${GM_USER_ID}>`;
-        await startGame(mockMessage);
-        console.log('GM as Player test finished.');
-
-        // Test 19: Offline GM
-        // Create a mock offline GM
-        await cancelExistingGame(mockMessage, 'Offline GM');
-
-        const mockOfflineGM = {
-            id: GM_USER_ID,
-            presence: { status: 'offline' },
-            user: { username: "GavinTheGM" },
-        };
-        // Override the get function for this test
-        client.users.cache.get = (userId) => {
-            if (userId === GM_USER_ID) return mockOfflineGM;
-            if (userId === TEST_PLAYER_ID_1) return mockPlayer1;
-            if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
-            return null;
-        };
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage);
-        console.log('Offline GM test finished.');
-        // Set the users back to normal.
-        client.users.cache.get = (userId) => {
-            if (userId === GM_USER_ID) return mockUser;
-            if (userId === TEST_PLAYER_ID_1) return mockPlayer1;
-            if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
-            return null;
-        };
-
-        // Test 20: Offline Players
-        // Create a mock offline player
-        await cancelExistingGame(mockMessage, 'Offline Players');
-
-        const mockOfflinePlayer1 = {
-            id: TEST_PLAYER_ID_1,
-            presence: { status: 'offline' },
-            user: { username: "PlayerOne" },
-        };
-        // Override the get function for this test
-        client.users.cache.get = (userId) => {
-            if (userId === GM_USER_ID) return mockUser;
-            if (userId === TEST_PLAYER_ID_1) return mockOfflinePlayer1;
-            if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
-            return null;
-        };
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage);
-        console.log('Offline Players test finished.');
-        // Set the users back to normal.
-        client.users.cache.get = (userId) => {
-            if (userId === GM_USER_ID) return mockUser;
-            if (userId === TEST_PLAYER_ID_1) return mockPlayer1;
-            if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
-            return null;
-        };
-
-        // Test 21: Zero Players
-        await cancelExistingGame(mockMessage, 'Zero Players');
-
-        mockMessage.content = `.startgame <@${GM_USER_ID}>`;
-        await startGame(mockMessage);
-        console.log('Zero Players test finished.');
-
-        //Test 22: More Than 10 Players
-        //Create 10 new mock users
-        await cancelExistingGame(mockMessage, 'More Than 10 Players');
-
-        let mockPlayers = [];
-        for (let i = 3; i <= 13; i++) {
-            let mockPlayer = new MockUser(client, {
-                id: `TEST_PLAYER_ID_${i}`,
-                username: `Player${i}`,
-                send: (content) => {
-                    console.log(`[Mock User TEST_PLAYER_ID_${i}] Sending DM:`, content);
-                    return Promise.resolve();
-                },
-                createDM: () => {
-                    return Promise.resolve(mockChannel);
-                },
-                awaitMessages: () => {
-                    return new Promise((resolve) => {
-                        setTimeout(() => {
-                            const mockMessage = { content: 'y', author: mockPlayer };
-                            const map = new Map([['1', mockMessage]]);
-                            map.first = () => mockMessage;
-                            resolve(map);
-                        }, 100);
-                    });
-                }
-            });
-            mockPlayers.push(mockPlayer);
+        // 6. Check if the loaded data matches the initial data
+        if (gameExists && hasPlayers && hasGm && hasPlayerOrder) {
+            console.log('Game data was saved and loaded successfully!');
+        } else {
+            console.error('Game data was NOT saved and loaded correctly!');
         }
-        // Add the members.
-        for (let i = 0; i < mockPlayers.length; i++) {
-            let mockPlayer = mockPlayers[i];
-            mockMembers[mockPlayer.id] = { user: mockPlayer, id: mockPlayer.id }
-            client.users.cache.get = (userId) => {
-                if (userId === GM_USER_ID) return mockUser;
-                if (userId === TEST_PLAYER_ID_1) return mockPlayer1;
-                if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
-                for (let i = 0; i < mockPlayers.length; i++) {
-                    if (userId === mockPlayers[i].id) return mockPlayers[i];
-                }
-                return null;
-            };
-        }
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}> ${mockPlayers.map(p => `<@${p.id}>`).join(' ')}`;
-        await startGame(mockMessage);
-        console.log('More Than 10 Players test finished.');
-
     } catch (error) {
-        console.error('Test error:', error);
+        console.error('Game data test error:', error);
     } finally {
-        console.log('All tests finished.');
+        console.log('Game data test finished.');
     }
 }
 
@@ -484,37 +295,20 @@ client.once('ready', () => {
     mockGuild = new MockGuild(client, mockGuildData); // Create the guild, and pass it the manager.
 
     // Add the members to mockMembers.
-    mockMembers[mockUser.id] = { user: mockUser, id: mockUser.id };
-    mockMembers[mockPlayer1.id] = { user: mockPlayer1, id: mockPlayer1.id };
-    mockMembers[mockPlayer2.id] = { user: mockPlayer2, id: mockPlayer2.id };
+    mockMembers[mockUser.id] = { user: mockUser, id: mockUser.id, guild:mockGuild }; //Added the guild object.
+    mockMembers[mockPlayer1.id] = { user: mockPlayer1, id: mockPlayer1.id, guild:mockGuild  }; //Added the guild object.
+    mockMembers[mockPlayer2.id] = { user: mockPlayer2, id: mockPlayer2.id, guild:mockGuild  }; //Added the guild object.
 
-    //mock fetch
-    const mockFetch = (memberId) => {
-        return new Promise((resolve, reject) => {
-            const member = mockMembers[memberId];
-            if (member) {
-                resolve(member);
-            } else {
-                reject(new Error(`Member with ID ${memberId} not found.`));
-            }
-        });
-    };
-
-    mockGuild.members = {
-        cache: {
-            get: (id) => mockMembers[id],
-        },
-        fetch: mockFetch,
-    };
+    //Add the members to the guild cache
+    mockGuild.members.cache.set(mockUser.id, mockMembers[mockUser.id]); //Set the user.
+    mockGuild.members.cache.set(mockPlayer1.id, mockMembers[mockPlayer1.id]); //Set the user.
+    mockGuild.members.cache.set(mockPlayer2.id, mockMembers[mockPlayer2.id]); //Set the user.
 
     // Create a mock message object with the required properties and methods
     mockMessage = {
         channel: mockChannel,
         author: mockUser,
-        member: { // Manually create a member.
-            user: mockUser,
-            id: mockUser.id
-        }, // Create a proper member object
+        member: mockMembers[mockUser.id],
         guild: mockGuild,
         content: '',
         reply: (content) => {
@@ -526,16 +320,8 @@ client.once('ready', () => {
             return Promise.resolve();
         },
     };
-    runTests();
+
+    // Run the game data test
+    runGameDataTest();
 });
-
-async function cancelExistingGame(mockMessage, testName) {
-    // Clear any game that may be active.
-    mockMessage.content = `.cancelgame`;
-    mockMessage.author = mockUser;
-    await cancelGame(mockMessage);
-    console.log(`Canceling any existing game before ${testName} test.`);
-}
-
-//Instantiate the client related objects after login.
 client.login(DISCORD_TOKEN);

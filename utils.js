@@ -8,6 +8,99 @@ import {
   getVoiceConnection
 } from '@discordjs/voice';
 import { ChannelType } from 'discord.js';
+import { TRAIT_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
+
+export async function askForTraits(message, game, playerId) {
+  const player = await message.guild.members.fetch(playerId);
+  const user = player.user;
+  const dmChannel = await user.createDM();
+
+  try {
+    await user.send('Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").');
+
+    const filter = m => m.author.id === playerId;
+    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: TRAIT_TIMEOUT, errors: ['time'] });
+
+    if (collected.size > 0) {
+      // Player responded in time. `handleCharacterGenStep1DM` will handle the rest.
+      return;
+    } else {
+      // Player timed out. Assign random traits.
+      game.players[playerId].virtue = getRandomVirtue();
+      game.players[playerId].vice = getRandomVice();
+      saveGameData();
+      await user.send(`You timed out. Random traits have been assigned: Virtue - ${game.players[playerId].virtue}, Vice - ${game.players[playerId].vice}`);
+    }
+  } catch (error) {
+    console.error(`Error DMing player ${playerId} or assigning random traits:`, error);
+  }
+}
+
+export async function askPlayersForCharacterInfo(message, channelId) {
+  const game = gameData[channelId];
+  const playerIds = game.playerOrder;
+
+  for (const playerId of playerIds) {
+    try {
+      const player = await message.guild.members.fetch(playerId);
+      const user = player.user;
+
+      // Ask for Name
+      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'name', "What's your character's name or nickname?");
+
+      // Ask for Look
+      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'look', 'What does your character look like at a quick glance?');
+
+      // Ask for Concept
+      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?');
+
+    } catch (error) {
+      console.error(`Error requesting character info from player ${playerId}:`, error);
+      message.channel.send(`Failed to get character info from player <@${playerId}>. Game cancelled.`);
+      delete gameData[channelId];
+      saveGameData();
+      return;
+    }
+  }
+}
+
+export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, retryCount = 0) {
+  try {
+    const dmChannel = await user.createDM();
+    await user.send(question);
+
+    const filter = m => m.author.id === playerId;
+    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+
+    if (collected.size > 0) {
+      const response = collected.first().content;
+      game.players[playerId][field] = sanitizeString(response);
+      saveGameData();
+    } else {
+      throw new Error(`Player <@${playerId}> timed out while providing ${field}.`);
+    }
+  } catch (error) {
+    if (retryCount < 3) {
+      await user.send(`You timed out. Please provide your ${field} again.`);
+      await askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, retryCount + 1);
+    } else {
+      throw new Error(`Player <@${playerId}> timed out after multiple retries.`);
+    }
+  }
+}
+
+export function assignRandomMoment(user, player) {
+  player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
+  user.send(`You timed out. A random Moment has been assigned: "${player.moment}"`);
+}
+
+function getRandomVirtue() {
+  return defaultVirtues[Math.floor(Math.random() * defaultVirtues.length)];
+}
+
+function getRandomVice() {
+  return defaultVices[Math.floor(Math.random() * defaultVices.length)];
+}
 
 export function sanitizeString(str) {
   if (typeof str !== 'string') {

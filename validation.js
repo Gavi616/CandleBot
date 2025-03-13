@@ -1,7 +1,7 @@
 import { gameData, blocklist } from './index.js';
 import { ChannelType } from 'discord.js';
 
-export async function validateGameSetup(message, args) {
+export async function validateGameSetup(message) {
   const channelId = message.channel.id;
   const userId = message.author.id;
   const mentions = message.mentions;
@@ -23,49 +23,6 @@ export async function validateGameSetup(message, args) {
       return { valid: false, reason: 'You are already in a game. You must cancel your current game before starting a new one.' };
     }
   }
-
-  // We need a GM and at least two players.
-  if (mentions.users.size < 3) { // GM + at least 2 players
-    return { valid: false, reason: 'A **Ten Candles** game requires a GM and at least 2 players. Usage: `.startgame <GM mention> <Player mentions (space-separated)>`' };
-  }
-
-  // Convert the mentions collection to an array
-  const mentionedUsers = Array.from(mentions.users.values());
   
-  //Extract the GM
-  const gmId = mentionedUsers.shift().id; //remove the first user, which is the GM.
-
-  //Get the players
-  const playerIds = mentionedUsers.map(user => user.id); // Get the ids of all remaining users.
-  
-  // Basic checks to ensure all mentioned users are unique and that the GM isn't a player.
-  if (new Set(playerIds).size !== playerIds.length) {
-    return { valid: false, reason: 'Duplicate players found. Each player must be a unique user. No game was started.' };
-  }
-
-  if (playerIds.includes(gmId)) {
-    return { valid: false, reason: 'The GM cannot also be a player. No game was started.' };
-  }
-  
-  // Check if the number of players is within the allowed range.
-  if (playerIds.length < 1 || playerIds.length > 10) {
-    return { valid: false, reason: 'A **Ten Candles** game requires a GM and at least 1 player (to a maximum of 10 players). No game was started.' };
-  }
-
-  // Check if the GM exists in the server.
-  const gm = guild.members.cache.get(gmId);
-  if (!gm) {
-    return { valid: false, reason: 'Invalid GM ID. Please mention a valid user in this server. No game was started.' };
-  }
-
-  // Check if all players are in the server.
-  if (playerIds) {
-    for (const playerId of playerIds) {
-      const player = guild.members.cache.get(playerId);
-      if (!player) {
-        return { valid: false, reason: `Invalid Player ID: <@${playerId}>. Please mention a valid user in this server. No game was started.` };
-      }
-    }
-  }
-  return { valid: true, reason: null, gmId, playerIds };
+  return { valid: true, reason: null }; //everything is good.
 }

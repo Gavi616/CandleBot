@@ -47,8 +47,7 @@ client.once('ready', () => {
   console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
   console.log(`Logged in as ${client.user.tag} (${client.user.id})`);
   console.log(`Bot is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'}.`);
-  console.log(`Command prefix is ${prefix}`);
-  console.log(`Use ${prefix}help for a list of commands.`);
+  console.log(`Command prefix is ${prefix} -- use ${prefix}help for a list of commands.`);
 
   // Check for valid configuration file
   if (!fs.existsSync('config.js')) {

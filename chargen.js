@@ -1,31 +1,13 @@
 import { gameData, client } from './index.js';
-import { sanitizeString, sendCandleStatus, saveGameData } from './utils.js';
+import {
+  sanitizeString,
+  sendCandleStatus,
+  saveGameData,
+  askForTraits,
+  askPlayersForCharacterInfo,
+  assignRandomMoment
+} from './utils.js';
 import { TRAIT_TIMEOUT } from './config.js';
-
-const defaultVirtues = [
-  'Courageous', 'Compassionate', 'Just', 'Wise', 'Temperate', 'Hopeful', 'Faithful', 'Loving', 'Loyal', 'Honest',
-  'Generous', 'Patient', 'Diligent', 'Forgiving', 'Kind', 'Optimistic', 'Reliable', 'Respectful', 'Selfless', 'Sincere',
-  'Tolerant', 'Trustworthy', 'Understanding', 'Vigilant', 'Witty', 'Adaptable', 'Ambitious', 'Charitable', 'Creative', 'Decisive'
-];
-
-const defaultVices = [
-  'Greedy', 'Wrathful', 'Envious', 'Slothful', 'Proud', 'Gluttonous', 'Lustful', 'Treacherous', 'Deceitful', 'Cowardly',
-  'Jealous', 'Malicious', 'Pessimistic', 'Reckless', 'Resentful', 'Rude', 'Selfish', 'Stubborn', 'Suspicious', 'Vain',
-  'Vengeful', 'Wasteful', 'Withdrawn', 'Arrogant', 'Bitter', 'Careless', 'Cruel', 'Dishonest', 'Frivolous', 'Hateful'
-];
-
-const defaultMoments = [
-  "Find a way to signal for help.",
-  "Locate a safe place to rest.",
-  "Protect a vulnerable person.",
-  "Discover the source of the strange noises.",
-  "Retrieve a lost item of importance.",
-  "Find a way to communicate with the outside world.",
-  "Repair a broken piece of equipment.",
-  "Find a hidden cache of supplies.",
-  "Escape from a dangerous location.",
-  "Provide light in the darkness to help a friend."
-];
 
 export async function sendCharacterGenStep(message, channelId) {
   console.log(`sendCharacterGenStep has been called with step: ${gameData[channelId].characterGenStep}`);
@@ -39,7 +21,6 @@ export async function sendCharacterGenStep(message, channelId) {
     gameData[channelId].traitsRequested = true;
     message.channel.send(`\n**Step One: Players Write Traits (light three candles)**\nPlayers, check your DMs and reply with a Virtue and a Vice.\nYou have ${timeoutInMinutes} minutes to complete this step.`);
     sendCandleStatus(message, 3);
-    saveGameData();
     const traitPromises = [];
     for (const playerId of playerOrder) {
       traitPromises.push(askForTraits(message, gameData[channelId], playerId));
@@ -47,14 +28,12 @@ export async function sendCharacterGenStep(message, channelId) {
     await Promise.all(traitPromises);
   } else if (step === 2) {
     message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. *Your GM must use `.nextstep` to continue.*');
-    const swappedTraits = await swapTraits(players, gameData[channelId], message.guild); //Correctly pass the guild object.
+    const swappedTraits = await swapTraits(players, gameData[channelId]); //Correctly pass the game object.
     gameData[channelId].players = swappedTraits;
-    saveGameData();
   } else if (step === 3) {
     message.channel.send(`**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.\nYou have 5 minutes to complete this step.`);
     await askPlayersForCharacterInfo(message, channelId);
     gameData[channelId].characterGenStep++;
-    saveGameData();
     sendCharacterGenStep(message, channelId);
   } else if (step === 4) {
     message.channel.send('**Step Four: Players Plan Moments (light three more candles)**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.\nYou have ${timeoutInMinutes} minutes to respond.');
@@ -64,7 +43,6 @@ export async function sendCharacterGenStep(message, channelId) {
       try {
         const player = await message.guild.members.fetch(playerId);
         const user = player.user;
-        const dmChannel = await user.createDM();
         await user.send('Please DM me your Moment.');
 
         const filter = m => m.author.id === playerId;
@@ -83,7 +61,6 @@ export async function sendCharacterGenStep(message, channelId) {
       }
     });
     await Promise.all(momentPromises);
-    saveGameData();
   } else if (step === 5) {
     message.channel.send('**Step Five: Players and GM Discover Brinks (light three more candles)**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
     sendCandleStatus(message, 9);
@@ -125,7 +102,6 @@ export async function sendCharacterGenStep(message, channelId) {
     message.channel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. *Your GM must use `.nextstep` to continue.*');
     const swappedBrinks = swapBrinks(players, playerOrder, gmId);
     gameData[channelId].players = swappedBrinks;
-    saveGameData();
     const brinkSwapPromises = playerOrder.map(async (playerId) => {
       try {
         const player = await message.guild.members.fetch(playerId);
@@ -142,7 +118,7 @@ export async function sendCharacterGenStep(message, channelId) {
     try {
       const gm = await message.guild.members.fetch(gmId);
       const user = gm.user;
-      await user.send(`Your "I have seen them.." is: ${swappedBrinks[playerOrder[0]].brink}\nPlease write it on an index card.`);
+      await user.send(`Your "I have seen them.." is: ${swappedBrinks[gmId].brink}\nPlease write it on an index card.`);
     } catch (error) {
       console.error(`Error DMing GM ${gmId} for swapped brink:`, error);
       message.channel.send(`Could not DM the GM for swapped brink.`);//Inform the channel.
@@ -190,7 +166,6 @@ export async function sendCharacterGenStep(message, channelId) {
     );
     gameData[channelId].dicePool = 10;
     gameData[channelId].scene = 1;
-    saveGameData();
     sendCandleStatus(message, 10);
     // Send command usage messages to players and GM
     const commandUsagePromises = playerOrder.map(async (playerId) => {
@@ -286,7 +261,7 @@ function swapBrinks(players, playerOrder, gmId) {
   }
 
   // Give the GM the brink of the last player
-  swappedPlayers[playerOrder[0]].brink = players[playerOrder[playerOrder.length - 1]].brink;
+  swappedPlayers[gmId].brink = players[playerOrder[playerOrder.length - 1]].brink;
 
   return swappedPlayers;
 }
@@ -296,98 +271,6 @@ export function getVirtualTableOrder(game, withGM = true) {
     return [...game.playerOrder, game.gmId];
   } else {
     return [...game.playerOrder];
-  }
-}
-
-function assignRandomMoment(user, player) {
-  player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
-  user.send(`You timed out. A random Moment has been assigned: "${player.moment}"`);
-}
-
-export async function askPlayersForCharacterInfo(message, channelId) {
-  const game = gameData[channelId];
-  const playerIds = game.playerOrder;
-
-  for (const playerId of playerIds) {
-    try {
-      const player = await message.guild.members.fetch(playerId);
-      const user = player.user;
-
-      // Ask for Name
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'name', "What's your character's name or nickname?");
-
-      // Ask for Look
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'look', 'What does your character look like at a quick glance?');
-
-      // Ask for Concept
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?');
-
-    } catch (error) {
-      console.error(`Error requesting character info from player ${playerId}:`, error);
-      message.channel.send(`Failed to get character info from player <@${playerId}>. Game cancelled.`);
-      delete gameData[channelId];
-      saveGameData();
-      return;
-    }
-  }
-}
-
-export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, retryCount = 0) {
-  try {
-    const dmChannel = await user.createDM();
-    await user.send(question);
-
-    const filter = m => m.author.id === playerId;
-    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
-
-    if (collected.size > 0) {
-      const response = collected.first().content;
-      game.players[playerId][field] = sanitizeString(response);
-      saveGameData();
-    } else {
-      throw new Error(`Player <@${playerId}> timed out while providing ${field}.`);
-    }
-  } catch (error) {
-    if (retryCount < 3) {
-      await user.send(`You timed out. Please provide your ${field} again.`);
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, retryCount + 1);
-    } else {
-      throw new Error(`Player <@${playerId}> timed out after multiple retries.`);
-    }
-  }
-}
-
-function getRandomVirtue() {
-  return defaultVirtues[Math.floor(Math.random() * defaultVirtues.length)];
-}
-
-function getRandomVice() {
-  return defaultVices[Math.floor(Math.random() * defaultVices.length)];
-}
-
-export async function askForTraits(message, game, playerId) {
-  const player = await message.guild.members.fetch(playerId);
-  const user = player.user;
-  const dmChannel = await user.createDM();
-
-  try {
-    await user.send('Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").');
-
-    const filter = m => m.author.id === playerId;
-    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 300000, errors: ['time'] });
-
-    if (collected.size > 0) {
-      // Player responded in time. `handleCharacterGenStep1DM` will handle the rest.
-      return;
-    } else {
-      // Player timed out. Assign random traits.
-      game.players[playerId].virtue = getRandomVirtue();
-      game.players[playerId].vice = getRandomVice();
-      saveGameData();
-      await user.send(`You timed out. Random traits have been assigned: Virtue - ${game.players[playerId].virtue}, Vice - ${game.players[playerId].vice}`);
-    }
-  } catch (error) {
-    console.error(`Error DMing player ${playerId} or assigning random traits:`, error);
   }
 }
 

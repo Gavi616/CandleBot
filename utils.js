@@ -151,7 +151,7 @@ export function loadGameData() {
 
     // Copy the loaded data into the existing gameData object
     Object.assign(gameData, loadedGameData);
-    console.log('Game data loaded successfully.');
+    console.log('Game data loaded successfully.'); //This has been updated to log.
     printActiveGames();
   } catch (err) {
     console.error('Error loading game data:', err);
@@ -202,13 +202,13 @@ export function loadBlocklist() {
 
     // Copy the loaded data into the existing blocklist object
     Object.assign(blocklist, loadedBlocklist);
-    console.log('Blocklist loaded successfully.');
+    console.log('Blocklist loaded successfully.'); //This has been updated to log.
   } catch (err) {
     console.error(`Error loading blocklist: ${err.message}`);
     // Clear the existing blocklist object
     Object.keys(blocklist).forEach(key => delete blocklist[key]);
     console.log('Blocklist initialized.');
-  }
+    }
 }
 
 export function saveBlocklist() {

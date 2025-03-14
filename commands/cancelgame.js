@@ -1,5 +1,4 @@
-import { gameData } from '../index.js';
-import { saveGameData } from '../utils.js';
+import { gameData, saveGameData } from '../utils.js';
 
 export async function cancelGame(message) {
   const channelId = message.channel.id;

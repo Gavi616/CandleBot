@@ -373,6 +373,7 @@ export async function handleCharacterGenStep1DM(message, game) {
     }
   }
 }
+
 export async function handleCharacterGenStep4DM(message, game) {
   const userId = message.author.id;
   const channelId = Object.keys(gameData).find(key => gameData[key] === game);

@@ -1,5 +1,4 @@
-import { gameData } from '../index.js';
-import { sanitizeString, saveGameData } from '../utils.js';
+import { gameData, sanitizeString, saveGameData } from '../utils.js';
 
 export async function leaveGame(message, args) {
   const channelId = message.channel.id;

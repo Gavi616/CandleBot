@@ -1,6 +1,5 @@
-import { sendCandleStatus } from '../utils.js';
 import { startTruthsSystem } from '../index.js';
-import { saveGameData } from '../utils.js';
+import { sendCandleStatus, saveGameData } from '../utils.js';
 
 export async function conflict(message, args, gameData) {
     const channelId = message.channel.id;

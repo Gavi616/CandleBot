@@ -1,4 +1,4 @@
-import { gameData } from '../index.js';
+import { gameData } from '../utils.js'; //Updated!
 import {
   getVoiceConnection,
   joinVoiceChannel

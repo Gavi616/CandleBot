@@ -13,8 +13,9 @@ import {
   saveGameData,
   printActiveGames,
   loadBlocklist,
-  saveBlocklist
-} from './utils.js';
+  saveBlocklist,
+  gameData
+} from './utils.js'; //Import gameData!
 import { handleCharacterGenStep1DM, handleCharacterGenStep4DM, handleCharacterGenStep5DM, handleCharacterGenStep6DM, handleCharacterGenStep8DM } from './chargen.js';
 import { startGame } from './commands/startgame.js';
 
@@ -32,21 +33,20 @@ export const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.9.8';
+const version = '0.9.9';
 
 client.once('ready', () => {
   const startupTimestamp = new Date().toLocaleString();
   console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
   console.log(`Logged in as ${client.user.tag} (${client.user.id})`);
   console.log(`Bot is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'}.`);
-  console.log(`Command prefix is ${prefix} -- use ${prefix}help for a list of commands.`);
+  console.log(`Command prefix is ${prefix}`);
+  console.log(`Use ${prefix}help for a list of commands.`);
 
   // Check for valid configuration file
   if (!fs.existsSync('config.js')) {
     console.error('Configuration file not found. Please create a config.js file with the required settings.');
     return;
-  } else {
-    console.log('Configuration loaded successfully.');
   }
 
   loadBlocklist(); //Load the blocklist on startup.
@@ -81,6 +81,50 @@ client.on('messageCreate', async (message) => {
   const userId = message.author.id;
   const userName = message.author.username; // Get username
 
+  if (message.channel.type === ChannelType.DM) { // Handle DMs first
+    // .x and .me command listener (for Direct Messaging)
+    if (message.content.toLowerCase() === '.x') {
+        const game = Object.values(gameData).find(game => {
+            if (game.gmId === userId) return true;
+            if (game.players && game.players[userId]) return true;
+            return false;
+        });
+
+        if (!game) { //If the user is not in a game.
+            message.author.send(`You are not currently in a game in any channel.`); //Let them know.
+        }
+        else {
+            const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
+            if (gameChannelId) {
+                const gameChannel = client.channels.cache.get(gameChannelId);
+                if (gameChannel) {
+                    gameChannel.send(`One or more players and/or the GM are ready to move on, please wrap up the scene quickly.`);
+                }
+            }
+        }
+    } else if (message.content.toLowerCase() === '.me') {
+        me(message);
+    } else { //Handle other DMs here.
+        const game = Object.values(gameData).find(game => {
+          if (game.gmId === userId) return true;
+          if (game.players && game.players[userId]) return true;
+          return false;
+        });
+
+        //Check if there is a game and if that game is waiting for character generation info.
+        if (game && game.characterGenStep === 1) {
+            await handleCharacterGenStep1DM(message, game);
+        } else if (game && game.characterGenStep === 4) {
+            await handleCharacterGenStep4DM(message, game);
+        } else if (game && game.characterGenStep === 5) {
+            await handleCharacterGenStep5DM(message, game);
+        } else if (game && game.characterGenStep === 6) {
+            await handleCharacterGenStep6DM(message, game);
+        } else if (game && game.characterGenStep === 8) {
+            await handleCharacterGenStep8DM(message, game);
+        }
+    }
+}
   if (message.channel.type !== ChannelType.DM) {
     if (message.content.startsWith(prefix)) {
       const args = message.content.slice(prefix.length).split(/ +/);
@@ -94,26 +138,26 @@ client.on('messageCreate', async (message) => {
       if (gameRequiredCommands.includes(command)) {
         // Check if a game exists in the channel
         if (!gameData[channelId]) {
-          message.author.send(`Message removed. There is no **Ten Candles** game in progress in #${message.channel.name}.`);
+          message.author.send(`Message removed. There is no **Ten Candles** game in progress in <#${channelId}>.`); //Update the message here.
           try {
             await message.delete(); // Delete the command message
           } catch (deleteError) {
-            console.error(`Failed to delete message in #${message.channel.name}: ${deleteError.message}`);
+            console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`); //Update the message here.
           }
-          console.log(`${userName} (${userId}) tried to use .${command} in ${message.channel.name}, but there is no game in progress.`);
+          console.log(`${userName} (${userId}) tried to use .${command} in <#${channelId}>, but there is no game in progress.`); //Update the message here.
           return; // Stop processing the command
         }
 
         // Check if the user is a participant (player or GM)
         const game = gameData[channelId];
         if (!game.players[userId] && game.gmId !== userId) {
-          message.author.send(`Message removed. You are not a participant in the **Ten Candles** game in #${message.channel.name}.`);
+          message.author.send(`Message removed. You are not a participant in the **Ten Candles** game in <#${channelId}>.`); //Update the message here.
           try {
             await message.delete(); // Delete the command message
           } catch (deleteError) {
-            console.error(`Failed to delete message in #${message.channel.name}: ${deleteError.message}`);
+            console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`); //Update the message here.
           }
-          console.log(`${userName} (${userId}) tried to use .${command} in #${message.channel.name}, but is not a participant.`);
+          console.log(`${userName} (${userId}) tried to use .${command} in <#${channelId}>, but is not a participant.`); //Update the message here.
           return; // Stop processing the command
         }
       }
@@ -132,7 +176,7 @@ client.on('messageCreate', async (message) => {
       } else if (command === 'nextstep') {
         nextStep(message);
       } else if (command === 'gamestatus') {
-        gameStatus(message);
+        gamestatus(message); //Call gamestatus
       } else if (command === 'removeplayer') {
         removePlayer(message, args);
       } else if (command === 'leavegame') {
@@ -148,44 +192,12 @@ client.on('messageCreate', async (message) => {
       }
     }
   }
-  if (message.channel.type === ChannelType.DM) {
-    const game = Object.values(gameData).find(game => {
-      if (game.gmId === userId) return true;
-      if (game.players && game.players[userId]) return true;
-      return false;
-    });
-
-    // .x and .me command listener (for Direct Messaging)
-    if (message.content.toLowerCase() === '.x') {
-      const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
-      if (gameChannelId) {
-        const gameChannel = client.channels.cache.get(gameChannelId);
-        if (gameChannel) {
-          gameChannel.send(`One or more players and/or the GM are ready to move on, please wrap up the scene quickly.`);
-        }
-      }
-    } else if (message.content.toLowerCase() === '.me') {
-      me(message);
-    }
-
-    //Check if there is a game and if that game is waiting for character generation info.
-    if (game && game.characterGenStep === 1) {
-      await handleCharacterGenStep1DM(message, game);
-    } else if (game && game.characterGenStep === 4) {
-      await handleCharacterGenStep4DM(message, game);
-    } else if (game && game.characterGenStep === 5) {
-      await handleCharacterGenStep5DM(message, game);
-    } else if (game && game.characterGenStep === 6) {
-      await handleCharacterGenStep6DM(message, game);
-    } else if (game && game.characterGenStep === 8) {
-      await handleCharacterGenStep8DM(message, game);
-    }
-  }
 });
 
 async function me(message) {
   const playerId = message.author.id;
   const playerNumericId = parseInt(playerId);
+  const gameChannelId = Object.keys(gameData).find(key => gameData[key].players[playerId] || gameData[key].gmId == playerId);
 
   if (message.channel.type !== ChannelType.DM) { // Check if it's a DM
     try {
@@ -200,13 +212,12 @@ async function me(message) {
   for (const channel in gameData) {
     if (gameData[channel].players && gameData[channel].players[playerNumericId]) {
       game = gameData[channel];
-      channelId = channel;
       break;
     }
   }
 
   if (!game) {
-    message.author.send('You are not currently in a game.');
+    message.author.send(`You are not currently in a game in any channel.`);//Update the message here.
     return;
   }
   const player = game.players[playerNumericId];
@@ -225,6 +236,7 @@ async function me(message) {
       { name: 'Virtue Burned', value: player.virtueBurned ? 'Yes' : 'No', inline: true },
       { name: 'Vice Burned', value: player.viceBurned ? 'Yes' : 'No', inline: true },
       { name: 'Moment Burned', value: player.momentBurned ? 'Yes' : 'No' },
+      { name: 'Game Channel:', value: `<#${gameChannelId}>`}, //Add the clickable channel link here.
     )
     .setTimestamp();
 
@@ -240,7 +252,7 @@ async function me(message) {
       await message.reply('Could not send character sheet DM. Please enable DMs.'); // Inform in channel if DM fails.
     }
   }
-} 
+}
 
 export async function startTruthsSystem(client, message, channelId) {
   const game = gameData[channelId];
@@ -284,6 +296,22 @@ export async function startTruthsSystem(client, message, channelId) {
 
   // Reset dice lost.
   game.diceLost = 0;
+}
+// Define gamestatus() here
+function gamestatus(message) {
+  const channelId = message.channel.id;
+  const game = gameData[channelId];
+  const gameChannelName = message.channel.name;
+
+  if (game) {
+      let statusMessage = `**Game Status in #${gameChannelName}**:\n`;
+      statusMessage += `GM: <@${game.gmId}>\n`;
+      statusMessage += `Players: ${game.playerOrder.map(playerId => `<@${playerId}>`).join(', ')}\n`;
+      statusMessage += `Character Generation Step: ${game.characterGenStep}\n`;
+      message.channel.send(statusMessage);
+  } else {
+      message.channel.send(`There is no game in progress in #${gameChannelName}.`);
+  }
 }
 
 function blockUser(message, args, reason = 'No reason provided.') {

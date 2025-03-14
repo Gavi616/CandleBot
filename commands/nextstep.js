@@ -1,6 +1,5 @@
 import { sendCharacterGenStep } from '../chargen.js';
-import { gameData } from '../index.js';
-import { saveGameData } from '../utils.js';
+import { gameData, saveGameData } from '../utils.js';
 
 export async function nextStep(message) {
   const channelId = message.channel.id;

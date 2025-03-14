@@ -1,4 +1,4 @@
-import { gameData } from '../index.js';
+import { gameData } from '../utils.js';
 
 export async function gameStatus(message) {
   const channelId = message.channel.id;

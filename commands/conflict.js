@@ -198,7 +198,6 @@ export async function conflict(message, args, gameData) {
 
         if (gameData[channelId].scene === 10) { // Check for Last Stand (only one candle left)
             gameData[channelId].players[playerId].isDead = true;
-            saveGameData();
             message.channel.send(`**${gameData[channelId].players[playerId].name || `<@${playerId}>'s unnamed character`} has died!**\nPlease work with the GM to narrate your character's death.`);
         } else {
             // Normal Candle Extinguishing
@@ -210,6 +209,7 @@ export async function conflict(message, args, gameData) {
             sendCandleStatus(message, 11 - gameData[channelId].scene);
             await startTruthsSystem(message, channelId); // Start the truths system
         }
+        saveGameData();
     } else {
         gameData[channelId].diceLost = 0;
     }

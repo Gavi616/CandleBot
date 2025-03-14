@@ -10,18 +10,13 @@ import { getHelpEmbed } from './embed.js';
 import {
   sanitizeString,
   loadGameData,
-  saveGameData
+  saveGameData,
+  printActiveGames,
+  loadBlocklist,
+  saveBlocklist
 } from './utils.js';
 import { handleCharacterGenStep1DM, handleCharacterGenStep4DM, handleCharacterGenStep5DM, handleCharacterGenStep6DM, handleCharacterGenStep8DM } from './chargen.js';
 import { startGame } from './commands/startgame.js';
-import { conflict } from './commands/conflict.js';
-import { nextStep } from './commands/nextstep.js';
-import { gameStatus } from './commands/gamestatus.js';
-import { removePlayer } from './commands/removeplayer.js';
-import { leaveGame } from './commands/leavegame.js';
-import { cancelGame } from './commands/cancelgame.js';
-import { died } from './commands/died.js';
-import { playRecordings } from './commands/playrecordings.js';
 
 export const client = new Client({
   intents: [
@@ -37,10 +32,7 @@ export const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.9.666';
-
-export let gameData = {};
-export let blocklist = {};
+const version = '0.9.8';
 
 client.once('ready', () => {
   const startupTimestamp = new Date().toLocaleString();
@@ -57,15 +49,8 @@ client.once('ready', () => {
     console.log('Configuration loaded successfully.');
   }
 
-  // Load blocklist on startup
-  loadBlocklist();
-
-  // Load game data on startup
-  try {
-    loadGameData();
-  } catch (loadError) {
-    console.error('Error during loadGameData in ready event:', loadError.message);
-  }
+  loadBlocklist(); //Load the blocklist on startup.
+  loadGameData(); // Load game data on startup
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -255,9 +240,9 @@ async function me(message) {
       await message.reply('Could not send character sheet DM. Please enable DMs.'); // Inform in channel if DM fails.
     }
   }
-}
+} 
 
-export async function startTruthsSystem(message, channelId) {
+export async function startTruthsSystem(client, message, channelId) {
   const game = gameData[channelId];
   const playerOrder = game.playerOrder;
   const gmId = game.gmId;
@@ -299,29 +284,6 @@ export async function startTruthsSystem(message, channelId) {
 
   // Reset dice lost.
   game.diceLost = 0;
-  saveGameData();
-}
-
-// Blocklist management
-function loadBlocklist() {
-  try {
-    const data = fs.readFileSync('blocklist.json', 'utf8');
-    blocklist = JSON.parse(data);
-    console.log('Blocklist loaded successfully.');
-  } catch (err) {
-    console.error(`Error loading blocklist: ${err.message}`);
-    blocklist = {}; // Initialize as an empty object
-    console.log('Blocklist initialized.');
-  }
-}
-
-function saveBlocklist() {
-  try {
-    fs.writeFileSync('blocklist.json', JSON.stringify(blocklist));
-    console.log('Blocklist saved successfully.');
-  } catch (err) {
-    console.error(`Error saving blocklist: ${err.message}`);
-  }
 }
 
 function blockUser(message, args, reason = 'No reason provided.') {
@@ -351,5 +313,4 @@ function unblockUser(message, args) {
       message.channel.send(`<@${userId}> is not on the blocklist.`);
   }
 }
-
 client.login(process.env.DISCORD_TOKEN);

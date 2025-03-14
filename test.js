@@ -1,121 +1,165 @@
 import 'dotenv/config';
-import { ChannelType, Client, GatewayIntentBits, Collection } from 'discord.js'; //Import the collection.
-import * as fs from 'fs';
-import { client, gameData, blocklist } from './index.js';
-import { startGame } from './commands/startgame.js';
-import { loadGameData } from './utils.js';
+import fs from 'fs';
+import { gameData, loadGameData, loadBlocklist, blocklist } from './utils.js';
 
-// Replace with your actual IDs
-const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
-const GM_USER_ID = '583340515869589522'; // @GavinTheGM
-const TEST_SERVER_ID = '888119534375030815'; // Balsamic Moon Games server ID
-const TEST_CHANNEL_ID = '973337999985217537'; // #dice-rolling
-const TEST_PLAYER_ID_1 = '877545709644173372'; // @wyldwoodwitch
-const TEST_PLAYER_ID_2 = '1348988696669458523'; // @balsamicgames
-
-let mockMembers = {};
-let mockGuild;
-let mockChannel;
-let mockUser;
-let mockPlayer1;
-let mockPlayer2;
-let mockMessage;
-
-// Create mock user objects
-class MockUser {
-    constructor(client, data) {
-        this.id = data.id;
-        this.username = data.username;
-        this.send = data.send;
-        this.createDM = data.createDM;
-        this.awaitMessages = data.awaitMessages; // Add awaitMessages
-    }
-}
-//Create the mock guild
-class MockGuild extends Client {
-    constructor(client, data) { //Added the memberManager here.
-        super({ //Add intents.
-            intents: [
-                GatewayIntentBits.Guilds,
-                GatewayIntentBits.GuildMessages,
-                GatewayIntentBits.MessageContent,
-                GatewayIntentBits.GuildMembers,
-                GatewayIntentBits.DirectMessages,
-                GatewayIntentBits.DirectMessageReactions,
-                GatewayIntentBits.DirectMessageTyping,
-                GatewayIntentBits.GuildPresences
-            ],
-        });
-        this.name = "Balsamic Moon Games";
-        this.members = {
-            cache: new Collection(), // Initialize cache as a Collection
-            fetch: (userId) => {
-                return new Promise((resolve, reject) => {
-                    const member = mockMembers[userId];
-                    if (member) {
-                        resolve(member);
-                    } else {
-                        reject(new Error(`Member with ID ${userId} not found.`));
+// Create a mock member for each player
+const mockGuild = {
+    members: {
+        cache: {
+            get: (userId) => ({
+                user: {
+                    send: (message) => {
+                        console.log(`[DM to ${userId}]:`, message);
+                        return Promise.resolve(); // Simulate sending a DM
                     }
-                });
+                }
+            })
+        },
+        fetch: async (userId) => { //Add the fetch function.
+          return Promise.resolve({ //Return the promise!
+            user: {
+                send: (message) => {
+                    console.log(`[DM to ${userId}]:`, message);
+                    return Promise.resolve(); // Simulate sending a DM
+                }
             }
+          })
+        }
+    }
+};
+
+// Create a mock client object
+const client = {
+    guilds: {
+        cache: {
+            get: (guildId) => {
+                if (guildId === gameData['testChannel'].guildId) {
+                    return mockGuild; //THIS IS NOW CORRECT!
+                } else {
+                    return null;
+                }
+            }
+        },
+        fetch: async (userId) => Promise.resolve(mockGuild) //This allows members.fetch() to work.
+    }
+};
+
+//Now we can import swapTraits and swapBrinks.
+import { swapTraits, swapBrinks } from './chargen.js';
+
+export async function validateGameSetup(message) {
+    const channelId = message.channel.id;
+    const userId = message.author.id;
+    const mentions = message.mentions;
+    const guild = message.guild;
+
+    if (blocklist[userId]) {
+        return { valid: false, reason: `You are blocked from using the \`.startgame\` command. Reason: ${blocklist[userId]}` };
+    }
+
+    // Prevent duplicate games in the same channel.
+    if (gameData[channelId]) {
+        return { valid: false, reason: 'A **Ten Candles** game is already in progress here.' };
+    }
+
+    // Check if the user is a player or the GM of another game.
+    for (const gameChannelId in gameData) {
+        const game = gameData[gameChannelId];
+        if (game.gmId === userId || game.players[userId]) {
+            return { valid: false, reason: 'You are already in a game. You must cancel your current game before starting a new one.' };
+        }
+    }
+
+    return { valid: true, reason: null }; //everything is good.
+}
+
+// New test functions
+async function testSwapTraits() {
+    console.log('Starting testSwapTraits test...');
+
+    try {
+        // 1. Clear any existing game data.
+        Object.keys(gameData).forEach(key => delete gameData[key]);
+        console.log('gameData cleared:', gameData);
+
+        // 2. Create some sample game data.
+        gameData['testChannel'] = {
+            gmId: '123456789012345678', //Updated
+            players: {
+                '987654321098765432': { playerUsername: 'PlayerOne', virtue: 'Virtue1', vice: 'Vice1' }, //Updated
+                '101112131415161718': { playerUsername: 'PlayerTwo', virtue: 'Virtue2', vice: 'Vice2' }, //Updated
+            },
+            playerOrder: ['987654321098765432', '101112131415161718'], //Updated
+            guildId: "111213141516171819", //Updated
         };
+        gameData['testChannel'].playerOrder = ['987654321098765432', '101112131415161718']; //Updated
+        console.log('gameData initialized:', gameData);
+
+        // 3. Call swapTraits
+        const players = gameData['testChannel'].players;
+        const game = gameData['testChannel']; //Now use the entire game object.
+        const swappedPlayers = await swapTraits(client, players, game, gameData['testChannel'].guildId); //Now passes game.
+
+        // 4. Check the result
+        if (swappedPlayers['987654321098765432'].virtue === 'Virtue2' && swappedPlayers['987654321098765432'].vice === 'Vice2' && //Updated
+            swappedPlayers['101112131415161718'].virtue === 'Virtue1' && swappedPlayers['101112131415161718'].vice === 'Vice1') { //Updated
+            console.log('swapTraits test: SUCCESS');
+        } else {
+            console.error('swapTraits test: FAILED');
+            console.log('player1SwappedVirtue:', swappedPlayers['987654321098765432'].virtue); //Updated
+            console.log('player1SwappedVice:', swappedPlayers['987654321098765432'].vice); //Updated
+            console.log('player2SwappedVirtue:', swappedPlayers['101112131415161718'].virtue); //Updated
+            console.log('player2SwappedVice:', swappedPlayers['101112131415161718'].vice); //Updated
+        }
+    } catch (error) {
+        console.error('swapTraits test: ERROR', error);
+    } finally {
+        console.log('swapTraits test finished.');
     }
 }
 
-//Create the guild data.
-const mockGuildData = {
-    id: TEST_SERVER_ID,
-    name: "Balsamic Moon Games",
-};
+async function testSwapBrinks() {
+    console.log('Starting testSwapBrinks test...');
+    try {
+        // 1. Clear any existing game data.
+        //Object.keys(gameData).forEach(key => delete gameData[key]); //No longer needed, because swapTraits already clears it.
+        //console.log('gameData cleared:', gameData); //No longer needed.
 
-//Mock functions
-const mockSaveGameData = () => {
-    console.log('Mock saveGameData called.');
-    // Optionally, you can do something with mockGameData here
-    fs.writeFileSync('gameData.json', JSON.stringify(gameData));
-    console.log('Mock game data saved successfully.');
-};
+        // 2. Create some sample game data.
+        gameData['testChannel'] = {
+            gmId: '123456789012345678', //Updated
+            players: {
+                '987654321098765432': { playerUsername: 'PlayerOne', brink: 'Brink1' }, //Updated
+                '101112131415161718': { playerUsername: 'PlayerTwo', brink: 'Brink2' }, //Updated
+                '123456789012345678': {playerUsername: "testGM", brink: "BrinkGM"}, //Add the GM here.
+            },
+            playerOrder: ['987654321098765432', '101112131415161718'], //Updated
+            guildId: "111213141516171819", //Updated
+        };
+        gameData['testChannel'].playerOrder = ['987654321098765432', '101112131415161718']; //Updated
+        console.log('gameData initialized:', gameData);
 
-const mockLoadGameData = () => {
-    try { //load the game data.
-        const data = fs.readFileSync('gameData.json', 'utf8'); //Read the game data.
-        if (data.trim().length > 0) { //Check that there is data.
-            const parsedData = JSON.parse(data); //parse the data.
-            // Check if parsedData is an object and not null or undefined
-            if (typeof parsedData === 'object' && parsedData !== null) { //check that the data is correct.
-                // Copy the parsed data into the existing gameData object
-                Object.assign(gameData, parsedData); //assign the parsed data.
-            } else {
-                throw new Error('Parsed data is not an object.');
-            }
-            console.log('Game data loaded successfully.');
+        // 3. Call swapBrinks
+        const players = gameData['testChannel'].players;
+        const playerOrder = gameData['testChannel'].playerOrder;
+        const gmId = gameData['testChannel'].gmId;
+        const swappedBrinks = swapBrinks(players, playerOrder, gmId); //Now passes game.
+
+        // 4. Check the result
+        if (swappedBrinks['987654321098765432'].brink === 'Brink2' && swappedBrinks['101112131415161718'].brink === 'Brink1' && swappedBrinks['123456789012345678'].brink === 'Brink1') { //Updated
+            console.log('swapBrinks test: SUCCESS');
         } else {
-            console.log('gameData.json is empty. No data loaded.');
-            // Clear the existing gameData object
-            Object.keys(gameData).forEach(key => delete gameData[key]); //clear gamedata.
-            console.log('Game data initialized.');
+            console.error('swapBrinks test: FAILED');
+            console.log('player1SwappedBrink:', swappedBrinks['987654321098765432'].brink); //Updated
+            console.log('player2SwappedBrink:', swappedBrinks['101112131415161718'].brink); //Updated
+            console.log('gmBrink:', swappedBrinks['123456789012345678'].brink);
         }
-        mockPrintActiveGames();
-    } catch (err) { //If there is an error.
-        console.error('Error loading game data:', err);
-        // Clear the existing gameData object
-        Object.keys(gameData).forEach(key => delete gameData[key]); //clear gamedata.
-        console.log('Game data initialized.');
+    } catch (error) {
+        console.error('swapBrinks test: ERROR', error);
+    } finally {
+        console.log('swapBrinks test finished.');
     }
-};
-
-const mockPrintActiveGames = () => {
-    if (Object.keys(gameData).length === 0) {
-        console.log('-- No Active Games --');
-    } else {
-        console.log('--- Active Games ---');
-        for (const channelId in gameData) {
-            console.log(`Channel ID: ${channelId}`);
-        }
-    }
-};
-
+}
 const mockLoadBlocklist = () => { //Load the blocklist here.
     try {
         const data = fs.readFileSync('blocklist.json', 'utf8');
@@ -130,198 +174,15 @@ const mockLoadBlocklist = () => { //Load the blocklist here.
         console.log('Blocklist initialized.');
     }
 };
-
-//modify the existing client
-client.saveGameData = mockSaveGameData;
-
-//mock client fetch
-client.channels.fetch = (channelId) => {
-    if (channelId === TEST_CHANNEL_ID) return Promise.resolve(mockChannel);
-    return Promise.reject(new Error('Channel not found'));
-};
-
-client.users.cache.get = (userId) => {
-    if (userId === GM_USER_ID) return mockUser;
-    if (userId === TEST_PLAYER_ID_1) return mockPlayer1;
-    if (userId === TEST_PLAYER_ID_2) return mockPlayer2;
-    return null;
-};
-
-async function runGameDataTest() {
-    console.log('Starting game data save/load test...');
-
-    try {
-        // 0. Load gamedata and blocklist.
-        loadGameData();
-        mockLoadBlocklist();
-
-        // 1. Start a game
-        mockMessage.content = `.startgame <@${GM_USER_ID}> <@${TEST_PLAYER_ID_1}> <@${TEST_PLAYER_ID_2}>`;
-        await startGame(mockMessage, gameData);
-
-        // 2. Simulate saving gameData
-        client.saveGameData();
-        console.log('gameData after save:', gameData);
-
-        // 3. Clear gameData
-        const initialGameData = { ...gameData }; //Save initial game data.
-        Object.keys(gameData).forEach(key => delete gameData[key]); //clear gameData.
-        console.log('gameData cleared:', gameData); //Log cleared.
-
-        // 4. Load gameData
-        loadGameData();
-        console.log('gameData after load:', gameData);
-
-        // 5. Verify gameData
-        const channelId = TEST_CHANNEL_ID;
-        const gameExists = gameData[channelId] !== undefined;
-        const hasPlayers = gameData[channelId]?.players !== undefined;
-        const hasGm = gameData[channelId]?.gmId !== undefined;
-        const hasPlayerOrder = gameData[channelId]?.playerOrder !== undefined;
-
-        console.log("does the game exist in gamedata? ", gameExists);
-        console.log("does the game have players? ", hasPlayers);
-        console.log("does the game have a GM? ", hasGm);
-        console.log("does the game have a playerOrder? ", hasPlayerOrder);
-
-        // 6. Check if the loaded data matches the initial data
-        if (gameExists && hasPlayers && hasGm && hasPlayerOrder) {
-            console.log('Game data was saved and loaded successfully!');
-        } else {
-            console.error('Game data was NOT saved and loaded correctly!');
-        }
-    } catch (error) {
-        console.error('Game data test error:', error);
-    } finally {
-        console.log('Game data test finished.');
-    }
+async function runSwapTests() {
+    console.log('Starting swapTraits test...');
+    await testSwapTraits();
+    console.log('swapTraits test finished.');
+    console.log('Starting swapBrinks test...');
+    await testSwapBrinks();
+    console.log('swapBrinks test finished.');
 }
 
-//Run the tests when the bot is ready.
-client.once('ready', () => {
-    // Create the mock channel, before the users.
-    mockChannel = {
-        id: TEST_CHANNEL_ID,
-        type: ChannelType.GuildText,
-        send: (content) => {
-            console.log(`[Mock Channel] Sending:`, content);
-            return Promise.resolve();
-        },
-        name: "dice-rolling",
-        guild: mockGuild, // Assign guild property
-        awaitMessages: () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'y', author: mockUser }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        }
-    };
-
-    mockUser = new MockUser(client, {
-        id: GM_USER_ID,
-        username: "GavinTheGM",
-        send: (content) => {
-            console.log(`[Mock User ${GM_USER_ID}] Sending DM:`, content);
-            return Promise.resolve();
-        },
-        createDM: () => {
-            return Promise.resolve(mockChannel); //Corrected mockChannel
-        },
-        awaitMessages: () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'y', author: mockUser }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        }
-    });
-
-    mockPlayer1 = new MockUser(client, {
-        id: TEST_PLAYER_ID_1,
-        username: "PlayerOne",
-        send: (content) => {
-            console.log(`[Mock User ${TEST_PLAYER_ID_1}] Sending DM:`, content);
-            return Promise.resolve();
-        },
-        createDM: () => {
-            return Promise.resolve(mockChannel); //Corrected mockChannel
-        },
-        awaitMessages: () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'y', author: mockPlayer1 }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        }
-    });
-
-    mockPlayer2 = new MockUser(client, {
-        id: TEST_PLAYER_ID_2,
-        username: "PlayerTwo",
-        send: (content) => {
-            console.log(`[Mock User ${TEST_PLAYER_ID_2}] Sending DM:`, content);
-            return Promise.resolve();
-        },
-        createDM: () => {
-            return Promise.resolve(mockChannel); //Corrected mockChannel
-        },
-        awaitMessages: () => { // Add awaitMessages
-            return new Promise((resolve) => {
-                setTimeout(() => {
-                    // Simulate a response
-                    const mockMessage = { content: 'y', author: mockPlayer2 }; //create a mock message.
-                    const map = new Map([['1', mockMessage]]);
-                    map.first = () => mockMessage; // Add first() function to the map.
-                    resolve(map); // Resolve with a map
-                }, 100); //100ms
-            });
-        }
-    });
-
-    // Create the mock guild and the mock member manager.
-    mockGuild = new MockGuild(client, mockGuildData); // Create the guild, and pass it the manager.
-
-    // Add the members to mockMembers.
-    mockMembers[mockUser.id] = { user: mockUser, id: mockUser.id, guild:mockGuild }; //Added the guild object.
-    mockMembers[mockPlayer1.id] = { user: mockPlayer1, id: mockPlayer1.id, guild:mockGuild  }; //Added the guild object.
-    mockMembers[mockPlayer2.id] = { user: mockPlayer2, id: mockPlayer2.id, guild:mockGuild  }; //Added the guild object.
-
-    //Add the members to the guild cache
-    mockGuild.members.cache.set(mockUser.id, mockMembers[mockUser.id]); //Set the user.
-    mockGuild.members.cache.set(mockPlayer1.id, mockMembers[mockPlayer1.id]); //Set the user.
-    mockGuild.members.cache.set(mockPlayer2.id, mockMembers[mockPlayer2.id]); //Set the user.
-
-    // Create a mock message object with the required properties and methods
-    mockMessage = {
-        channel: mockChannel,
-        author: mockUser,
-        member: mockMembers[mockUser.id],
-        guild: mockGuild,
-        content: '',
-        reply: (content) => {
-            console.log(`[Mock Message] Replying:`, content);
-            return Promise.resolve();
-        },
-        delete: () => {
-            console.log(`[Mock Message] Deleting:`);
-            return Promise.resolve();
-        },
-    };
-
-    // Run the game data test
-    runGameDataTest();
-});
-client.login(DISCORD_TOKEN);
+loadGameData();
+mockLoadBlocklist();
+runSwapTests();

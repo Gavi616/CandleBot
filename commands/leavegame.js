@@ -20,7 +20,6 @@ export async function leaveGame(message, args) {
 
   delete game.players[playerId];
   game.playerOrder = game.playerOrder.filter(id => id !== playerId);
-
   saveGameData();
 
   message.channel.send(`<@${playerId}> has left the game. Reason: ${reason}`);

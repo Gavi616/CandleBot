@@ -15,6 +15,6 @@ export async function nextStep(message) {
   }
 
   gameData[channelId].characterGenStep++;
-  saveGameData();
   sendCharacterGenStep(message, channelId);
+  saveGameData();
 }

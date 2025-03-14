@@ -1,12 +1,4 @@
-import { gameData, client } from './index.js';
-import {
-  sanitizeString,
-  sendCandleStatus,
-  saveGameData,
-  askForTraits,
-  askPlayersForCharacterInfo,
-  assignRandomMoment
-} from './utils.js';
+import { gameData, getVirtualTableOrder, sendCandleStatus, saveGameData, askForTraits, askPlayersForCharacterInfo, assignRandomMoment, sanitizeString } from './utils.js';
 import { TRAIT_TIMEOUT } from './config.js';
 
 export async function sendCharacterGenStep(message, channelId) {
@@ -16,6 +8,7 @@ export async function sendCharacterGenStep(message, channelId) {
   const playerOrder = gameData[channelId].playerOrder;
   const gmId = gameData[channelId].gmId;
   const timeoutInMinutes = TRAIT_TIMEOUT / 60000; // Convert milliseconds to minutes for the timeout message
+  const game = gameData[channelId]; //Get the game object.
 
   if (step === 1) {
     gameData[channelId].traitsRequested = true;
@@ -26,10 +19,12 @@ export async function sendCharacterGenStep(message, channelId) {
       traitPromises.push(askForTraits(message, gameData[channelId], playerId));
     }
     await Promise.all(traitPromises);
+    saveGameData();
   } else if (step === 2) {
     message.channel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. *Your GM must use `.nextstep` to continue.*');
-    const swappedTraits = await swapTraits(players, gameData[channelId]); //Correctly pass the game object.
+    const swappedTraits = await swapTraits(client, players, game, gameData[channelId].guildId); //Correctly pass the client, players, game, and guildId
     gameData[channelId].players = swappedTraits;
+    saveGameData();
   } else if (step === 3) {
     message.channel.send(`**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.\nYou have 5 minutes to complete this step.`);
     await askPlayersForCharacterInfo(message, channelId);
@@ -64,39 +59,38 @@ export async function sendCharacterGenStep(message, channelId) {
   } else if (step === 5) {
     message.channel.send('**Step Five: Players and GM Discover Brinks (light three more candles)**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
     sendCandleStatus(message, 9);
-    const players = gameData[channelId].players;
-    const playerOrder = gameData[channelId].playerOrder;
-    const gmId = gameData[channelId].gmId;
+    const game = gameData[channelId]; //Get the game object.
+    const players = game.players;
+    const brinkOrder = getVirtualTableOrder(game, true); //This is now correct.
+    const gmId = game.gmId;
 
-    // Select the last player in the table order before the GM for the Threat detail
-    const threatPlayerId = playerOrder[playerOrder.length - 1];
+    // Find the Threat Player (the player to the right of the GM)
+    const gmIndex = brinkOrder.indexOf(gmId); //Find the index of the gm.
+    const threatPlayerId = brinkOrder[(gmIndex + 1) % brinkOrder.length]; //This is now correct.
 
-    // Send DM prompts to players
-    for (const playerId of playerOrder) {
-      const player = message.guild.members.cache.get(playerId);
+    // Send DM prompts to each player and the GM
+    for (const participantId of brinkOrder) { //Loop through each participant.
+      const member = message.guild.members.cache.get(participantId);
+      const participant = member.user;
       let prompt;
-      if (playerId === threatPlayerId) {
+      if (participantId === threatPlayerId) {
         prompt = 'Write, “I have seen them..” & give a detail about the threat without outright identifying them.';
       } else {
-        const nextPlayerId = playerOrder[(playerOrder.indexOf(playerId) + 1) % playerOrder.length];
-        const nextPlayerUsername = players[nextPlayerId].playerUsername;
-        prompt = `Please write a short descriptive phrase of when or where you saw the Brink of ${nextPlayerUsername}.`;
+        const nextParticipantId = brinkOrder[(brinkOrder.indexOf(participantId) + 1) % brinkOrder.length]; //Get the next participant.
+        let nextParticipantUsername; //Get the next participant's name.
+        if (players[nextParticipantId]) {
+          nextParticipantUsername = players[nextParticipantId].playerUsername;
+        } else { //It must be the gm.
+          nextParticipantUsername = "the GM"; //The gm's name is not in players, so use "the GM".
+        }
+        prompt = `Please write a short descriptive phrase of when or where you saw the Brink of ${nextParticipantUsername}.`;
       }
 
       try {
-        await player.user.send(prompt);
+        await participant.send(prompt);
       } catch (error) {
-        console.error(`Error DMing player ${playerId}:`, error);
+        console.error(`Error DMing participant ${participantId}:`, error);
       }
-    }
-
-    // Send DM prompt to GM
-    try {
-      const gm = message.guild.members.cache.get(gmId);
-      const threatPlayerUsername = players[threatPlayerId].playerUsername;
-      await gm.user.send(`Please DM me a short descriptive phrase of when or where (and who) saw the Brink of ${threatPlayerUsername}.`);
-    } catch (error) {
-      console.error(`Error DMing GM ${gmId}:`, error);
     }
   } else if (step === 6) {
     message.channel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. *Your GM must use `.nextstep` to continue.*');
@@ -123,6 +117,7 @@ export async function sendCharacterGenStep(message, channelId) {
       console.error(`Error DMing GM ${gmId} for swapped brink:`, error);
       message.channel.send(`Could not DM the GM for swapped brink.`);//Inform the channel.
     }
+    saveGameData();
   } else if (step === 7) {
     message.channel.send('**Step Seven: Inventory Supplies (light the final candle)**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). *Your GM must use `.nextstep` to continue.*\n**It begins.**');
     sendCandleStatus(message, 10);
@@ -218,60 +213,129 @@ Dice Pools Refresh: The Players’ pool of dice refills to the number of lit can
       await gm.user.send(gmMessage);
     } catch (error) {
       console.error(`Error DMing GM ${gmId}:`, error);
-      message.channel.send(`Could not DM GM ${gmId} for command usage message.`);//Inform the channel.
+      message.channel.send(`Could not DM the GM ${gmId} for command usage message.`);//Inform the channel.
     }
     await Promise.all(commandUsagePromises);
   }
 }
 
-export async function swapTraits(players, game, guild) {
-  const playerOrder = getVirtualTableOrder(game, false);
-  const swappedPlayers = { ...players };
+export async function swapTraits(client, players, game, guildId) { //Now recieves client.
+  // 1. Get the virtual table order (a list of player IDs).
+  //    This determines the order in which traits will be swapped.
+  const playerOrder = getVirtualTableOrder(game, false); // [player1, player2, player3, etc.]
 
+  // 2. Create a copy of the 'players' object to store the swapped traits.
+  //    We don't want to modify the original 'players' object directly.
+  const swappedPlayers = {};
+
+  // 3. Iterate through the 'playerOrder' array.
   for (let i = 0; i < playerOrder.length; i++) {
+    // a. Get the current player's ID.
     const currentPlayerId = playerOrder[i];
+
+    // b. Get the ID of the *next* player in the order.
+    //    The modulo operator (%) ensures that we wrap around to the first player
+    //    if we're at the end of the 'playerOrder' array.
     const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
 
-    swappedPlayers[nextPlayerId].virtue = players[currentPlayerId].virtue;
-    swappedPlayers[nextPlayerId].vice = players[currentPlayerId].vice;
+    // Create a new player object for the current player with swapped traits.
+    swappedPlayers[nextPlayerId] = {
+      ...players[nextPlayerId], // Copy existing player properties.
+      virtue: players[currentPlayerId].virtue,
+      vice: players[currentPlayerId].vice,
+    };
+    if (!swappedPlayers[currentPlayerId]) {
+      swappedPlayers[currentPlayerId] = {
+        ...players[currentPlayerId], // Copy existing player properties.
+      };
+    }
+  }
+  console.log("swapTraits: client object:", client);
+  console.log("swapTraits: client typeof:", typeof client);
+  console.log("swapTraits: client.guilds.cache:", client.guilds.cache);
+
+  console.log("swapTraits: guildId:", guildId);
+  console.log("swapTraits: typeof guildId:", typeof guildId);
+  if (typeof guildId !== 'string' || guildId.length < 15) {
+    console.error("swapTraits: Invalid guildId format. Check the guildId.");
   }
 
+  // 4. Construct and send DMs to players with their new traits.
+  //    Iterate through the 'playerOrder' again to build the messages and send them out.
   const swapTraitPromises = playerOrder.map(async (recipientId, i) => {
-    const senderId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length];
+    console.log("swapTraits: recipientId:", recipientId);
+    console.log("swapTraits: typeof recipientId:", typeof recipientId);
+    if (typeof recipientId !== 'string' || recipientId.length < 15) {
+      console.error("swapTraits: Invalid userId format. Check the recipientId.");
+    }
+    // a. Determine the sender's ID.
+    //    This time, we're getting the ID of the player *before* the current player
+    //    to tell them who their traits came from.
+    const senderId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length]; //Handle the wrap around.
+
     try {
-      const recipientUser = (await client.guilds.cache.get(game.guildId).members.fetch(recipientId)).user;
+      // b. Get the recipient player's User object.
+      //   Using client.guilds.cache.get() is to get the correct guild
+      //   then .members.fetch(recipientId) gets the player.
+      const guild = client.guilds.cache.get(guildId);
+      console.log("swapTraits: client.guilds.cache.get(guildId):", guild);
+
+      if (!guild) {
+        console.error("swapTraits: No guild found with that guildId. Check the guildId.");
+        return; // Stop processing this recipient if there's no guild.
+      }
+      const member = await guild.members.fetch(recipientId);
+      console.log("swapTraits: guild.members.fetch(recipientId):", member);
+      const recipientUser = member.user;
+
+      if (!recipientUser) {
+        console.error("swapTraits: No user found with that recipientId. Check the recipientId.");
+        return;
+      }
+      // c. Send DMs to the recipient with their new Virtue and Vice.
       await recipientUser.send(`You received the Virtue "${swappedPlayers[recipientId].virtue}" from <@${senderId}>.`);
       await recipientUser.send(`You received the Vice "${swappedPlayers[recipientId].vice}" from <@${senderId}>.`);
     } catch (error) {
+      // d. Handle any errors during DMing.
       console.error(`Error sending trait swap DMs to player ${recipientId}:`, error);
     }
   });
+
+  // 5. Wait for all the DM sending promises to resolve.
   await Promise.all(swapTraitPromises);
+
+  // 6. Return the 'swappedPlayers' object, which now contains the updated traits.
   return swappedPlayers;
 }
 
-function swapBrinks(players, playerOrder, gmId) {
-  const swappedPlayers = { ...players };
+export function swapBrinks(players, playerOrder, gmId) {
+  const swappedPlayers = { ...players }; //Copy the existing players.
+
+  //Add the gmId to swappedPlayers
+  swappedPlayers[gmId] = { //Create an empty object to be set later.
+      ...swappedPlayers[gmId] //Copy existing player properties.
+  }
+
+  //Loop through the players, and create an empty object for each.
+  for (let i = 0; i < playerOrder.length; i++) {
+    const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
+    swappedPlayers[nextPlayerId] = { //Create an empty object to be set later.
+      ...swappedPlayers[nextPlayerId] //Copy existing player properties.
+    };
+  }
 
   // Swap Brinks for each player
   for (let i = 0; i < playerOrder.length; i++) {
     const currentPlayerId = playerOrder[i];
     const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
-    swappedPlayers[nextPlayerId].brink = players[currentPlayerId].brink;
+    swappedPlayers[nextPlayerId].brink = players[currentPlayerId].brink; //Now this will work, because we have created nextPlayerId above.
   }
 
-  // Give the GM the brink of the last player
-  swappedPlayers[gmId].brink = players[playerOrder[playerOrder.length - 1]].brink;
+  //Give the GM the correct brink.
+  const penultimatePlayerId = playerOrder[playerOrder.length - 2]; // Get the player before the last one
+  swappedPlayers[gmId].brink = players[penultimatePlayerId].brink; //Assign the correct brink.
 
   return swappedPlayers;
-}
-
-export function getVirtualTableOrder(game, withGM = true) {
-  if (withGM) {
-    return [...game.playerOrder, game.gmId];
-  } else {
-    return [...game.playerOrder];
-  }
 }
 
 export async function handleCharacterGenStep1DM(message, game) {
@@ -287,9 +351,8 @@ export async function handleCharacterGenStep1DM(message, game) {
   if (virtue && vice) {
     players[userId].virtue = sanitizeString(virtue);
     players[userId].vice = sanitizeString(vice);
-    saveGameData();
     try {
-      await message.reply('Traits recorded! Virtue : ' + players[userId].virtue + ', Vice: ' + players[userId].vice + '.');
+      await message.reply('Traits recorded!');
     } catch (error) {
       console.error(`Error replying to player ${userId}:`, error);
     }
@@ -298,8 +361,8 @@ export async function handleCharacterGenStep1DM(message, game) {
       const gameChannel = client.channels.cache.get(channelId);
       if (gameChannel) {
         gameData[channelId].characterGenStep++;
-        saveGameData();
         sendCharacterGenStep({ channel: gameChannel }, channelId);
+        saveGameData();
       }
     }
   } else {
@@ -310,14 +373,12 @@ export async function handleCharacterGenStep1DM(message, game) {
     }
   }
 }
-
 export async function handleCharacterGenStep4DM(message, game) {
   const userId = message.author.id;
   const channelId = Object.keys(gameData).find(key => gameData[key] === game);
   const players = game.players;
 
   players[userId].moment = sanitizeString(message.content);
-  saveGameData();
   try {
     await message.reply('Moment received!');
   } catch (error) {
@@ -328,8 +389,8 @@ export async function handleCharacterGenStep4DM(message, game) {
     const gameChannel = client.channels.cache.get(channelId);
     if (gameChannel) {
       gameData[channelId].characterGenStep++;
-      saveGameData();
       sendCharacterGenStep({ channel: gameChannel }, channelId);
+      saveGameData();
     }
   }
 }
@@ -338,33 +399,35 @@ export async function handleCharacterGenStep5DM(message, game) {
   const userId = message.author.id;
   const channelId = Object.keys(gameData).find(key => gameData[key] === game);
   const players = game.players;
-  const playerOrder = game.playerOrder;
+  const fullPlayerOrder = getVirtualTableOrder(game, true); //Get the full player order, including the GM.
   const gmId = game.gmId;
 
   const brinkResponses = game.brinkResponses || {};
   brinkResponses[userId] = sanitizeString(message.content);
   game.brinkResponses = brinkResponses;
 
-  const allBrinksReceived = Object.keys(brinkResponses).length === playerOrder.length + 1;
+  const allBrinksReceived = Object.keys(brinkResponses).length === fullPlayerOrder.length; //Check that all players and the GM have responded.
 
   if (allBrinksReceived) {
     // Distribute Brinks
-    const threatPlayerId = playerOrder.find(id => id in brinkResponses && id !== gmId);
-    for (const playerId of playerOrder) {
-      if (playerId === threatPlayerId) {
-        game.gm.brink = brinkResponses[gmId];
-      } else {
-        const nextPlayerId = playerOrder[(playerOrder.indexOf(playerId) + 1) % playerOrder.length];
+    const threatPlayerId = fullPlayerOrder[fullPlayerOrder.length - 2]; //Get the correct threatPlayerId.
+    for (const playerId of fullPlayerOrder) { //Loop through the full player order.
+      if (playerId === gmId) { //Check if the player is the GM.
+        game.gm.brink = brinkResponses[gmId]; //give the GM their brink.
+      }
+      else if (playerId === threatPlayerId) { //Give the threat player their brink.
+        players[playerId].brink = brinkResponses[threatPlayerId];
+      } else { //Give the players their brink.
+        const nextPlayerId = fullPlayerOrder[(fullPlayerOrder.indexOf(playerId) + 1) % fullPlayerOrder.length];
         players[playerId].brink = brinkResponses[nextPlayerId];
       }
     }
-    players[threatPlayerId].brink = brinkResponses[threatPlayerId];
-    saveGameData();
     const gameChannel = client.channels.cache.get(channelId);
     if (gameChannel) {
       gameChannel.send('Brinks have been distributed. Proceeding to the next step.');
       gameData[channelId].characterGenStep++;
       sendCharacterGenStep({ channel: gameChannel }, channelId);
+      saveGameData();
     }
   }
 }
@@ -374,6 +437,7 @@ export async function handleCharacterGenStep6DM(message, game) {
   const gameChannel = client.channels.cache.get(channelId);
   if (gameChannel) {
     sendCharacterGenStep({ channel: gameChannel }, channelId);
+    saveGameData();
   }
 }
 
@@ -387,15 +451,14 @@ export async function handleCharacterGenStep8DM(message, game) {
   }
 
   players[userId].recording = message.content;
-  saveGameData();
 
   const allRecordingsReceived = Object.values(players).every(player => player.recording);
   if (allRecordingsReceived) {
     const gameChannel = client.channels.cache.get(channelId);
     if (gameChannel) {
       gameData[channelId].characterGenStep++;
-      saveGameData();
       sendCharacterGenStep({ channel: gameChannel }, channelId);
+      saveGameData();
     }
   }
 }

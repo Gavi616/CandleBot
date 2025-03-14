@@ -30,9 +30,7 @@ export async function removePlayer(message, args) {
   let reason = args.slice(1).join(' '); // Extract the reason (if any)
 
   delete game.players[playerIdToRemove];
-
   game.playerOrder = game.playerOrder.filter(id => id !== playerIdToRemove);
-
   saveGameData();
 
   if (reason) {

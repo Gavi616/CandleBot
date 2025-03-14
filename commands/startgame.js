@@ -99,8 +99,6 @@ export async function startGame(message, gameData) {
   }
   saveGameData();
 
-  console.log("gameData after initialization (Normal Mode):", gameData);
-
   // GM Consent
   try {
     const gm = message.guild.members.cache.get(gameData[channelId].gmId);

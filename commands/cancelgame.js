@@ -19,8 +19,8 @@ export async function cancelGame(message) {
 
     if (collected.size > 0 && collected.first().content.toLowerCase().startsWith('y')) {
       delete gameData[channelId];
-      saveGameData();
       message.channel.send(`Game in #${message.channel.name} has been cancelled by the GM.`);
+      saveGameData();
     } else {
       message.channel.send('Game cancellation was aborted by GM.');
     }

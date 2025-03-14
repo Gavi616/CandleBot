@@ -1,4 +1,4 @@
-import { gameData, blocklist } from './index.js';
+import { gameData, blocklist } from './utils.js'; // Correct import here.
 import { ChannelType } from 'discord.js';
 
 export async function validateGameSetup(message) {

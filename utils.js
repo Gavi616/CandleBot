@@ -10,6 +10,17 @@ import {
 import { ChannelType } from 'discord.js';
 import { TRAIT_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
 
+export const gameData = {};
+export const blocklist = {};
+
+export function getVirtualTableOrder(game, withGM = true) {
+  if (withGM) {
+      return [...game.playerOrder, game.gmId];
+  } else {
+      return [...game.playerOrder];
+  }
+}
+
 export async function askForTraits(message, game, playerId) {
   const player = await message.guild.members.fetch(playerId);
   const user = player.user;
@@ -22,7 +33,8 @@ export async function askForTraits(message, game, playerId) {
     const collected = await dmChannel.awaitMessages({ filter, max: 1, time: TRAIT_TIMEOUT, errors: ['time'] });
 
     if (collected.size > 0) {
-      // Player responded in time. `handleCharacterGenStep1DM` will handle the rest.
+      // Player responded in time
+      saveGameData();
       return;
     } else {
       // Player timed out. Assign random traits.
@@ -58,7 +70,6 @@ export async function askPlayersForCharacterInfo(message, channelId) {
       console.error(`Error requesting character info from player ${playerId}:`, error);
       message.channel.send(`Failed to get character info from player <@${playerId}>. Game cancelled.`);
       delete gameData[channelId];
-      saveGameData();
       return;
     }
   }
@@ -130,19 +141,22 @@ export function numberToWords(number) {
   }
 }
 
-import { client } from './index.js';
-
-let gameData = {};
-
 export function loadGameData() {
   try {
     const data = fs.readFileSync('gameData.json', 'utf8');
-    gameData = JSON.parse(data);
+    const loadedGameData = JSON.parse(data); // Parse the loaded data.
+
+    // Clear the existing gameData
+    Object.keys(gameData).forEach(key => delete gameData[key]);
+
+    // Copy the loaded data into the existing gameData object
+    Object.assign(gameData, loadedGameData);
     console.log('Game data loaded successfully.');
     printActiveGames();
   } catch (err) {
     console.error('Error loading game data:', err);
-    gameData = {};
+    // Clear the existing gameData object
+    Object.keys(gameData).forEach(key => delete gameData[key]);
     console.log('Game data initialized.');
   }
 }
@@ -158,7 +172,6 @@ export function saveGameData() {
     console.error('Error saving game data:', err);
   }
 }
-
 export function printActiveGames() {
   if (Object.keys(gameData).length === 0) {
     console.log('-- No Active Games --');
@@ -176,6 +189,35 @@ export function printActiveGames() {
         console.log(`Channel ID: ${channelId} (Channel not found in cache)`);
       }
     }
+  }
+}
+
+export function loadBlocklist() {
+  try {
+    const data = fs.readFileSync('blocklist.json', 'utf8');
+    const loadedBlocklist = JSON.parse(data); // Parse the loaded data.
+
+    // Clear the existing blocklist
+    Object.keys(blocklist).forEach(key => delete blocklist[key]);
+
+    // Copy the loaded data into the existing blocklist object
+    Object.assign(blocklist, loadedBlocklist);
+    console.log('Blocklist loaded successfully.');
+  } catch (err) {
+    console.error(`Error loading blocklist: ${err.message}`);
+    // Clear the existing blocklist object
+    Object.keys(blocklist).forEach(key => delete blocklist[key]);
+    console.log('Blocklist initialized.');
+  }
+}
+
+export function saveBlocklist() {
+  try {
+    fs.writeFileSync('blocklist.json', JSON.stringify(blocklist));
+    console.log('Blocklist saved successfully.');
+    saveGameData();
+  } catch (err) {
+    console.error(`Error saving blocklist: ${err.message}`);
   }
 }
 

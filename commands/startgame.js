@@ -8,10 +8,7 @@ import { CONSENT_TIMEOUT } from '../config.js';
 export async function startGame(message, gameData) {
   const channelId = message.channel.id;
   const initiatorId = message.author.id; // Get the ID of the user who initiated the command
-  const initiatorUsername = message.author.username;
-  console.log('channelId:', channelId);
   const guildId = message.guild.id;
-  const args = message.content.slice(1).trim().split(/ +/);
   let voiceChannelId = null; // Initialize voiceChannelId to null
   let gameMode = null; // Initialize gameMode to null
 
@@ -30,52 +27,25 @@ export async function startGame(message, gameData) {
     return;
   }
 
-  // Extract the mentioned users from the message
-  const mentionedUsers = Array.from(message.mentions.users.values());
+  //Extract the GM and Players from the validationResult.
+  const gmId = validationResult.gmId;
+  const playerIds = validationResult.playerIds;
 
-  if (mentionedUsers.length < 3) { // GM + at least 2 players
-    message.reply('A **Ten Candles** game requires a GM and at least 2 players. Usage: `.startgame <GM mention> <Player mentions (space-separated)>`');
-    return;
-  }
-
-  //Extract the GM
-  const gmId = mentionedUsers.shift().id; //remove the first user, which is the GM.
-
-  //Get the players
-  const playerIds = mentionedUsers.map(user => user.id); // Get the ids of all remaining users.
-  
-  // Basic checks to ensure all mentioned users are unique and that the GM isn't a player.
-  if (new Set(playerIds).size !== playerIds.length) {
-    message.reply('Duplicate players found. Each player must be a unique user. No game was started.');
-    return;
-  }
-
-  if (playerIds.includes(gmId)) {
-    message.reply('The GM cannot also be a player. No game was started.');
-    return;
-  }
-  
-  // Check if the number of players is within the allowed range.
-  if (playerIds.length < 1 || playerIds.length > 10) {
-    message.reply('A **Ten Candles** game requires a GM and at least 1 player (to a maximum of 10 players). No game was started.');
-    return;
-  }
-
-  // Check if the GM exists in the server.
-  const gm = message.guild.members.cache.get(gmId);
-  if (!gm) {
-    message.reply('Invalid GM ID. Please mention a valid user in this server. No game was started.');
-    return;
-  }
-
-  // Check if all players are in the server.
-  if (playerIds) {
-    for (const playerId of playerIds) {
-      const player = message.guild.members.cache.get(playerId);
-      if (!player) {
-        message.reply(`Invalid Player ID: <@${playerId}>. Please mention a valid user in this server. No game was started.`);
-        return;
-      }
+  // Check for bots and role mentions
+  for (const playerId of playerIds) {
+    const player = message.guild.members.cache.get(playerId);
+    if (!player) {
+      // If player is undefined, it's not a valid user (likely a role)
+      message.channel.send(`Roles cannot be players. Game cancelled.`);
+      delete gameData[channelId];
+      saveGameData();
+      return;
+    }
+    if (player.user.bot) {
+      message.channel.send(`Bots cannot be players. Game cancelled.`);
+      delete gameData[channelId];
+      saveGameData();
+      return;
     }
   }
 
@@ -135,7 +105,14 @@ export async function startGame(message, gameData) {
       components: [row],
     });
 
-    message.channel.send('A new **Ten Candles** game is being started in this channel!');
+    let startupMessageText = 'A new **Ten Candles** game is being started in this channel!\n\n';
+    
+    if (gameMode === 'voice-plus-text') {
+      startupMessageText += `**Voice Channel:** This channel has been set up for audio playback.`;
+    } else {
+      startupMessageText += '**Text-Only Mode:** Audio playback is not supported in this channel. Final recordings will be text-only.';
+    }
+    message.channel.send(startupMessageText); 
 
     const gmFilter = (interaction) =>
       interaction.user.id === gameData[channelId].gmId && interaction.message.id === consentMessage.id;
@@ -172,7 +149,7 @@ export async function startGame(message, gameData) {
           components: [],
         });
       }
-      if (!gameData[channelId].gm.consent) { //Changed from optional chaining, to checking for null.
+      if (!gameData[channelId].gm.consent) {
         message.channel.send('The GM did not consent. Game cancelled.');
         delete gameData[channelId];
         saveGameData();
@@ -188,11 +165,18 @@ export async function startGame(message, gameData) {
     return;
   }
 
-  //Check for bots
+  // Check for bots and role mentions
   for (const playerId of playerIds) {
     const player = message.guild.members.cache.get(playerId);
+    if (!player) {
+      // If player is undefined, it's not a valid user (likely a role)
+      message.channel.send(`Roles cannot be players. Game cancelled.`);
+      delete gameData[channelId];
+      saveGameData();
+      return;
+    }
     if (player.user.bot) {
-      message.channel.send(`Player <@${playerId}> is a bot and cannot be a player. Game cancelled.`);
+      message.channel.send(`Bots cannot be players. Game cancelled.`);
       delete gameData[channelId];
       saveGameData();
       return;
@@ -269,9 +253,11 @@ export async function startGame(message, gameData) {
         nonConsentPlayers.push(`<@${playerIds[i]}>`);
       }
     }
+
     if (!gameData[channelId].gm.consent) {
       nonConsentPlayers.push(`<@${gmId}>`); //add the gm if the gm did not consent.
     }
+
     // Send a DM to the GM with the list of non-consenting players
     const nonConsentList = nonConsentPlayers.join(", ");
     const gm = message.guild.members.cache.get(gameData[channelId].gmId);
@@ -287,13 +273,8 @@ export async function startGame(message, gameData) {
   confirmationMessage += '**Though you know your characters will die, you must have hope that they will survive.**\n\n';
   confirmationMessage += '**Ten Candles** focuses around shared narrative control.\n';
   confirmationMessage += 'Everyone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\n';
-  confirmationMessage += 'Let\'s begin character generation.\nUse the `.nextstep` command to proceed.';
+  confirmationMessage += 'Let\'s begin character generation. Check your DMs for instructions.\n\n';
 
-  if (gameMode === 'voice-plus-text') {
-    confirmationMessage += `\n\n**Voice Channel:** This channel has been set up for audio playback.`;
-  } else {
-    confirmationMessage += '\n\n**Text-Only Mode:** Audio playback is not supported in this channel. Final recordings will be text-only.';
-  }
   message.channel.send(confirmationMessage)
     .then(() => {
       sendCharacterGenStep(message, channelId);

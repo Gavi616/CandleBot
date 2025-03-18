@@ -49,7 +49,11 @@ client.once('ready', () => {
   const startupTimestamp = new Date().toLocaleString();
   console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
   console.log(`Logged in as ${client.user.tag} (${client.user.id})`);
-  console.log(`Bot is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'}.`);
+
+  // Get the server IDs.
+  const serverIds = client.guilds.cache.map(guild => guild.id).join(', ');
+  console.log(`Bot is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'} (${serverIds}).`)
+
   console.log(`Command prefix is ${prefix}`);
   console.log(`Use ${prefix}help for a list of commands.`);
 
@@ -138,7 +142,7 @@ client.on('messageCreate', async (message) => {
       const game = findGameByUserId(userId);
 
       if (!game) return;
-      
+
       const player = game.players[userId];
 
       if (game.characterGenStep === 3) {

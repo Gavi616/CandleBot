@@ -347,8 +347,6 @@ export function printActiveGames() {
       if(channel.guild){
         console.log(`Server: ${channel.guild.name}, Channel: ${channel.name}`);
       }
-    } else {
-      console.log(`Channel ID: ${channelId} (Channel not found in cache)`);
     }
   }
 }

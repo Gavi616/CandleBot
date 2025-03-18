@@ -12,7 +12,7 @@ export async function gamestatus(message) {
 
   let statusMessage = `**Game Status in #${gameChannelName}**:\n`;
   statusMessage += `GM: <@${game.gmId}>\n`;
-  statusMessage += `Players: ${game.playerOrder.map(playerId => `<@${playerId}>`).join(', ')}\n`;
+  statusMessage += `Players: ${game.playerOrder.map(playerId => `<@${playerId}>`).join(', ')}\n\n`;
 
   if (game.characterGenStep < 9) {
     statusMessage += `Character Generation Step: ${game.characterGenStep}\n`;

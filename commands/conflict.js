@@ -1,5 +1,7 @@
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { startTruthsSystem } from '../index.js';
-import { sendCandleStatus, saveGameData } from '../utils.js';
+import { sendCandleStatus, saveGameData, numberToWords } from '../utils.js';
+import { SACRIFICE_TIMEOUT, BRINK_TIMEOUT } from '../config.js';
 
 async function extinguishCandle(message, channelId) {
   const game = gameData[channelId];
@@ -12,7 +14,7 @@ async function extinguishCandle(message, channelId) {
   if (litCandles < 1) {
     game.inLastStand = true; //This is how we know we are in The Last Stand.
     message.channel.send(`The last candle is extinguished. The darkness closes in. We are in **The Last Stand**.`);
-    return; // Do not change scenes, the game is over.
+    return; // Do not change scenes, the game is over as far as the bot is concerned. The GM can now use .playrecordings
   }
   await startChangingScenes(message, channelId);
 }
@@ -32,7 +34,7 @@ async function startChangingScenes(message, channelId) {
   await startTruthsSystem(client, message, channelId);
 
   // Notify the GM.
-  await message.channel.send(`**GM, please create the next scene. Then use the \`.nextstep\` command.**`);
+  await message.channel.send(`GM, please introduce the next scene.`);
 }
 
 export async function conflict(message, args, gameData) {
@@ -47,7 +49,7 @@ export async function conflict(message, args, gameData) {
   }
 
   if (game.inLastStand) { //This will prevent any conflicts in The Last Stand.
-    message.reply("We are in **The Last Stand**. No more conflict rolls can be made. You may take over narration from the GM for a moment, but the cost is your character's life.");
+    message.reply("We are in **The Last Stand**. No more conflict rolls can be made.");
     return;
   }
 
@@ -179,72 +181,133 @@ export async function conflict(message, args, gameData) {
   let messageContent = '';
 
   if (totalPlayerSixes === 0) {
-    // Failed Roll - Brink Prompt (DM)
-    if (game.players[playerNumericId].momentBurned &&
-      game.players[playerNumericId].virtueBurned &&
-      game.players[playerNumericId].viceBurned &&
-      !game.players[playerNumericId].brinkUsedThisRoll &&
-      !game.players[playerNumericId].isDead) {
-
-      try {
+    // Failed Roll - Sacrifice for Narration
+    try {
         const player = await message.guild.members.fetch(playerId);
         const dmChannel = await player.user.createDM();
 
-        await dmChannel.send('You have failed this `.conflict` roll. Embrace your Brink for a full reroll? (y/n) You have 60 seconds to decide.');
+        const sacrificeEmbed = new EmbedBuilder()
+            .setColor(0x0099FF)
+            .setTitle('Sacrifice for Narration Rights')
+            .setDescription('You have failed this `.conflict` roll. You may take over narration from the GM for a moment, but the cost is your character\'s life. Sacrifice your character?');
 
-        const filter = m => m.author.id === playerId && (m.content.toLowerCase().startsWith('y') || m.content.toLowerCase().startsWith('n'));
-        const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+        const row = new ActionRowBuilder()
+            .addComponents(
+                new ButtonBuilder()
+                    .setCustomId('sacrifice_yes')
+                    .setLabel('Yes')
+                    .setStyle(ButtonStyle.Danger), // Make the 'Yes' button red (danger)
+                new ButtonBuilder()
+                    .setCustomId('sacrifice_no')
+                    .setLabel('No')
+                    .setStyle(ButtonStyle.Secondary), // Make the 'No' button gray (secondary)
+            );
 
-        if (collected.size > 0 && collected.first().content.toLowerCase() === 'y') {
-          game.players[playerNumericId].brinkUsedThisRoll = true; // Set the flag
-          message.channel.send(`<@${playerId}> embraced their Brink!`);
+        const sacrificeMessage = await dmChannel.send({ embeds: [sacrificeEmbed], components: [row] });
 
-          //Clear the dice from this roll.
-          rolls = [];
-          numOnesRerolled = 0;
-          hopeDieRoll = 0;
-          //Reroll
-          if (hopeDieRoll) {
-            rolls.push(hopeDieRoll);
-          }
-          //Roll all hope dice.
-          for (let i = 0; i < game.players[playerNumericId].hopeDice; i++) {
-            rolls.push(Math.floor(Math.random() * 6) + 1);
-          }
+        const sacrificeFilter = (interaction) => interaction.user.id === playerId && interaction.message.id === sacrificeMessage.id;
+        const sacrificeCollector = dmChannel.createMessageComponentCollector({ filter: sacrificeFilter, time: SACRIFICE_TIMEOUT });
 
-          for (let i = 0; i < dicePool; i++) {
-            rolls.push(Math.floor(Math.random() * 6) + 1);
-          }
-          // Continue with the rest of the roll logic...
-          sixes = rolls.filter((roll) => roll >= 6).length;
-          ones = rolls.filter((roll, index) => roll === 1 && (hopeDieRoll !== 1 || index !== 0)).length;
+        sacrificeCollector.on('collect', async (interaction) => {
+            await interaction.deferUpdate();
+            if (interaction.customId === 'sacrifice_yes') {
+                game.players[playerId].isDead = true;
+                await interaction.editReply({ content: `You have chosen to sacrifice your character for narration rights!`, embeds: [], components: [] });
+                message.channel.send(`**<@${playerId}> has chosen to sacrifice their character for narration rights!**\nPlease narrate the end of your characters story.`);
+                messageContent += `<@${playerId}>, the acting player, now has narration rights for this conflict.`;
+            } else {
+                await interaction.editReply({ content: 'You chose not to sacrifice your character.', embeds: [], components: [] });
+                message.channel.send(`<@${playerId}> chose not to sacrifice their character.`);
+                // Failed Roll - Brink Prompt (DM)
+                if (game.players[playerNumericId].momentBurned &&
+                    game.players[playerNumericId].virtueBurned &&
+                    game.players[playerNumericId].viceBurned &&
+                    !game.players[playerNumericId].brinkUsedThisRoll &&
+                    !game.players[playerNumericId].isDead) {
 
-        } else {
-          await dmChannel.send('You chose not to embrace your Brink, for now.');
-          message.channel.send(`<@${playerId}> chose not to embrace their Brink. The scene will end.`); //Inform the channel of the choice.
-        }
-      } catch (error) {
-        if (error.message === 'time') {
-          await message.guild.members.fetch(playerId).then(player => player.user.send('You did not respond in time. The scene will end.'));
-          message.channel.send(`<@${playerId}>, did not respond in time. The scene will end.`);
-        } else {
-          console.error('Error during Brink prompt (DM):', error);
-          await message.guild.members.fetch(playerId).then(player => player.user.send('An error occurred. The scene will end.'));
-          message.channel.send(`<@${playerId}>, an error occurred. The scene will end.`);
-        }
-      }
+                    const brinkEmbed = new EmbedBuilder()
+                        .setColor(0x0099FF)
+                        .setTitle('Embrace Your Brink?')
+                        .setDescription('You have failed this `.conflict` roll, and have burned all of your traits. Embrace your Brink for a full reroll?');
+
+                    const brinkRow = new ActionRowBuilder()
+                        .addComponents(
+                            new ButtonBuilder()
+                                .setCustomId('brink_yes')
+                                .setLabel('Yes')
+                                .setStyle(ButtonStyle.Success), // Make the 'Yes' button green (success)
+                            new ButtonBuilder()
+                                .setCustomId('brink_no')
+                                .setLabel('No')
+                                .setStyle(ButtonStyle.Secondary), // Make the 'No' button gray (secondary)
+                        );
+                    const brinkMessage = await dmChannel.send({ embeds: [brinkEmbed], components: [brinkRow] });
+                    const brinkFilter = (interaction) => interaction.user.id === playerId && interaction.message.id === brinkMessage.id;
+                    const brinkCollector = dmChannel.createMessageComponentCollector({ filter: brinkFilter, time: BRINK_TIMEOUT });
+                    brinkCollector.on('collect', async (interaction) => {
+                        await interaction.deferUpdate();
+                        if (interaction.customId === 'brink_yes') {
+                            game.players[playerNumericId].brinkUsedThisRoll = true; // Set the flag
+                            await interaction.editReply({ content: 'You embraced your Brink!', embeds: [], components: [] });
+                            message.channel.send(`<@${playerId}> embraced their Brink!`);
+
+                            //Clear the dice from this roll.
+                            rolls = [];
+                            numOnesRerolled = 0;
+                            hopeDieRoll = 0;
+                            //Reroll
+                            if (hopeDieRoll) {
+                                rolls.push(hopeDieRoll);
+                            }
+                            //Roll all hope dice.
+                            for (let i = 0; i < game.players[playerNumericId].hopeDice; i++) {
+                                rolls.push(Math.floor(Math.random() * 6) + 1);
+                            }
+
+                            for (let i = 0; i < dicePool; i++) {
+                                rolls.push(Math.floor(Math.random() * 6) + 1);
+                            }
+                            // Continue with the rest of the roll logic...
+                            sixes = rolls.filter((roll) => roll >= 6).length;
+                            ones = rolls.filter((roll, index) => roll === 1 && (hopeDieRoll !== 1 || index !== 0)).length;
+
+                        } else {
+                            await interaction.editReply({ content: 'You chose not to embrace your Brink, for now.', embeds: [], components: [] });
+                            message.channel.send(`<@${playerId}> chose not to embrace their Brink. The scene will end.`); //Inform the channel of the choice.
+                        }
+                        brinkCollector.stop();
+                    });
+                    brinkCollector.on('end', async (collected, reason) => {
+                        if (reason === 'time') {
+                            await brinkMessage.edit({ content: 'You did not respond in time. The scene will end.', embeds: [], components: [] });
+                            message.channel.send(`<@${playerId}>, did not respond in time. The scene will end.`);
+                        }
+                    });
+                }
+            }
+            sacrificeCollector.stop();
+        });
+        sacrificeCollector.on('end', async (collected, reason) => {
+            if (reason === 'time') {
+                await sacrificeMessage.edit({ content: 'You did not respond in time. The scene will end.', embeds: [], components: [] });
+                message.channel.send(`<@${playerId}>, did not respond in time. The scene will end.`);
+            }
+        });
+    } catch (error) {
+        console.error('Error during Sacrifice prompt (DM):', error);
+        message.channel.send(`<@${playerId}>, an error occurred. The scene will end.`);
     }
-
-    if (game.scene === 10) { // Check for Last Stand (only one candle left)
-      game.players[playerId].isDead = true;
-      message.channel.send(`**${game.players[playerId].name || `<@${playerId}>'s unnamed character`} has died!**\nPlease work with the GM to narrate your character's death.`);
-    } else {
-      // Normal Candle Extinguishing
-      game.diceLost = ones;
-      //Darken a candle and advance a scene.
-      messageContent += "A candle will be extinguished ending the scene after this conflict is narrated.\n";
-      await extinguishCandle(message, channelId);
-      //Start Truths removed.
+    if (!game.players[playerId].isDead) { //Only check if they are not already dead.
+        if (game.scene === 10) { // Check for Last Stand (only one candle left)
+            game.players[playerId].isDead = true;
+            message.channel.send(`**${game.players[playerId].name || `<@${playerId}>'s unnamed character`} has died!**\nPlease work with the GM to narrate your character's death.`);
+        } else {
+            // Normal Candle Extinguishing
+            game.diceLost = ones;
+            //Darken a candle and advance a scene.
+            messageContent += "A candle will be extinguished ending the scene after this conflict is narrated.\n";
+            await extinguishCandle(message, channelId);
+        }
     }
     saveGameData();
   } else {
@@ -260,7 +323,7 @@ export async function conflict(message, args, gameData) {
 
   if (gmSixes >= totalPlayerSixes && gmDiceCount > 0) {
     messageContent += `<@${game.gmId}, the GM, wins narration rights for this conflict.`;
-  } else {
+  } else if (!game.players[playerId].isDead) { //They are only the narrator if they are not dead.
     messageContent += `<@${message.author.id}>, the acting player, wins narration rights for this conflict.`;
   }
 

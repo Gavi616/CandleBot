@@ -1,5 +1,8 @@
-export const TRAIT_TIMEOUT = 600000; // 10 minutes in milliseconds
-export const CONSENT_TIMEOUT = 180000; // 3 minutes in milliseconds
+export const TRAIT_TIMEOUT = 60000;
+export const CONSENT_TIMEOUT = 60000;
+export const SACRIFICE_TIMEOUT = 60000;
+export const BRINK_TIMEOUT = 60000;
+export const TIME_INTERVAL = 15000;
 
 export const defaultVirtues = [
   'Courageous', 'Compassionate', 'Just', 'Wise', 'Temperate', 'Hopeful', 'Faithful', 'Loving', 'Loyal', 'Honest',
@@ -25,3 +28,6 @@ export const defaultMoments = [
   "Escape from a dangerous location.",
   "Provide light in the darkness to help a friend."
 ];
+
+export const confirmButtonYesLabel = 'Yes';
+export const confirmButtonNoLabel = 'Let me try again';

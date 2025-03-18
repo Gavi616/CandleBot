@@ -1,28 +1,23 @@
 import { sendCharacterGenStep } from '../chargen.js';
 import { gameData, saveGameData } from '../utils.js';
+import { findGameByUserId } from '../index.js';
 
 export async function nextStep(message) {
   const channelId = message.channel.id;
-  const game = gameData[channelId];
-  const userId = message.author.id; //Get the user id.
-
+  const game = findGameByUserId(message.author.id); //Use findGameByUserId() to get the game.
+  
   if (!game) {
-    message.reply('No game is in progress in this channel.');
+    message.channel.send('No game in progress.');
     return;
   }
 
-  // Explicit GM check
-  if (userId !== game.gmId) {
-    message.reply('Only the GM can use the `.nextstep` command.');
+  if (game.gmId !== message.author.id) { //Get the gmId from the game object.
+    message.channel.send('Only the GM can use this command.');
     return;
   }
 
-  if (game.characterGenStep >= 8) {
-    message.reply('Character generation is already complete. Use `.conflict` to continue the game.');
-    return;
-  }
-
-  game.characterGenStep++;
-  sendCharacterGenStep(message, channelId);
-  saveGameData();
+  game.characterGenStep++; // Increment the step
+  saveGameData(); // Save the updated data
+  const gameChannel = message.guild.channels.cache.get(game.textChannelId); //Get the game channel from the game object.
+  sendCharacterGenStep(gameChannel, game); //Call sendCharacterGenStep, passing the game channel.
 }

@@ -7,8 +7,9 @@ import {
   AudioPlayerStatus,
   getVoiceConnection
 } from '@discordjs/voice';
-import { ChannelType } from 'discord.js';
-import { TRAIT_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder } from 'discord.js';
+import { TRAIT_TIMEOUT, TIME_INTERVAL, defaultVirtues, defaultVices, defaultMoments, confirmButtonYesLabel, confirmButtonNoLabel } from './config.js';
+import { client } from './index.js';
 
 export const gameData = {};
 export const blocklist = {};
@@ -21,31 +22,124 @@ export function getVirtualTableOrder(game, withGM = true) {
   }
 }
 
-export async function askForTraits(message, game, playerId) {
-  const player = await message.guild.members.fetch(playerId);
-  const user = player.user;
+export async function countdown(user, time, message) {
+  const interval = TIME_INTERVAL;
+  let timeLeft = time;
+  let content;
+
+  const timer = setInterval(async () => {
+    timeLeft -= interval;
+    const minutes = Math.floor(timeLeft / 60000);
+    const seconds = Math.floor((timeLeft % 60000) / 1000);
+
+    try {
+        if (timeLeft <= 0) {
+        clearInterval(timer);
+        content = `Time's up! Random selections will now be made.`;
+      } else {
+        content = `*(Time remaining: ${minutes} minutes and ${seconds} seconds)*`;
+      }
+        await message.edit(content);
+    } catch (error) {
+        console.error('Error editing countdown message:', error);
+    }
+  }, interval);
+
+  return timer;
+}
+
+async function confirmInput(user, question, time) {
   const dmChannel = await user.createDM();
 
-  try {
-    await user.send('Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").');
+  const consentEmbed = new EmbedBuilder()
+  .setColor(0x0099FF)
+  .setTitle('Is this Correct?')
+  .setDescription(`${question}`);
+  
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('input_yes')
+        .setLabel(confirmButtonYesLabel)
+        .setStyle(ButtonStyle.Success),
+      new ButtonBuilder()
+        .setCustomId('input_no')
+        .setLabel(confirmButtonNoLabel)
+        .setStyle(ButtonStyle.Danger)
+    );
+
+  const consentMessage = await user.send({
+    embeds: [consentEmbed],
+    components: [row],
+  });
+
+  const filter = (interaction) =>
+    interaction.user.id === user.id && interaction.message.id === consentMessage.id;
+  
+  const collector = dmChannel.createMessageComponentCollector({
+      filter: filter,
+      time: time,
+    });
+
+  return new Promise((resolve) => {
+    collector.on('collect', async (interaction) => {
+        await interaction.deferUpdate();
+        if (interaction.customId === 'input_yes') {
+          await interaction.editReply({ content: 'Confirmed.', embeds: [], components: [] });
+          resolve(true);
+        } else if (interaction.customId === 'input_no') {
+          await interaction.editReply({ content: 'Please try again.', embeds: [], components: [] });
+          resolve(false);
+        }
+        collector.stop();
+    });
+    collector.on('end', async (collected, reason) => {
+      if (reason === 'time') {
+          await consentMessage.edit({
+              content: 'Confirmation timed out.',
+              embeds: [],
+              components: [],
+          });
+      }
+      resolve(false);
+    });
+  });
+}
+
+export async function askForTraits(message, gameChannel, game, playerId) {
+  const player = await message.guild.members.fetch(playerId);
+  const user = player.user;
+  let virtue, vice;
+
+  do {
+    const dmChannel = await user.createDM();
+    const initialMessage = await user.send('Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").');
+    const timer = await countdown(user, TRAIT_TIMEOUT, initialMessage);
 
     const filter = m => m.author.id === playerId;
     const collected = await dmChannel.awaitMessages({ filter, max: 1, time: TRAIT_TIMEOUT, errors: ['time'] });
 
+    clearInterval(timer);
+    await initialMessage.edit(`Traits Received`);
+
     if (collected.size > 0) {
-      // Player responded in time
+      [virtue, vice] = collected.first().content.split(',').map(s => sanitizeString(s.trim()));
+      const confirmation = await confirmInput(user, `Your virtue: ${virtue}, your vice: ${vice}`, TRAIT_TIMEOUT);
+      if(!confirmation){
+        continue;
+      }
+      game.players[playerId].virtue = virtue;
+      game.players[playerId].vice = vice;
       saveGameData();
       return;
     } else {
-      // Player timed out. Assign random traits.
       game.players[playerId].virtue = getRandomVirtue();
       game.players[playerId].vice = getRandomVice();
       saveGameData();
       await user.send(`You timed out. Random traits have been assigned: Virtue - ${game.players[playerId].virtue}, Vice - ${game.players[playerId].vice}`);
+      return;
     }
-  } catch (error) {
-    console.error(`Error DMing player ${playerId} or assigning random traits:`, error);
-  }
+  } while (true);
 }
 
 export async function askPlayersForCharacterInfo(message, channelId) {
@@ -57,14 +151,11 @@ export async function askPlayersForCharacterInfo(message, channelId) {
       const player = await message.guild.members.fetch(playerId);
       const user = player.user;
 
-      // Ask for Name
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'name', "What's your character's name or nickname?");
+      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'name', "What's your character's name or nickname?", 60000);
 
-      // Ask for Look
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'look', 'What does your character look like at a quick glance?');
+      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'look', 'What does your character look like at a quick glance?', 60000);
 
-      // Ask for Concept
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?');
+      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
 
     } catch (error) {
       console.error(`Error requesting character info from player ${playerId}:`, error);
@@ -75,34 +166,109 @@ export async function askPlayersForCharacterInfo(message, channelId) {
   }
 }
 
-export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, retryCount = 0) {
-  try {
-    const dmChannel = await user.createDM();
-    await user.send(question);
+export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, time, retryCount = 0) {
+  let input;
+  do {
+    try {
+      const dmChannel = await user.createDM();
+      const initialMessage = await user.send(question);
+      const timer = await countdown(user, time, initialMessage);
 
-    const filter = m => m.author.id === playerId;
-    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: 60000, errors: ['time'] });
+      const filter = m => m.author.id === playerId;
+      const collected = await dmChannel.awaitMessages({ filter, max: 1, time: time, errors: ['time'] });
 
-    if (collected.size > 0) {
-      const response = collected.first().content;
-      game.players[playerId][field] = sanitizeString(response);
-      saveGameData();
-    } else {
-      throw new Error(`Player <@${playerId}> timed out while providing ${field}.`);
+      clearInterval(timer);
+      await initialMessage.edit(`${field} Received`);
+
+      if (collected.size > 0) {
+        input = sanitizeString(collected.first().content);
+        const confirmation = await confirmInput(user, `Your ${field}: ${input}`, time);
+        if (!confirmation){
+          continue;
+        }
+        game.players[playerId][field] = input;
+        saveGameData();
+        await user.send(`Your character's ${field} has been recorded as: ${game.players[playerId][field]}`);
+        return;
+      } else {
+        throw new Error(`Player <@${playerId}> timed out while providing ${field}.`);
+      }
+    } catch (error) {
+      if (retryCount < 3) {
+        await user.send(`You timed out. Please provide your ${field} again.`);
+        await askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, time, retryCount + 1);
+        return;
+      } else {
+        throw new Error(`Player <@${playerId}> timed out after multiple retries.`);
+      }
     }
-  } catch (error) {
-    if (retryCount < 3) {
-      await user.send(`You timed out. Please provide your ${field} again.`);
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, retryCount + 1);
-    } else {
-      throw new Error(`Player <@${playerId}> timed out after multiple retries.`);
-    }
-  }
+  } while (true);
 }
 
-export function assignRandomMoment(user, player) {
+export async function askForMoment(user, game, playerId, time) {
+  let input;
+  do {
+    try {
+      const initialMessage = await user.send('Please DM me your Moment.');
+      const timer = countdown(user, time, initialMessage);
+
+      const filter = m => m.author.id === playerId;
+      const collected = await dmChannel.awaitMessages({ filter, max: 1, time: time, errors: ['time'] });
+
+      clearInterval(timer);
+      await initialMessage.edit(`Moment Received`);
+
+      if (collected.size > 0) {
+        input = sanitizeString(collected.first().content);
+        const confirmation = await confirmInput(user, `Your Moment: ${input}`, time);
+        if (!confirmation){
+          continue;
+        }
+        game.players[playerId].moment = input;
+        return;
+      } else {
+        assignRandomMoment(user, game.players[playerId]);
+        return;
+      }
+    } catch (error) {
+      assignRandomMoment(user, game.players[playerId]);
+      return;
+    }
+  } while (true);
+}
+
+function assignRandomMoment(user, player) {
   player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
   user.send(`You timed out. A random Moment has been assigned: "${player.moment}"`);
+}
+
+export async function askForBrink(user, game, playerId, prompt, time){
+  let input;
+  do {
+    try {
+      const initialMessage = await user.send(prompt);
+      const timer = countdown(user, time, initialMessage);
+
+      const filter = m => m.author.id === playerId;
+      const collected = await dmChannel.awaitMessages({ filter, max: 1, time: time, errors: ['time'] });
+
+      clearInterval(timer);
+      await initialMessage.edit(`Brink Received`);
+
+      if (collected.size > 0) {
+        input = sanitizeString(collected.first().content);
+        const confirmation = await confirmInput(user, `Your Brink: ${input}`, time);
+        if (!confirmation){
+          continue;
+        }
+        return input;
+      } else {
+        return "";
+      }
+    } catch (error) {
+      return "";
+    }
+  } while (true);
 }
 
 function getRandomVirtue() {
@@ -115,15 +281,12 @@ function getRandomVice() {
 
 export function sanitizeString(str) {
   if (typeof str !== 'string') {
-    return ''; // Return an empty string if not a string
+    return '';
   }
 
-  // Remove control characters (except newline and tab, if you want to keep them)
-  str = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\uFFFF]/g, ''); // Removes all control characters except \t \n
-  // Escape double quotes
+  str = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\uFFFF]/g, '');
   str = str.replace(/"/g, '\\"');
-  // Escape backslashes
-  str = str.replace(/\\/g, '\\\\');
+  str = str.replace(/\\(?!"|\\)/g, '\\\\');
 
   return str;
 }
@@ -137,25 +300,21 @@ export function numberToWords(number) {
   if (number >= 0 && number <= 10) {
     return numberWords[number];
   } else {
-    return number.toString(); // Return the number as a string if it's outside the range 0-10
+    return number.toString();
   }
 }
 
 export function loadGameData() {
   try {
     const data = fs.readFileSync('gameData.json', 'utf8');
-    const loadedGameData = JSON.parse(data); // Parse the loaded data.
+    const loadedGameData = JSON.parse(data);
 
-    // Clear the existing gameData
     Object.keys(gameData).forEach(key => delete gameData[key]);
 
-    // Copy the loaded data into the existing gameData object
     Object.assign(gameData, loadedGameData);
-    console.log('Game data loaded successfully.'); //This has been updated to log.
-    printActiveGames();
+    console.log('Game data loaded successfully.');
   } catch (err) {
     console.error('Error loading game data:', err);
-    // Clear the existing gameData object
     Object.keys(gameData).forEach(key => delete gameData[key]);
     console.log('Game data initialized.');
   }
@@ -172,22 +331,24 @@ export function saveGameData() {
     console.error('Error saving game data:', err);
   }
 }
+
 export function printActiveGames() {
   if (Object.keys(gameData).length === 0) {
     console.log('-- No Active Games --');
-  } else {
-    console.log('--- Active Games ---');
-    for (const channelId in gameData) {
-      const channel = client.channels.cache.get(channelId); // Check if the channel is cached first.
-      if (channel) {
-        if (channel.guild) {
-          console.log(`Server: ${channel.guild.name}, Channel: ${channel.name}`);
-        } else {
-          console.log(`Channel ID: ${channelId} (Guild not found)`);
-        }
-      } else {
-        console.log(`Channel ID: ${channelId} (Channel not found in cache)`);
+    return;
+  }
+  console.log('--- Active Games ---');
+  for (const channelId in gameData) {
+    if(!gameData[channelId]){
+      continue;
+    }
+    const channel = client.channels.cache.get(channelId);
+    if (channel) {
+      if(channel.guild){
+        console.log(`Server: ${channel.guild.name}, Channel: ${channel.name}`);
       }
+    } else {
+      console.log(`Channel ID: ${channelId} (Channel not found in cache)`);
     }
   }
 }
@@ -195,17 +356,14 @@ export function printActiveGames() {
 export function loadBlocklist() {
   try {
     const data = fs.readFileSync('blocklist.json', 'utf8');
-    const loadedBlocklist = JSON.parse(data); // Parse the loaded data.
+    const loadedBlocklist = JSON.parse(data);
 
-    // Clear the existing blocklist
     Object.keys(blocklist).forEach(key => delete blocklist[key]);
 
-    // Copy the loaded data into the existing blocklist object
     Object.assign(blocklist, loadedBlocklist);
-    console.log('Blocklist loaded successfully.'); //This has been updated to log.
+    console.log('Blocklist loaded successfully.');
   } catch (err) {
     console.error(`Error loading blocklist: ${err.message}`);
-    // Clear the existing blocklist object
     Object.keys(blocklist).forEach(key => delete blocklist[key]);
     console.log('Blocklist initialized.');
     }

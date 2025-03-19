@@ -5,15 +5,15 @@ export const BRINK_TIMEOUT = 60000;
 export const TIME_INTERVAL = 15000;
 
 export const defaultVirtues = [
-  'Courageous', 'Compassionate', 'Just', 'Wise', 'Temperate', 'Hopeful', 'Faithful', 'Loving', 'Loyal', 'Honest',
-  'Generous', 'Patient', 'Diligent', 'Forgiving', 'Kind', 'Optimistic', 'Reliable', 'Respectful', 'Selfless', 'Sincere',
-  'Tolerant', 'Trustworthy', 'Understanding', 'Vigilant', 'Witty', 'Adaptable', 'Ambitious', 'Charitable', 'Creative', 'Decisive'
+  'courageous', 'compassionate', 'just', 'wise', 'temperate', 'hopeful', 'faithful', 'loving', 'loyal', 'honest',
+  'generous', 'patient', 'diligent', 'forgiving', 'kind', 'optimistic', 'reliable', 'respectful', 'selfless', 'sincere',
+  'tolerant', 'trustworthy', 'understanding', 'vigilant', 'witty', 'adaptable', 'ambitious', 'charitable', 'creative', 'decisive'
 ];
 
 export const defaultVices = [
-  'Greedy', 'Wrathful', 'Envious', 'Slothful', 'Proud', 'Gluttonous', 'Lustful', 'Treacherous', 'Deceitful', 'Cowardly',
-  'Jealous', 'Malicious', 'Pessimistic', 'Reckless', 'Resentful', 'Rude', 'Selfish', 'Stubborn', 'Suspicious', 'Vain',
-  'Vengeful', 'Wasteful', 'Withdrawn', 'Arrogant', 'Bitter', 'Careless', 'Cruel', 'Dishonest', 'Frivolous', 'Hateful'
+  'greedy', 'wrathful', 'envious', 'slothful', 'proud', 'gluttonous', 'lustful', 'treacherous', 'deceitful', 'cowardly',
+  'jealous', 'malicious', 'pessimistic', 'reckless', 'resentful', 'rude', 'selfish', 'stubborn', 'suspicious', 'vain',
+  'vengeful', 'wasteful', 'withdrawn', 'arrogant', 'bitter', 'careless', 'cruel', 'dishonest', 'frivolous', 'hateful'
 ];
 
 export const defaultMoments = [

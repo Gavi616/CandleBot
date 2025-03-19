@@ -1,4 +1,4 @@
-import { gameData, getVirtualTableOrder, sendCandleStatus, saveGameData, askForTraits, askPlayersForCharacterInfo, sanitizeString, askForMoment, askForBrink } from './utils.js';
+import { gameData, getVirtualTableOrder, sendCandleStatus, saveGameData, askForTraits, sanitizeString, askForMoment, askForBrink, normalizePlayerBrink, normalizeGMBrink } from './utils.js';
 import { TRAIT_TIMEOUT } from './config.js';
 import { client, findGameByUserId } from './index.js'
 
@@ -259,25 +259,22 @@ export async function swapTraits(client, players, game, guildId) {
 export function swapBrinks(players, playerOrder, gmId) {
   const swappedPlayers = { ...players };
 
-  swappedPlayers[gmId] = {
-    ...swappedPlayers[gmId]
-  }
-
-  for (let i = 0; i < playerOrder.length; i++) {
-    const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
-    swappedPlayers[nextPlayerId] = {
-      ...swappedPlayers[nextPlayerId]
-    };
-  }
-
   for (let i = 0; i < playerOrder.length; i++) {
     const currentPlayerId = playerOrder[i];
     const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
-    swappedPlayers[nextPlayerId].brink = players[currentPlayerId].brink;
+    const characterName = players[currentPlayerId].name || "Unknown"; //Get the current player's name.
+    swappedPlayers[nextPlayerId] = {
+      ...swappedPlayers[nextPlayerId],
+      brink: normalizePlayerBrink(players[currentPlayerId].brink, characterName) //Use the current player's brink and name.
+    };
   }
 
-  const penultimatePlayerId = playerOrder[playerOrder.length - 2];
-  swappedPlayers[gmId].brink = players[penultimatePlayerId].brink;
+  const penultimatePlayerId = playerOrder[playerOrder.length - 1];
+  const characterName = players[gmId].name || "Unknown"; //Get the GM's name.
+  swappedPlayers[gmId] = {
+    ...swappedPlayers[gmId],
+    brink: normalizeGMBrink(players[penultimatePlayerId].brink, characterName) //Use the penultimate player's brink, but the GM's name.
+  };
 
   return swappedPlayers;
 }
@@ -291,38 +288,59 @@ export async function handleCharacterGenStep1DM(message, game) {
   const players = game.players;
 
   const [virtue, vice] = message.content.split(',').map(s => s.trim());
-  if (virtue && vice) {
-    players[userId].virtue = sanitizeString(virtue);
-    players[userId].vice = sanitizeString(vice);
+
+  if (!virtue || !vice) {
     try {
-      await message.reply('Traits recorded!');
+      await message.reply('Invalid format. Please provide both your Virtue and Vice, separated by a comma (e.g., "Courageous, Greedy"). You may try again.');
     } catch (error) {
       console.error(`Error replying to player ${userId}:`, error);
     }
-    const allTraitsReceived = Object.values(players).every(player => player.virtue && player.vice);
-    if (allTraitsReceived) {
-        const channelId = game.textChannelId;
-        const gameChannel = client.channels.cache.get(channelId);
-        if (gameChannel) {
-            game.characterGenStep++;
-            sendCharacterGenStep(gameChannel, channelId);
-            saveGameData();
-        }
-    }
-  } else {
+    return; // Exit early if input is invalid
+  }
+  
+  if (virtue.length === 0 || vice.length === 0) {
     try {
-      await message.reply('Invalid format. Please provide your Virtue and Vice, separated by a comma (e.g., "Courageous, Greedy"). You may try again.');
+      await message.reply('Invalid format. Please provide both your Virtue and Vice, separated by a comma (e.g., "Courageous, Greedy"). You may try again.');
     } catch (error) {
       console.error(`Error replying to player ${userId}:`, error);
     }
+    return; // Exit early if input is invalid
+  }
+
+  players[userId].virtue = sanitizeString(virtue);
+  players[userId].vice = sanitizeString(vice);
+  try {
+    await message.reply('Traits recorded!');
+  } catch (error) {
+    console.error(`Error replying to player ${userId}:`, error);
+  }
+  const allTraitsReceived = Object.values(players).every(player => player.virtue && player.vice);
+  if (allTraitsReceived) {
+      const channelId = game.textChannelId;
+      const gameChannel = client.channels.cache.get(channelId);
+      if (gameChannel) {
+          game.characterGenStep++;
+          sendCharacterGenStep(gameChannel, channelId);
+          saveGameData();
+      }
   }
 }
 
 export async function handleCharacterGenStep4DM(message, game) {
   const userId = message.author.id;
   const players = game.players;
+  const input = message.content.trim();
 
-  players[userId].moment = sanitizeString(message.content);
+  if (!input) {
+    try {
+      await message.reply('Invalid input. Please provide a non-empty value for your Moment.');
+    } catch (error) {
+      console.error(`Error replying to player ${userId}:`, error);
+    }
+    return;
+  }
+
+  players[userId].moment = sanitizeString(input);
   try {
     await message.reply('Moment received!');
   } catch (error) {
@@ -345,9 +363,19 @@ export async function handleCharacterGenStep5DM(message, game) {
   const players = game.players;
   const fullPlayerOrder = getVirtualTableOrder(game, true);
   const gmId = game.gmId;
+  const input = message.content.trim();
+
+  if (!input) {
+    try {
+      await message.reply('Invalid input. Please provide a non-empty value for your Brink.');
+    } catch (error) {
+      console.error(`Error replying to player ${userId}:`, error);
+    }
+    return;
+  }
 
   const brinkResponses = game.brinkResponses || {};
-  brinkResponses[userId] = sanitizeString(message.content);
+  brinkResponses[userId] = sanitizeString(input);
   game.brinkResponses = brinkResponses;
 
   const allBrinksReceived = Object.keys(brinkResponses).length === fullPlayerOrder.length;
@@ -389,12 +417,22 @@ export async function handleCharacterGenStep6DM(message, game) {
 export async function handleCharacterGenStep8DM(message, game) {
   const userId = message.author.id;
   const players = game.players;
+  const input = message.content.trim();
+
+  if (!input) {
+    try {
+      await message.reply('Invalid input. Please provide a non-empty value for your Recording.');
+    } catch (error) {
+      console.error(`Error replying to player ${userId}:`, error);
+    }
+    return;
+  }
 
   if (!players[userId].recordings) {
     players[userId].recordings = "";
   }
 
-  players[userId].recording = message.content;
+  players[userId].recording = input;
 
   const allRecordingsReceived = Object.values(players).every(player => player.recording);
   if (allRecordingsReceived) {

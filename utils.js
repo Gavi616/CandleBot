@@ -106,66 +106,6 @@ async function confirmInput(user, question, time) {
   });
 }
 
-export async function askForTraits(message, gameChannel, game, playerId) {
-  const player = await message.guild.members.fetch(playerId);
-  const user = player.user;
-  let virtue, vice;
-
-  do {
-    const dmChannel = await user.createDM();
-    const initialMessage = await user.send('Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").');
-    const timer = await countdown(user, TRAIT_TIMEOUT, initialMessage);
-
-    const filter = m => m.author.id === playerId;
-    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: TRAIT_TIMEOUT, errors: ['time'] });
-
-    clearInterval(timer);
-    await initialMessage.edit(`Traits Received`);
-
-    if (collected.size > 0) {
-      [virtue, vice] = collected.first().content.split(',').map(s => sanitizeString(s.trim()));
-      const confirmation = await confirmInput(user, `Your virtue: ${virtue}, your vice: ${vice}`, TRAIT_TIMEOUT);
-      if(!confirmation){
-        continue;
-      }
-      game.players[playerId].virtue = virtue;
-      game.players[playerId].vice = vice;
-      saveGameData();
-      return;
-    } else {
-      game.players[playerId].virtue = getRandomVirtue();
-      game.players[playerId].vice = getRandomVice();
-      saveGameData();
-      await user.send(`You timed out. Random traits have been assigned: Virtue - ${game.players[playerId].virtue}, Vice - ${game.players[playerId].vice}`);
-      return;
-    }
-  } while (true);
-}
-
-export async function askPlayersForCharacterInfo(message, channelId) {
-  const game = gameData[channelId];
-  const playerIds = game.playerOrder;
-
-  for (const playerId of playerIds) {
-    try {
-      const player = await message.guild.members.fetch(playerId);
-      const user = player.user;
-
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'name', "What's your character's name or nickname?", 60000);
-
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'look', 'What does your character look like at a quick glance?', 60000);
-
-      await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
-
-    } catch (error) {
-      console.error(`Error requesting character info from player ${playerId}:`, error);
-      message.channel.send(`Failed to get character info from player <@${playerId}>. Game cancelled.`);
-      delete gameData[channelId];
-      return;
-    }
-  }
-}
-
 export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, time, retryCount = 0) {
   let input;
   do {
@@ -181,7 +121,17 @@ export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, f
       await initialMessage.edit(`${field} Received`);
 
       if (collected.size > 0) {
-        input = sanitizeString(collected.first().content);
+        input = collected.first().content.trim(); // Trim whitespace
+        if (!input) { // Check if input is empty or whitespace
+          await user.send('Invalid input. Please provide a non-empty value.');
+          continue; // Go to the next iteration of the loop
+        }
+        input = sanitizeString(input);
+        if (field === 'name') {
+          input = normalizeName(input); // Normalize name
+        } else {
+          input = normalizeSentence(input); // Normalize look/concept
+        }
         const confirmation = await confirmInput(user, `Your ${field}: ${input}`, time);
         if (!confirmation){
           continue;
@@ -205,6 +155,44 @@ export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, f
   } while (true);
 }
 
+export async function askForTraits(message, gameChannel, game, playerId) {
+  const player = await message.guild.members.fetch(playerId);
+  const user = player.user;
+  let virtue, vice;
+
+  do {
+    const dmChannel = await user.createDM();
+    const initialMessage = await user.send('Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").');
+    const timer = await countdown(user, TRAIT_TIMEOUT, initialMessage);
+
+    const filter = m => m.author.id === playerId;
+    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: TRAIT_TIMEOUT, errors: ['time'] });
+
+    clearInterval(timer);
+    await initialMessage.edit(`Traits Received`);
+
+    if (collected.size > 0) {
+      [virtue, vice] = collected.first().content.split(',').map(s => sanitizeString(s.trim()));
+      virtue = normalizeVirtueVice(virtue); // Normalize virtue
+      vice = normalizeVirtueVice(vice);     // Normalize vice
+      const confirmation = await confirmInput(user, `Your virtue: ${virtue}, your vice: ${vice}`, TRAIT_TIMEOUT);
+      if(!confirmation){
+        continue;
+      }
+      game.players[playerId].virtue = virtue;
+      game.players[playerId].vice = vice;
+      saveGameData();
+      return;
+    } else {
+      game.players[playerId].virtue = getRandomVirtue();
+      game.players[playerId].vice = getRandomVice();
+      saveGameData();
+      await user.send(`You timed out. Random traits have been assigned: Virtue - ${game.players[playerId].virtue}, Vice - ${game.players[playerId].vice}`);
+      return;
+    }
+  } while (true);
+}
+
 export async function askForMoment(user, game, playerId, time) {
   let input;
   do {
@@ -219,7 +207,13 @@ export async function askForMoment(user, game, playerId, time) {
       await initialMessage.edit(`Moment Received`);
 
       if (collected.size > 0) {
-        input = sanitizeString(collected.first().content);
+        input = collected.first().content.trim(); // Trim whitespace
+        if (!input) { // Check if input is empty or whitespace
+          await user.send('Invalid input. Please provide a non-empty value.');
+          continue; // Go to the next iteration of the loop
+        }
+        input = sanitizeString(input);
+        input = normalizeSentence(input); // Normalize moment
         const confirmation = await confirmInput(user, `Your Moment: ${input}`, time);
         if (!confirmation){
           continue;
@@ -237,11 +231,6 @@ export async function askForMoment(user, game, playerId, time) {
   } while (true);
 }
 
-function assignRandomMoment(user, player) {
-  player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
-  user.send(`You timed out. A random Moment has been assigned: "${player.moment}"`);
-}
-
 export async function askForBrink(user, game, playerId, prompt, time){
   let input;
   do {
@@ -256,7 +245,18 @@ export async function askForBrink(user, game, playerId, prompt, time){
       await initialMessage.edit(`Brink Received`);
 
       if (collected.size > 0) {
-        input = sanitizeString(collected.first().content);
+        input = collected.first().content.trim(); // Trim whitespace
+        if (!input) { // Check if input is empty or whitespace
+          await user.send('Invalid input. Please provide a non-empty value.');
+          continue; // Go to the next iteration of the loop
+        }
+        input = sanitizeString(input);
+        const characterName = game.players[playerId].name || user.username;
+        if(playerId === game.gmId){
+          input = normalizeGMBrink(input, characterName); // Normalize GM brink
+        } else {
+          input = normalizePlayerBrink(input, characterName); // Normalize player brink
+        }
         const confirmation = await confirmInput(user, `Your Brink: ${input}`, time);
         if (!confirmation){
           continue;
@@ -269,6 +269,11 @@ export async function askForBrink(user, game, playerId, prompt, time){
       return "";
     }
   } while (true);
+}
+
+function assignRandomMoment(user, player) {
+  player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
+  user.send(`You timed out. A random Moment has been assigned: "${player.moment}"`);
 }
 
 function getRandomVirtue() {
@@ -464,4 +469,48 @@ export async function playAudioFromUrl(url, voiceChannel) {
   } catch (error) {
     console.error('Error in playAudioFromUrl:', error);
   }
+}
+
+// Data normalization functions
+export function normalizeVirtueVice(str) {
+  return str.toLowerCase();
+}
+
+export function normalizeName(str) {
+  return str.split(' ').map(word => word.charAt(0).toUpperCase() + word.slice(1)).join(' ');
+}
+
+export function normalizeSentence(str) {
+  if (!str) return "";
+  str = str.charAt(0).toUpperCase() + str.slice(1);
+  if (!str.endsWith('.')) {
+    str += '.';
+  }
+  return str;
+}
+
+export function normalizePlayerBrink(str, characterName) {
+  str = str || ""; //Handle undefined.
+  str = str.trim(); //Remove whitespace.
+  if (!str) {
+    return `${characterName} has seen you .`;
+  }
+  str = `${characterName} has seen you ${str}`;
+  if (!str.endsWith('.')) {
+    str += '.';
+  }
+  return str;
+}
+
+export function normalizeGMBrink(str, characterName) {
+  str = str || ""; //Handle undefined.
+  str = str.trim(); //Remove whitespace.
+  if (!str) {
+    return `${characterName} has seen them .`;
+  }
+  str = `${characterName} has seen them ${str}`;
+  if (!str.endsWith('.')) {
+    str += '.';
+  }
+  return str;
 }

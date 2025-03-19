@@ -1,12 +1,13 @@
 import 'dotenv/config';
 import fs from 'fs';
-import { gameData, loadGameData, loadBlocklist, blocklist, sanitizeString, numberToWords, getVirtualTableOrder, askForTraits, countdown } from './utils.js';
+import { gameData, loadGameData, loadBlocklist, blocklist, sanitizeString, numberToWords, getVirtualTableOrder, askForTraits, countdown, askPlayerForCharacterInfoWithRetry } from './utils.js'; //Import askPlayerForCharacterInfoWithRetry
 import { swapTraits, swapBrinks } from './chargen.js';
 import { TRAIT_TIMEOUT, TIME_INTERVAL } from './config.js';
 import { assert } from 'chai';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { findGameByUserId } from './index.js';
 import sinon from 'sinon';
+import { normalizeVirtueVice, normalizeName, normalizeSentence, normalizePlayerBrink, normalizeGMBrink } from './utils.js';
 
 class MockClient extends Client {
     constructor() {
@@ -231,11 +232,50 @@ describe('Unit Tests', () => {
             sendSpy.restore();
         });
     });
+    describe('Normalization Functions', () => {
+        it('normalizePlayerBrink should format player brink', () => {
+            assert.equal(normalizePlayerBrink('is here', 'TestName'), 'TestName has seen you is here.');
+            assert.equal(normalizePlayerBrink('is here.', 'TestName'), 'TestName has seen you is here.');
+            assert.equal(normalizePlayerBrink('', 'TestName'), 'TestName has seen you .');
+        });
 
+        it('normalizeGMBrink should format GM brink', () => {
+            assert.equal(normalizeGMBrink('is here', 'TestName'), 'TestName has seen them is here.');
+            assert.equal(normalizeGMBrink('is here.', 'TestName'), 'TestName has seen them is here.');
+            assert.equal(normalizeGMBrink('', 'TestName'), 'TestName has seen them .');
+        });
+
+        it('normalizeSentence should capitalize the first letter and add a period', () => {
+            assert.equal(normalizeSentence('test sentence'), 'Test sentence.');
+            assert.equal(normalizeSentence('Test sentence'), 'Test sentence.');
+            assert.equal(normalizeSentence('Test sentence.'), 'Test sentence.');
+            assert.equal(normalizeSentence(''), '');
+        });
+
+        it('normalizePlayerBrink should format player brink', () => {
+            assert.equal(normalizePlayerBrink('is here', 'TestName'), 'TestName has seen you is here.');
+            assert.equal(normalizePlayerBrink('is here.', 'TestName'), 'TestName has seen you is here.');
+            assert.equal(normalizePlayerBrink('', 'TestName'), 'TestName has seen you .');
+            assert.equal(normalizePlayerBrink(undefined, 'TestName'), 'TestName has seen you .');
+        });
+    
+        it('normalizeGMBrink should format GM brink', () => {
+            assert.equal(normalizeGMBrink('is here', 'TestName'), 'TestName has seen them is here.');
+            assert.equal(normalizeGMBrink('is here.', 'TestName'), 'TestName has seen them is here.');
+            assert.equal(normalizeGMBrink('', 'TestName'), 'TestName has seen them .');
+            assert.equal(normalizeGMBrink(undefined, 'TestName'), 'TestName has seen them .');
+        });
+    
+        it('normalizeSentence should capitalize the first letter and add a period', () => {
+            assert.equal(normalizeSentence('test sentence'), 'Test sentence.');
+            assert.equal(normalizeSentence('Test sentence'), 'Test sentence.');
+            assert.equal(normalizeSentence('Test sentence.'), 'Test sentence.');
+            assert.equal(normalizeSentence(''), '');
+        });
+    });
 });
 
 describe('Integration Tests', () => {
-
     describe('swapTraits and swapBrinks', () => {
         it('should correctly swap traits and brinks', async () => {
             Object.keys(gameData).forEach(key => delete gameData[key]);
@@ -243,9 +283,9 @@ describe('Integration Tests', () => {
             gameData['testChannel'] = {
                 gmId: '123456789012345678',
                 players: {
-                    '987654321098765432': { playerUsername: 'PlayerOne', virtue: 'Virtue1', vice: 'Vice1', brink: 'Brink1' },
-                    '101112131415161718': { playerUsername: 'PlayerTwo', virtue: 'Virtue2', vice: 'Vice2', brink: 'Brink2' },
-                    '123456789012345678': { playerUsername: "testGM", brink: "BrinkGM" },
+                    '987654321098765432': { playerUsername: 'PlayerOne', virtue: 'Virtue1', vice: 'Vice1', brink: 'Brink1', name: "PlayerOne" },
+                    '101112131415161718': { playerUsername: 'PlayerTwo', virtue: 'Virtue2', vice: 'Vice2', brink: 'Brink2', name: "PlayerTwo" },
+                    '123456789012345678': { playerUsername: "testGM", brink: "BrinkGM", name: "testGM" },
                 },
                 playerOrder: ['987654321098765432', '101112131415161718'],
                 guildId: "111111111111111111",
@@ -265,9 +305,9 @@ describe('Integration Tests', () => {
             const gmId = gameData['testChannel'].gmId;
             const swappedBrinks = swapBrinks(players, playerOrder, gmId);
 
-            assert.equal(swappedBrinks['987654321098765432'].brink, 'Brink2');
-            assert.equal(swappedBrinks['101112131415161718'].brink, 'Brink1');
-            assert.equal(swappedBrinks['123456789012345678'].brink, 'Brink1');
+            assert.equal(swappedBrinks['987654321098765432'].brink, 'PlayerTwo has seen you Brink2.');
+            assert.equal(swappedBrinks['101112131415161718'].brink, 'PlayerOne has seen you Brink1.');
+            assert.equal(swappedBrinks['123456789012345678'].brink, 'testGM has seen them Brink2.');
         });
     });
 });

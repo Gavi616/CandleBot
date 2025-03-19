@@ -7,12 +7,99 @@ import {
   AudioPlayerStatus,
   getVoiceConnection
 } from '@discordjs/voice';
-import { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, EmbedBuilder } from 'discord.js';
-import { TRAIT_TIMEOUT, TIME_INTERVAL, defaultVirtues, defaultVices, defaultMoments, confirmButtonYesLabel, confirmButtonNoLabel } from './config.js';
+import { TRAIT_TIMEOUT, TIME_INTERVAL, defaultVirtues, defaultVices, defaultMoments, confirmButtonYesLabel, confirmButtonNoLabel, BRINK_TIMEOUT } from './config.js'; //Import BRINK_TIMEOUT
 import { client } from './index.js';
+import { gameDataSchema, validateGameData } from './validation.js';
 
 export const gameData = {};
 export const blocklist = {};
+
+export function getGameData(channelId) {
+  return gameData[channelId];
+}
+
+export function setGameData(channelId, data) {
+  gameData[channelId] = data;
+}
+
+export function deleteGameData(channelId) {
+  delete gameData[channelId];
+}
+
+export async function getDMResponse(user, prompt, time, filter) {
+  try {
+    const dmChannel = await user.createDM();
+    const initialMessage = await user.send(prompt);
+    const timer = countdown(user, time, initialMessage);
+
+    const collected = await dmChannel.awaitMessages({ filter, max: 1, time, errors: ['time'] });
+
+    clearInterval(timer);
+    await initialMessage.edit(`Response Received`);
+
+    if (collected.size > 0) {
+      return collected.first().content.trim();
+    } else {
+      return null;
+    }
+  } catch (error) {
+    console.error(`Error getting DM response from ${user.tag}:`, error);
+    return null;
+  }
+}
+
+export async function requestConsent(user, prompt, yesId, noId, time) {
+  try {
+    const dmChannel = await user.createDM();
+    const consentEmbed = new EmbedBuilder()
+      .setColor(0x0099FF)
+      .setTitle('Consent Required')
+      .setDescription(prompt);
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(yesId)
+          .setLabel('Yes')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(noId)
+          .setLabel('No')
+          .setStyle(ButtonStyle.Danger)
+      );
+
+    const consentMessage = await user.send({ embeds: [consentEmbed], components: [row] });
+
+    const filter = (interaction) =>
+      interaction.user.id === user.id && interaction.message.id === consentMessage.id;
+
+    const collector = dmChannel.createMessageComponentCollector({ filter, time });
+
+    return new Promise((resolve) => {
+      collector.on('collect', async (interaction) => {
+        await interaction.deferUpdate();
+        if (interaction.customId === yesId) {
+          await interaction.editReply({ content: 'You have consented.', embeds: [], components: [] });
+          resolve(true);
+        } else if (interaction.customId === noId) {
+          await interaction.editReply({ content: 'You have declined.', embeds: [], components: [] });
+          resolve(false);
+        }
+        collector.stop();
+      });
+
+      collector.on('end', async (collected, reason) => {
+        if (reason === 'time') {
+          await consentMessage.edit({ content: 'Consent timed out.', embeds: [], components: [] });
+        }
+        resolve(false);
+      });
+    });
+  } catch (error) {
+    console.error(`Error requesting consent from ${user.tag}:`, error);
+    return false;
+  }
+}
 
 export function getVirtualTableOrder(game, withGM = true) {
   if (withGM) {
@@ -49,88 +136,34 @@ export async function countdown(user, time, message) {
 }
 
 async function confirmInput(user, question, time) {
-  const dmChannel = await user.createDM();
+  const confirmed = await requestConsent(user, question, 'input_yes', 'input_no', time);
+  return confirmed;
+}
 
-  const consentEmbed = new EmbedBuilder()
-  .setColor(0x0099FF)
-  .setTitle('Is this Correct?')
-  .setDescription(`${question}`);
-  
-  const row = new ActionRowBuilder()
-    .addComponents(
-      new ButtonBuilder()
-        .setCustomId('input_yes')
-        .setLabel(confirmButtonYesLabel)
-        .setStyle(ButtonStyle.Success),
-      new ButtonBuilder()
-        .setCustomId('input_no')
-        .setLabel(confirmButtonNoLabel)
-        .setStyle(ButtonStyle.Danger)
-    );
-
-  const consentMessage = await user.send({
-    embeds: [consentEmbed],
-    components: [row],
-  });
-
-  const filter = (interaction) =>
-    interaction.user.id === user.id && interaction.message.id === consentMessage.id;
-  
-  const collector = dmChannel.createMessageComponentCollector({
-      filter: filter,
-      time: time,
-    });
-
-  return new Promise((resolve) => {
-    collector.on('collect', async (interaction) => {
-        await interaction.deferUpdate();
-        if (interaction.customId === 'input_yes') {
-          await interaction.editReply({ content: 'Confirmed.', embeds: [], components: [] });
-          resolve(true);
-        } else if (interaction.customId === 'input_no') {
-          await interaction.editReply({ content: 'Please try again.', embeds: [], components: [] });
-          resolve(false);
-        }
-        collector.stop();
-    });
-    collector.on('end', async (collected, reason) => {
-      if (reason === 'time') {
-          await consentMessage.edit({
-              content: 'Confirmation timed out.',
-              embeds: [],
-              components: [],
-          });
-      }
-      resolve(false);
-    });
-  });
+export async function sendDM(user, message) {
+  try {
+    await user.send(message);
+  } catch (error) {
+    console.error(`Error DMing user ${user.tag}:`, error);
+  }
 }
 
 export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, time, retryCount = 0) {
   let input;
   do {
     try {
-      const dmChannel = await user.createDM();
-      const initialMessage = await user.send(question);
-      const timer = await countdown(user, time, initialMessage);
-
-      const filter = m => m.author.id === playerId;
-      const collected = await dmChannel.awaitMessages({ filter, max: 1, time: time, errors: ['time'] });
-
-      clearInterval(timer);
-      await initialMessage.edit(`${field} Received`);
-
-      if (collected.size > 0) {
-        input = collected.first().content.trim(); // Trim whitespace
-        if (!input) { // Check if input is empty or whitespace
+      const response = await getDMResponse(user, question, time, m => m.author.id === playerId);
+      if (response) {
+        input = response;
+        if (!input) {
           await user.send('Invalid input. Please provide a non-empty value.');
-          continue; // Go to the next iteration of the loop
+          continue;
         }
         input = sanitizeString(input);
         if (field === 'name') {
-          input = normalizeName(input); // Normalize name
+          input = normalizeName(input);
         } else {
-          input = normalizeSentence(input); // Normalize look/concept
+          input = normalizeSentence(input);
         }
         const confirmation = await confirmInput(user, `Your ${field}: ${input}`, time);
         if (!confirmation){
@@ -161,18 +194,9 @@ export async function askForTraits(message, gameChannel, game, playerId) {
   let virtue, vice;
 
   do {
-    const dmChannel = await user.createDM();
-    const initialMessage = await user.send('Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").');
-    const timer = await countdown(user, TRAIT_TIMEOUT, initialMessage);
-
-    const filter = m => m.author.id === playerId;
-    const collected = await dmChannel.awaitMessages({ filter, max: 1, time: TRAIT_TIMEOUT, errors: ['time'] });
-
-    clearInterval(timer);
-    await initialMessage.edit(`Traits Received`);
-
-    if (collected.size > 0) {
-      [virtue, vice] = collected.first().content.split(',').map(s => sanitizeString(s.trim()));
+    const response = await getDMResponse(user, 'Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").', TRAIT_TIMEOUT, m => m.author.id === playerId);
+    if (response) {
+      [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
       virtue = normalizeVirtueVice(virtue); // Normalize virtue
       vice = normalizeVirtueVice(vice);     // Normalize vice
       const confirmation = await confirmInput(user, `Your virtue: ${virtue}, your vice: ${vice}`, TRAIT_TIMEOUT);
@@ -197,23 +221,15 @@ export async function askForMoment(user, game, playerId, time) {
   let input;
   do {
     try {
-      const initialMessage = await user.send('Please DM me your Moment.');
-      const timer = countdown(user, time, initialMessage);
-
-      const filter = m => m.author.id === playerId;
-      const collected = await dmChannel.awaitMessages({ filter, max: 1, time: time, errors: ['time'] });
-
-      clearInterval(timer);
-      await initialMessage.edit(`Moment Received`);
-
-      if (collected.size > 0) {
-        input = collected.first().content.trim(); // Trim whitespace
-        if (!input) { // Check if input is empty or whitespace
+      const response = await getDMResponse(user, 'Please DM me your Moment.', time, m => m.author.id === playerId);
+      if (response) {
+        input = response;
+        if (!input) {
           await user.send('Invalid input. Please provide a non-empty value.');
-          continue; // Go to the next iteration of the loop
+          continue;
         }
         input = sanitizeString(input);
-        input = normalizeSentence(input); // Normalize moment
+        input = normalizeSentence(input);
         const confirmation = await confirmInput(user, `Your Moment: ${input}`, time);
         if (!confirmation){
           continue;
@@ -235,29 +251,21 @@ export async function askForBrink(user, game, playerId, prompt, time){
   let input;
   do {
     try {
-      const initialMessage = await user.send(prompt);
-      const timer = countdown(user, time, initialMessage);
-
-      const filter = m => m.author.id === playerId;
-      const collected = await dmChannel.awaitMessages({ filter, max: 1, time: time, errors: ['time'] });
-
-      clearInterval(timer);
-      await initialMessage.edit(`Brink Received`);
-
-      if (collected.size > 0) {
-        input = collected.first().content.trim(); // Trim whitespace
-        if (!input) { // Check if input is empty or whitespace
+      const response = await getDMResponse(user, prompt, BRINK_TIMEOUT, m => m.author.id === playerId);
+      if (response) {
+        input = response;
+        if (!input) {
           await user.send('Invalid input. Please provide a non-empty value.');
-          continue; // Go to the next iteration of the loop
+          continue;
         }
         input = sanitizeString(input);
         const characterName = game.players[playerId].name || user.username;
         if(playerId === game.gmId){
-          input = normalizeGMBrink(input, characterName); // Normalize GM brink
+          input = normalizeGMBrink(input, characterName);
         } else {
-          input = normalizePlayerBrink(input, characterName); // Normalize player brink
+          input = normalizePlayerBrink(input, characterName);
         }
-        const confirmation = await confirmInput(user, `Your Brink: ${input}`, time);
+        const confirmation = await confirmInput(user, `Your Brink: ${input}`, BRINK_TIMEOUT);
         if (!confirmation){
           continue;
         }
@@ -326,6 +334,11 @@ export function loadGameData() {
 }
 
 export function saveGameData() {
+  if (!validateGameData(gameData, gameDataSchema)) {
+    console.error('Game data validation failed. Data not saved.');
+    return;
+  }
+
   try {
     for (const channelId in gameData) {
       gameData[channelId].lastSaved = new Date().toISOString();
@@ -490,8 +503,8 @@ export function normalizeSentence(str) {
 }
 
 export function normalizePlayerBrink(str, characterName) {
-  str = str || ""; //Handle undefined.
-  str = str.trim(); //Remove whitespace.
+  str = str || "";
+  str = str.trim();
   if (!str) {
     return `${characterName} has seen you .`;
   }
@@ -503,8 +516,8 @@ export function normalizePlayerBrink(str, characterName) {
 }
 
 export function normalizeGMBrink(str, characterName) {
-  str = str || ""; //Handle undefined.
-  str = str.trim(); //Remove whitespace.
+  str = str || "";
+  str = str.trim();
   if (!str) {
     return `${characterName} has seen them .`;
   }

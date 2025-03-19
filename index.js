@@ -11,14 +11,17 @@ import {
   sanitizeString,
   loadGameData,
   saveGameData,
+  getGameData,
   printActiveGames,
   loadBlocklist,
   saveBlocklist,
   gameData,
   blocklist,
   askPlayerForCharacterInfoWithRetry,
+  getDMResponse,
+  requestConsent,
 } from './utils.js';
-import { sendCharacterGenStep, swapTraits, swapBrinks } from './chargen.js';
+import { sendCharacterGenStep } from './chargen.js';
 import { startGame } from './commands/startgame.js';
 import { conflict } from './commands/conflict.js';
 import { playRecordings } from './commands/playrecordings.js';
@@ -119,15 +122,14 @@ client.on('messageCreate', async (message) => {
       console.log('Command:', message.content, 'from', userName, 'in a Direct Message');
 
     if (message.content.toLowerCase() === '.x') {
-      const game = findGameByUserId(userId);
+      const game = getGameData(channelId); // Use getGameData
       if (!game) {
         try {
           await message.author.send(`You are not currently in a game in any channel.`);
         } catch (error) {
           console.error('Could not send DM to user:', error);
         }
-      }
-      else {
+      } else {
         const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
         if (gameChannelId) {
           const gameChannel = client.channels.cache.get(gameChannelId);
@@ -256,8 +258,7 @@ client.on('messageCreate', async (message) => {
 
 async function me(message) {
   const playerId = message.author.id;
-  const game = findGameByUserId(playerId);
-  const playerNumericId = parseInt(playerId);
+  const game = getGameData(channelId);
 
   if (message.channel.type !== ChannelType.DM) {
     try {

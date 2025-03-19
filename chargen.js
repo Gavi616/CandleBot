@@ -1,6 +1,33 @@
-import { gameData, getVirtualTableOrder, sendCandleStatus, saveGameData, askForTraits, sanitizeString, askForMoment, askForBrink, normalizePlayerBrink, normalizeGMBrink } from './utils.js';
+import {
+  gameData,
+  getVirtualTableOrder,
+  sendCandleStatus,
+  saveGameData,
+  askForTraits,
+  sanitizeString,
+  askForMoment,
+  askForBrink,
+  normalizePlayerBrink,
+  normalizeGMBrink,
+  getDMResponse,
+  requestConsent,
+  sendDM,
+} from './utils.js'
 import { TRAIT_TIMEOUT, BRINK_TIMEOUT } from './config.js';
 import { client, findGameByUserId } from './index.js'
+
+async function askPlayersForCharacterInfo(message, channelId) {
+  const game = gameData[channelId];
+  const playerOrder = game.playerOrder;
+  const infoPromises = playerOrder.map(async (playerId) => {
+    const player = await message.guild.members.fetch(playerId);
+    const user = player.user;
+    await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'name', "What's your character's name or nickname?", 60000);
+    await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'look', 'What does your character look like at a quick glance?', 60000);
+    await askPlayerForCharacterInfoWithRetry(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
+  });
+  await Promise.all(infoPromises);
+}
 
 export async function sendCharacterGenStep(gameChannel, game) {
   console.log(`sendCharacterGenStep has been called with step: ${game.characterGenStep}`);
@@ -59,7 +86,7 @@ export async function sendCharacterGenStep(gameChannel, game) {
             prompt = `Please write a short descriptive phrase of when or where you saw the Brink of ${nextParticipantUsername}.`;
         }
         game.brinkResponses = game.brinkResponses || {};
-        game.brinkResponses[participantId] = await askForBrink(participant, game, participantId, prompt, TRAIT_TIMEOUT);
+        game.brinkResponses[participantId] = await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT); //Use BRINK_TIMEOUT here!
     }
   } else if (step === 6) {
     gameChannel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. *Your GM must use `.nextstep` to continue.*');
@@ -69,7 +96,7 @@ export async function sendCharacterGenStep(gameChannel, game) {
         try {
           const player = await gameChannel.guild.members.fetch(playerId);
           const user = player.user;
-          await user.send(`Your swapped Brink is: ${swappedBrinks[playerId].brink}\nPlease write it on an index card.`);
+          await sendDM(user, `Your "I have seen them.." is: ${swappedBrinks[gmId].brink}\nPlease write it on an index card.`);
         } catch (error) {
           console.error(`Error DMing player ${playerId} for swapped brink:`, error);
           gameChannel.send(`Could not DM player ${playerId} for swapped brink.`);
@@ -103,9 +130,9 @@ export async function sendCharacterGenStep(gameChannel, game) {
           try {
             const user = await client.users.fetch(userId);
             if (gameMode === "text-only") {
-              await user.send('Please record your final message for the world, in character. Send it via DM as a text message.');
+              await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as a text message.');
             } else {
-              await user.send('Please record your final message for the world, in character. Send it via DM as an audio file or a text message.');
+              await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as an audio file or a text message.');
             }
           } catch (error) {
             console.error(`Error DMing user ${userId}:`, error);
@@ -245,8 +272,8 @@ export async function swapTraits(client, players, game, guildId) {
         return;
       }
 
-      await recipientUser.send(`You received the Virtue "${swappedPlayers[recipientId].virtue}" from <@${senderId}>.`);
-      await recipientUser.send(`You received the Vice "${swappedPlayers[recipientId].vice}" from <@${senderId}>.`);
+      await sendDM(recipientUser, `You received the Virtue "${swappedPlayers[recipientId].virtue}" from <@${senderId}>.`);
+      await sendDM(recipientUser, `You received the Vice "${swappedPlayers[recipientId].vice}" from <@${senderId}>.`);
     } catch (error) {
       console.error(`Error sending trait swap DMs to player ${recipientId}:`, error);
     }
@@ -287,7 +314,17 @@ export async function handleCharacterGenStep1DM(message, game) {
   const userId = message.author.id;
   const players = game.players;
 
-  const [virtue, vice] = message.content.split(',').map(s => s.trim());
+  const response = await getDMResponse(message.author, 'Please DM me a Virtue and a Vice, separated by a comma (e.g., "Courageous, Greedy").', TRAIT_TIMEOUT, m => m.author.id === userId);
+  if (!response) {
+    try {
+      await message.reply('You timed out. Please try again.');
+    } catch (error) {
+      console.error(`Error replying to player ${userId}:`, error);
+    }
+    return;
+  }
+
+  const [virtue, vice] = response.split(',').map(s => s.trim());
 
   if (!virtue || !vice) {
     try {
@@ -329,7 +366,18 @@ export async function handleCharacterGenStep1DM(message, game) {
 export async function handleCharacterGenStep4DM(message, game) {
   const userId = message.author.id;
   const players = game.players;
-  const input = message.content.trim();
+
+  const response = await getDMResponse(message.author, 'Please DM me your Moment.', TRAIT_TIMEOUT, m => m.author.id === userId);
+  if (!response) {
+    try {
+      await message.reply('You timed out. Please try again.');
+    } catch (error) {
+      console.error(`Error replying to player ${userId}:`, error);
+    }
+    return;
+  }
+
+  const input = response.trim();
 
   if (!input) {
     try {
@@ -363,7 +411,27 @@ export async function handleCharacterGenStep5DM(message, game) {
   const players = game.players;
   const fullPlayerOrder = getVirtualTableOrder(game, true);
   const gmId = game.gmId;
-  const input = message.content.trim();
+
+  let prompt;
+  if (userId === fullPlayerOrder[(fullPlayerOrder.indexOf(gmId) + 1) % fullPlayerOrder.length]) {
+    prompt = 'Write, “I have seen them..” & give a detail about the threat without outright identifying them.';
+  } else {
+    const nextParticipantId = fullPlayerOrder[(fullPlayerOrder.indexOf(userId) + 1) % fullPlayerOrder.length];
+    const nextParticipantUsername = players[nextParticipantId]?.playerUsername || "the GM";
+    prompt = `Please write a short descriptive phrase of when or where you saw the Brink of ${nextParticipantUsername}.`;
+  }
+
+  const response = await getDMResponse(message.author, prompt, BRINK_TIMEOUT, m => m.author.id === userId);
+  if (!response) {
+    try {
+      await message.reply('You timed out. Please try again.');
+    } catch (error) {
+      console.error(`Error replying to player ${userId}:`, error);
+    }
+    return;
+  }
+
+  const input = response.trim();
 
   if (!input) {
     try {
@@ -417,7 +485,18 @@ export async function handleCharacterGenStep6DM(message, game) {
 export async function handleCharacterGenStep8DM(message, game) {
   const userId = message.author.id;
   const players = game.players;
-  const input = message.content.trim();
+
+  const response = await getDMResponse(message.author, 'Please record your final message for the world, in character. Send it via DM as an audio file or a text message.', TRAIT_TIMEOUT, m => m.author.id === userId);
+  if (!response) {
+    try {
+      await message.reply('You timed out. Please try again.');
+    } catch (error) {
+      console.error(`Error replying to player ${userId}:`, error);
+    }
+    return;
+  }
+
+  const input = response.trim();
 
   if (!input) {
     try {
@@ -432,15 +511,15 @@ export async function handleCharacterGenStep8DM(message, game) {
     players[userId].recordings = "";
   }
 
-  players[userId].recording = input;
+  players[userId].recordings = input;
 
-  const allRecordingsReceived = Object.values(players).every(player => player.recording);
+  const allRecordingsReceived = Object.values(players).every(player => player.recordings);
   if (allRecordingsReceived) {
     const channelId = game.textChannelId;
     const gameChannel = client.channels.cache.get(channelId);
     if (gameChannel) {
         game.characterGenStep++;
-        sendCharacterGenStep(gameChannel, channelId);
+        sendCharacterGenStep(gameChannel, game);
         saveGameData();
     }
   }

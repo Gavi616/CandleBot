@@ -1,8 +1,8 @@
 import 'dotenv/config';
 import fs from 'fs';
-import { gameData, loadGameData, loadBlocklist, blocklist, sanitizeString, numberToWords, getVirtualTableOrder, askForTraits, countdown, askPlayerForCharacterInfoWithRetry } from './utils.js'; //Import askPlayerForCharacterInfoWithRetry
+import { gameData, loadGameData, loadBlocklist, blocklist, sanitizeString, numberToWords, getVirtualTableOrder, askForTraits, countdown, askPlayerForCharacterInfoWithRetry, askForBrink } from './utils.js'; //Import askPlayerForCharacterInfoWithRetry
 import { swapTraits, swapBrinks } from './chargen.js';
-import { TRAIT_TIMEOUT, TIME_INTERVAL } from './config.js';
+import { TRAIT_TIMEOUT, TIME_INTERVAL, BRINK_TIMEOUT } from './config.js'; //Import BRINK_TIMEOUT
 import { assert } from 'chai';
 import { Client, Collection, GatewayIntentBits } from 'discord.js';
 import { findGameByUserId } from './index.js';
@@ -226,6 +226,35 @@ describe('Unit Tests', () => {
             const sendSpy = sinon.spy(mockUser, 'send');
 
             await askForTraits(mockMessage, mockChannel, game, playerId);
+
+            assert.isTrue(sendSpy.called);
+
+            sendSpy.restore();
+        });
+    });
+    describe('askForBrink', () => {
+        beforeEach(() => {
+            Object.keys(gameData).forEach(key => delete gameData[key]);
+            gameData['9876543210'] = {
+                gmId: '1234567890',
+                players: {
+                    '0987654321': {
+                        consent: true,
+                        name: "TestName"
+                    }
+                },
+                playerOrder: ['0987654321'],
+                textChannelId: '9876543210',
+            };
+        });
+        it('should send a DM to a player asking for brink', async () => {
+            const game = gameData['9876543210'];
+            const playerId = '0987654321';
+            const prompt = "Test Prompt";
+
+            const sendSpy = sinon.spy(mockUser, 'send');
+
+            await askForBrink(mockUser, game, playerId, prompt, BRINK_TIMEOUT);
 
             assert.isTrue(sendSpy.called);
 

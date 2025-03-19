@@ -1,4 +1,5 @@
 export const TRAIT_TIMEOUT = 60000;
+export const CANCEL_TIMEOUT = 60000;
 export const CONSENT_TIMEOUT = 60000;
 export const SACRIFICE_TIMEOUT = 60000;
 export const BRINK_TIMEOUT = 60000;

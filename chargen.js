@@ -1,5 +1,5 @@
 import { gameData, getVirtualTableOrder, sendCandleStatus, saveGameData, askForTraits, sanitizeString, askForMoment, askForBrink, normalizePlayerBrink, normalizeGMBrink } from './utils.js';
-import { TRAIT_TIMEOUT } from './config.js';
+import { TRAIT_TIMEOUT, BRINK_TIMEOUT } from './config.js';
 import { client, findGameByUserId } from './index.js'
 
 export async function sendCharacterGenStep(gameChannel, game) {
@@ -42,7 +42,7 @@ export async function sendCharacterGenStep(gameChannel, game) {
     });
     await Promise.all(momentPromises);
   } else if (step === 5) {
-    gameChannel.send('**Step Five: Players and GM Discover Brinks**\nCheck your DMs for personalized instructions on this step.\nYou have five minutes to respond.');
+    gameChannel.send(`**Step Five: Players and GM Discover Brinks**\nCheck your DMs for personalized instructions on this step.`);
     sendCandleStatus(gameChannel, 9);
     const brinkOrder = getVirtualTableOrder(game, true);
     const threatPlayerId = brinkOrder[(brinkOrder.indexOf(gmId) + 1) % brinkOrder.length];

@@ -46,7 +46,9 @@ export async function startGame(message, gameData) {
         }
     }
 
+    console.log(`startGame: Creating gameData object for channel ${channelId}`);
     gameData[channelId] = {
+        channelId: channelId, // Add channelId here
         gmId: gmId,
         players: {},
         playerOrder: playerIds,
@@ -81,6 +83,8 @@ export async function startGame(message, gameData) {
             isDead: false,
         };
     }
+    console.log(`startGame: gameData object created:`, gameData[channelId]);
+    console.log(`startGame: Calling saveGameData()`);
     saveGameData();
 
 // GM Consent Prompt
@@ -92,12 +96,13 @@ const gmConsentPromise = new Promise(async (resolve) => {
       await sendDM(gm.user, gmNotification);
 
       const gmConsented = await requestConsent(
-          gm.user,
-          `You have been designated as the GM role for a **Ten Candles** game in #${message.guild.name}. Do you consent to participate?`,
-          'gm_consent_yes',
-          'gm_consent_no',
-          CONSENT_TIMEOUT
-      );
+        gm.user,
+        `You have been designated as the GM role for a **Ten Candles** game in #${message.guild.name}. Do you consent to participate?`,
+        'gm_consent_yes',
+        'gm_consent_no',
+        CONSENT_TIMEOUT,
+        "Request for Consent"
+    );
       gameData[channelId].gm.consent = gmConsented;
       resolve({ id: gmId, consent: gmConsented, type: "gm" });
   } catch (error) {
@@ -117,12 +122,13 @@ const playerConsentPromises = playerIds.map(async (playerId) => {
       try {
           const player = await message.guild.members.fetch(playerId);
           const playerConsented = await requestConsent(
-              player.user,
-              `You have been added as a player to a **Ten Candles** game in #${message.guild.name}. Do you consent to participate?`,
-              'player_consent_yes',
-              'player_consent_no',
-              CONSENT_TIMEOUT
-          );
+            player.user,
+            `You have been added as a player to a **Ten Candles** game in #${message.guild.name}. Do you consent to participate?`,
+            'player_consent_yes',
+            'player_consent_no',
+            CONSENT_TIMEOUT,
+            "Request for Consent"
+        );
           gameData[channelId].players[playerId].consent = playerConsented;
           resolve({ id: playerId, consent: playerConsented, type: "player" });
       } catch (error) {
@@ -148,6 +154,7 @@ const playerConsentPromises = playerIds.map(async (playerId) => {
 
     //Check the results.
     const consentResults = await Promise.all([gmConsentPromise, ...playerConsentPromises]); //Get the array of results.
+    console.log(`startGame: Consent results:`, consentResults);
 
     const nonConsentPlayers = [];
     let gmConsented = true; //Assume they all consented.

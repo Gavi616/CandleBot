@@ -5,24 +5,29 @@ export async function removePlayer(message, args) {
   const game = gameData[channelId];
 
   if (!game) {
-    message.reply('No game is in progress in this channel.');
+    message.channel.send('No game is in progress in this channel.');
     return;
   }
 
   if (message.author.id !== game.gmId) {
-    message.reply('Only the GM can use this command.');
+    try {
+      await message.author.send({ content: 'Only the GM can use this command.' }); // Changed to message.author.send()
+      await message.delete();
+    } catch (error) {
+      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
+    }
     return;
   }
 
   if (args.length < 1) {
-    message.reply('Usage: .removeplayer <Player ID> [Reason]');
+    message.channel.send('Usage: .removeplayer <Player ID> [Reason]');
     return;
   }
 
   const playerIdToRemove = args[0].replace(/<@!?(\d+)>/, '$1'); // Extract player ID from mention
 
   if (!game.players[playerIdToRemove]) {
-    message.reply('Invalid Player ID. Please mention a valid player in this game.');
+    message.channel.send('Invalid Player ID. Please mention a valid player in this game.');
     return;
   }
 

@@ -209,15 +209,20 @@ export async function conflict(message, args, gameData) {
         const sacrificeCollector = dmChannel.createMessageComponentCollector({ filter: sacrificeFilter, time: SACRIFICE_TIMEOUT });
 
         sacrificeCollector.on('collect', async (interaction) => {
-            await interaction.deferUpdate();
-            if (interaction.customId === 'sacrifice_yes') {
-                game.players[playerId].isDead = true;
-                await interaction.editReply({ content: `You have chosen to sacrifice your character for narration rights!`, embeds: [], components: [] });
-                message.channel.send(`**<@${playerId}> has chosen to sacrifice their character for narration rights!**\nPlease narrate the end of your characters story.`);
-                messageContent += `<@${playerId}>, the acting player, now has narration rights for this conflict.`;
-            } else {
-                await interaction.editReply({ content: 'You chose not to sacrifice your character.', embeds: [], components: [] });
-                message.channel.send(`<@${playerId}> chose not to sacrifice their character.`);
+          await interaction.deferUpdate();
+          if (interaction.customId === 'sacrifice_yes') {
+              const reason = interaction.message.content.split('\n').slice(1).join('\n').trim();
+              await interaction.editReply({ content: `You have chosen to sacrifice your character for narration rights!`, embeds: [], components: [] });
+              message.channel.send(`**<@${playerId}> has chosen to sacrifice their character for narration rights!**\nPlease narrate the end of your characters story.`);
+              messageContent += `<@${playerId}>, the acting player, now has narration rights for this conflict.`;
+              // Notify the GM
+              const gm = await message.guild.members.fetch(game.gmId);
+              let gmMessage = `<@${playerId}> has chosen to sacrifice their character for narration rights in <#${channelId}>.\n`;
+              gmMessage += `Please use \`.died <@${playerId}> [reason]\` in the game channel to mark their character as dead.`;
+              await gm.user.send(gmMessage);
+          } else {
+              await interaction.editReply({ content: 'You chose not to sacrifice your character.', embeds: [], components: [] });
+              message.channel.send(`<@${playerId}> chose not to sacrifice their character.`);
                 // Failed Roll - Brink Prompt (DM)
                 if (game.players[playerNumericId].momentBurned &&
                     game.players[playerNumericId].virtueBurned &&
@@ -235,11 +240,11 @@ export async function conflict(message, args, gameData) {
                             new ButtonBuilder()
                                 .setCustomId('brink_yes')
                                 .setLabel('Yes')
-                                .setStyle(ButtonStyle.Success), // Make the 'Yes' button green (success)
+                                .setStyle(ButtonStyle.Success),
                             new ButtonBuilder()
                                 .setCustomId('brink_no')
                                 .setLabel('No')
-                                .setStyle(ButtonStyle.Secondary), // Make the 'No' button gray (secondary)
+                                .setStyle(ButtonStyle.Secondary),
                         );
                     const brinkMessage = await dmChannel.send({ embeds: [brinkEmbed], components: [brinkRow] });
                     const brinkFilter = (interaction) => interaction.user.id === playerId && interaction.message.id === brinkMessage.id;

@@ -1,16 +1,26 @@
-import { gameData, sanitizeString, saveGameData } from '../utils.js';
+import { getGameData, saveGameData, sendDM } from '../utils.js';
 
 export async function died(message, args) {
   const channelId = message.channel.id;
-  const game = gameData[channelId];
+  const game = getGameData(channelId);
 
   if (!game) {
-    message.reply('No game is in progress in this channel.');
+    message.channel.send('No game in progress.');
     return;
   }
 
-  if (message.author.id !== game.gmId) {
-    message.reply('Only the GM can use this command.');
+  if (game.characterGenStep < 9) {
+    message.channel.send("This command can only be used after character generation is complete (this isn't **Traveller**).");
+    return;
+  }
+
+  if (game.gmId !== message.author.id) {
+    try {
+      await message.author.send({ content: 'Only the GM can use this command.' });
+      await message.delete();
+    } catch (error) {
+      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
+    }
     return;
   }
 
@@ -19,14 +29,19 @@ export async function died(message, args) {
     return;
   }
 
-  const playerIdToKill = args[0].replace(/<@!?(\d+)>/, '$1'); // Extract player ID from mention
+  const playerIdToKill = args[0].replace(/<@!?(\d+)>/, '$1');
+
+  if (!/^\d+$/.test(playerIdToKill)) { // Check if playerIdToKill is a number
+    message.reply('Invalid Player ID. Please mention a valid player in this game.');
+    return;
+  }
 
   if (!game.players[playerIdToKill]) {
     message.reply('Invalid Player ID. Please mention a valid player in this game.');
     return;
   }
 
-  let reason = args.slice(1).join(' '); // Extract the reason (if any)
+  let reason = args.slice(1).join(' ');
   game.players[playerIdToKill].isDead = true;
   saveGameData();
 

@@ -1,6 +1,6 @@
 import { gameData } from '../utils.js';
 
-export async function gamestatus(message) {
+export async function gameStatus(message) {
   const channelId = message.channel.id;
   const game = gameData[channelId];
   const gameChannelName = message.channel.name;
@@ -21,5 +21,5 @@ export async function gamestatus(message) {
   } else {
     statusMessage += `Current Scene: ${game.scene}\n`;
   }
-  message.channel.send(statusMessage);
+  await message.channel.send(statusMessage);
 }

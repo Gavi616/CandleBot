@@ -3,7 +3,8 @@ import {
   Client,
   EmbedBuilder,
   ChannelType,
-  GatewayIntentBits
+  GatewayIntentBits,
+  PermissionsBitField
 } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
@@ -17,16 +18,14 @@ import {
   saveBlocklist,
   gameData,
   blocklist,
-  askPlayerForCharacterInfoWithRetry,
-  getDMResponse,
-  requestConsent,
+  askPlayerForCharacterInfoWithRetry
 } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { startGame } from './commands/startgame.js';
 import { conflict } from './commands/conflict.js';
 import { playRecordings } from './commands/playrecordings.js';
-import { nextStep } from './commands/nextstep.js';
-import { gamestatus } from './commands/gamestatus.js';
+import { nextStep, prevStep } from './commands/nextstep.js';
+import { gameStatus } from './commands/gamestatus.js';
 import { removePlayer } from './commands/removeplayer.js';
 import { leaveGame } from './commands/leavegame.js';
 import { cancelGame } from './commands/cancelgame.js';
@@ -39,35 +38,51 @@ export const client = new Client({
     GatewayIntentBits.MessageContent,
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.DirectMessageReactions,
-    GatewayIntentBits.DirectMessageTyping,
-    GatewayIntentBits.GuildPresences
+    GatewayIntentBits.GuildMessageReactions
   ],
 });
 
 const prefix = '.';
 const version = '0.9.911';
+const botName = 'Ten Candles Bot';
+const isTesting = true;
+let botRestarted = false;
 
-client.once('ready', () => {
+client.once('ready', async () => {
   const startupTimestamp = new Date().toLocaleString();
-  console.log(`Ten Candles Bot (v${version}) is ready @ ${startupTimestamp}`);
+  console.log(`${botName} (v${version}) is ready @ ${startupTimestamp}`);
   console.log(`Logged in as ${client.user.tag} (${client.user.id})`);
 
-  // Get the server IDs.
   const serverIds = client.guilds.cache.map(guild => guild.id).join(', ');
-  console.log(`Bot is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'} (${serverIds}).`)
+  console.log(`${botName} is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'} (${serverIds}).`)
 
   console.log(`Command prefix is ${prefix}`);
   console.log(`Use ${prefix}help for a list of commands.`);
 
   if (!fs.existsSync('config.js')) {
-    console.error('Configuration file not found. Please create a config.js file with the required settings.');
+    console.error('Configuration file not found. Please create a config.js file with the required settings or copy from github.');
     return;
   }
 
   loadBlocklist();
   loadGameData();
   printActiveGames();
+
+  // Check for a restart
+  if (!isTesting) {
+    if (Object.keys(gameData).length > 0) {
+      botRestarted = true;
+      for (const channelId in gameData) {
+        const game = gameData[channelId];
+        const channel = client.channels.cache.get(channelId);
+        if (channel) {
+          await channel.send(`**${botName}** has restarted and found a game in-progress.`);
+          await gamestatus(channel);
+        }
+      }
+      botRestarted = false;
+    }
+  }
 });
 
 client.on('interactionCreate', async (interaction) => {
@@ -76,31 +91,40 @@ client.on('interactionCreate', async (interaction) => {
   const game = findGameByUserId(interaction.user.id);
   if (!game) {
     console.error("Game not found for interaction.", interaction);
-    await interaction.reply({ content: 'No game found.', ephemeral: true });
+    await interaction.editReply({ content: 'No game found.' });
     return;
   }
-  if (interaction.customId === 'gm_consent_yes' || interaction.customId === 'gm_consent_no') {
-    if (interaction.customId === 'gm_consent_yes') {
-      game.gm.consent = true;
-      await interaction.reply({ content: 'You have consented to be the GM.', ephemeral: true });
-    } else if (interaction.customId === 'gm_consent_no') {
-      game.gm.consent = false;
-      await interaction.reply({ content: 'You have declined to be the GM.', ephemeral: true });
+  if (interaction.customId === 'gm_consent_yes' || interaction.customId === 'gm_consent_no' || interaction.customId === 'player_consent_yes' || interaction.customId === 'player_consent_no' || interaction.customId === 'input_yes' || interaction.customId === 'input_no') {
+    return;
+  }
+
+  await interaction.deferUpdate();
+
+  if (interaction.customId === 'sacrifice_yes' || interaction.customId === 'sacrifice_no') {
+    if (interaction.customId === 'sacrifice_yes') {
+      await interaction.editReply({ content: 'You have chosen to sacrifice your character for narration rights!' });
+    } else {
+      await interaction.editReply({ content: 'You chose not to sacrifice your character.' });
     }
     return;
   }
 
-  if (interaction.customId === 'player_consent_yes' || interaction.customId === 'player_consent_no') {
-    if (game.players[interaction.user.id]) {
-      if (interaction.customId === 'player_consent_yes') {
-        game.players[interaction.user.id].consent = true;
-        await interaction.reply({ content: 'You have consented to play.', ephemeral: true });
-      } else if (interaction.customId === 'player_consent_no') {
-        game.players[interaction.user.id].consent = false;
-        await interaction.reply({ content: 'You have declined to play.', ephemeral: true });
-      }
-      return;
+  if (interaction.customId === 'brink_yes' || interaction.customId === 'brink_no') {
+    if (interaction.customId === 'brink_yes') {
+      await interaction.editReply({ content: 'You embraced your Brink!' });
+    } else {
+      await interaction.editReply({ content: 'You chose not to embrace your Brink, for now.' });
     }
+    return;
+  }
+
+  if (interaction.customId === 'cancel_game_yes' || interaction.customId === 'cancel_game_no') {
+    if (interaction.customId === 'cancel_game_yes') {
+      await interaction.editReply({ content: 'Game cancelled.' });
+    } else {
+      await interaction.editReply({ content: 'Game cancellation aborted.' });
+    }
+    return;
   }
 });
 
@@ -122,7 +146,7 @@ client.on('messageCreate', async (message) => {
       console.log('Command:', message.content, 'from', userName, 'in a Direct Message');
 
     if (message.content.toLowerCase() === '.x') {
-      const game = getGameData(channelId); // Use getGameData
+      const game = getGameData(channelId);
       if (!game) {
         try {
           await message.author.send(`You are not currently in a game in any channel.`);
@@ -194,7 +218,7 @@ client.on('messageCreate', async (message) => {
 
         if (gameRequiredCommands.includes(command)) {
           if (!game) {
-            message.author.send(`Message removed. There is no **Ten Candles** game in progress in <#${channelId}>.`);
+            await message.author.send({ content: `Message removed. There is no **Ten Candles** game in progress in <#${channelId}>.` });
             try {
               await message.delete();
             } catch (deleteError) {
@@ -204,7 +228,7 @@ client.on('messageCreate', async (message) => {
           }
           if (command !== "playrecordings") {
             if (game.inLastStand) {
-              message.author.send(`Message removed. The game is in **The Last Stand**. No more actions can be taken.`);
+              await message.author.send({ content: `Message removed. The game is in **The Last Stand**. No more actions can be taken.` });
               try {
                 await message.delete();
               } catch (deleteError) {
@@ -214,7 +238,7 @@ client.on('messageCreate', async (message) => {
             }
           }
           if (!game.players[userId] && game.gmId !== userId) {
-            message.author.send(`Message removed. You are not a participant in the **Ten Candles** game in <#${channelId}>.`);
+            await message.author.send({ content: `Message removed. You are not a participant in the **Ten Candles** game in <#${channelId}>.` });
             try {
               await message.delete();
             } catch (deleteError) {
@@ -226,7 +250,7 @@ client.on('messageCreate', async (message) => {
 
         if (command === 'help') {
           const isAdmin = message.member.permissions.has('Administrator');
-          const helpEmbed = getHelpEmbed(isAdmin);
+          const helpEmbed = getHelpEmbed(isAdmin, message);
           message.channel.send({ embeds: [helpEmbed.help] });
         } else if (command === 'startgame') {
           await startGame(message, gameData);
@@ -236,8 +260,10 @@ client.on('messageCreate', async (message) => {
           await playRecordings(message);
         } else if (command === 'nextstep') {
           nextStep(message);
+        } else if (command === 'prevstep') {
+          prevStep(message);
         } else if (command === 'gamestatus') {
-          gamestatus(message);
+          gameStatus(message);
         } else if (command === 'removeplayer') {
           removePlayer(message, args);
         } else if (command === 'leavegame') {
@@ -258,12 +284,13 @@ client.on('messageCreate', async (message) => {
 
 async function me(message) {
   const playerId = message.author.id;
-  const game = getGameData(channelId);
+  const game = findGameByUserId(playerId);
+  const channelId = message.channel.id;
 
   if (message.channel.type !== ChannelType.DM) {
     try {
       await message.delete();
-      await message.author.send('The `.me` command can only be used in a direct message.');
+      await message.author.send({ content: 'The `.me` command can only be used in a direct message.' });
     } catch (error) {
       console.error('Could not send DM to user:', error);
     }

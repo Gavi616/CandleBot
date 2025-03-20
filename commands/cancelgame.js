@@ -1,14 +1,24 @@
-import { gameData, saveGameData, countdown } from '../utils.js';
+import { gameData, saveGameData } from '../utils.js';
 import { CANCEL_TIMEOUT } from '../config.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 
 export async function cancelGame(message) {
   const channelId = message.channel.id;
   if (!gameData[channelId]) {
-    message.reply('No game is in progress in this channel.');
+    message.channel.send('No game is in progress in this channel.');
     return;
   }
   const gmId = gameData[channelId].gmId;
+
+  if (message.author.id !== gmId) {
+    try {
+      await message.author.send({ content: 'Only the GM can use this command.' });
+      await message.delete();
+    } catch (error) {
+      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
+    }
+    return;
+  }
 
   try {
     const gm = message.guild.members.cache.get(gmId);
@@ -35,7 +45,6 @@ export async function cancelGame(message) {
       embeds: [consentEmbed],
       components: [row],
     });
-    const timer = await countdown(gm.user, CANCEL_TIMEOUT, initialMessage);
 
     const filter = (interaction) =>
       interaction.user.id === gmId && interaction.message.id === initialMessage.id;
@@ -60,13 +69,8 @@ export async function cancelGame(message) {
     });
 
     collector.on('end', async (collected, reason) => {
-      clearInterval(timer);
       if (reason === 'time') {
-        await initialMessage.edit({
-          content: 'Cancellation confirmation timed out.',
-          embeds: [],
-          components: [],
-        });
+        await gm.user.send('Cancellation confirmation timed out.');
         message.channel.send('Game cancellation confirmation timed out.');
       }
     });

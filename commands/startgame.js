@@ -48,12 +48,14 @@ export async function startGame(message, gameData) {
 
     console.log(`startGame: Creating gameData object for channel ${channelId}`);
     gameData[channelId] = {
-        channelId: channelId, // Add channelId here
+        channelId: channelId,
         gmId: gmId,
         players: {},
         playerOrder: playerIds,
         characterGenStep: 1,
+        scene: 0,
         traitsRequested: false,
+        theme: "",
         textChannelId: channelId,
         guildId: guildId,
         voiceChannelId: voiceChannelId,
@@ -77,6 +79,7 @@ export async function startGame(message, gameData) {
             concept: "",
             recordings: "",
             hopeDice: 0,
+            trait_stack: {},
             virtueBurned: false,
             viceBurned: false,
             momentBurned: false,

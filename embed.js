@@ -13,8 +13,7 @@ export function getHelpEmbed(isAdmin, message) {
       'Start a Ten Candles session:\n' +
       '`.startgame <GM ID> <Player IDs>`: Starts a Ten Candles game.\n\n' +
       '**Gameplay:**\n' +
-      '`.conflict [-burnvirtue | -burnvice | -burnmoment]`: Makes a conflict roll for success / failure check as well as narration rights.\n' +
-      '`.playrecordings`: Plays Final Recordings (when all candles are out).\n\n' +
+      '`.conflict`: Makes a conflict roll for success / failure check & determines narration rights.\n\n' +
       '**Game Management:**\n' +
       '`.gamestatus`: Shows the game\'s status.\n' +
       '`.leavegame [Reason]`: Player leaves the game.\n\n' +
@@ -27,7 +26,8 @@ export function getHelpEmbed(isAdmin, message) {
   if (isGM) {
     baseEmbed.addFields({
       name: '\n\n**GM Only Commands:**',
-      value: '`.nextstep`: Advances character generation one step.\n' +
+      value: '`.theme [description]`: Advances character generation to Step Two and saves the theme description.\n' +
+      '`.nextstep`: Advances character generation one step.\n' +
         '`.prevstep`: Goes back one character generation step.\n' +
         '`.cancelgame`: Cancel the game.\n' +
         '`.removeplayer <Player ID> [Reason]`: Removes a player.\n' +

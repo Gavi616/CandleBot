@@ -219,12 +219,12 @@ export async function askForTraits(message, gameChannel, game, playerId) {
   let virtue, vice;
 
   do {
-    const response = await getDMResponse(user, 'Please send a Virtue and a Vice, separated by a comma (e.g., "courageous, greedy").', TRAIT_TIMEOUT, m => m.author.id === playerId, "Request for Traits");
+    const response = await getDMResponse(user, 'Please send a Virtue and a Vice, separated by a comma (e.g., "courageous, greedy").\nEach should be a single vague but descriptive adjective. (e.g. Sharpshooter => Steady)\nVirtues solve more problems than they create.\nVices cause more problems than they solve.', TRAIT_TIMEOUT, m => m.author.id === playerId, "Request for Traits");
     if (response) {
       [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
       virtue = normalizeVirtueVice(virtue);
       vice = normalizeVirtueVice(vice);
-      const confirmation = await confirmInput(user, `Are you happy with this Virtue: ${virtue} and Vice: ${vice}?`, TRAIT_TIMEOUT, "Confirm Your Traits");
+      const confirmation = await confirmInput(user, `Are you happy with this Virtue: ${virtue} and Vice: ${vice}?`, TRAIT_TIMEOUT, "Confirm these Traits");
       if (!confirmation) {
         continue;
       }
@@ -246,7 +246,7 @@ export async function askForMoment(user, game, playerId, time) {
   let input;
   do {
     try {
-      const response = await getDMResponse(user, 'Please send me your Moment. A Moment is an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. All Moments should have the potential for failure.', time, m => m.author.id === playerId);
+      const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would be reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
       if (response) {
         input = response;
         if (!input) {
@@ -282,9 +282,9 @@ export async function askForBrink(user, game, playerId, time) {
 
   let prompt;
   if (playerId === threatPlayerId) {
-    prompt = `Please send a Brink. Your Brink is about *them*, a threat controlled by the GM. What have you have seen *them* do? The only limitations are that you can't name *them* and you can't give *them* a weakness.`;
+    prompt = `Please send a Brink.\nYour Brink is about *them*, a threat controlled by the GM. What have you have seen *them* do?\nThe only limitations are that you can't name *them* and you can't give *them* a weakness.`;
   } else {
-    prompt = `Please send a Brink. Brinks are things people do when they're pushed to their limit of desperation. Your Brink is for ${playerToYourLeft}. Don’t worry about making them too specific.`;
+    prompt = `Please send a Brink.\nBrinks are things people do when they're pushed to their limit of desperation.\nYour Brink is for ${playerToYourLeft.characterName}. Don’t worry about making them too specific.`;
   }
 
   do {
@@ -303,7 +303,7 @@ export async function askForBrink(user, game, playerId, time) {
         } else {
           input = normalizePlayerBrink(input, characterName);
         }
-        const confirmation = await confirmInput(user, `Are you happy with this Brink: ${input} ?`, BRINK_TIMEOUT, "Confirm Your Brink");
+        const confirmation = await confirmInput(user, `Are you happy with this Brink: ${input} for ${playerToYourLeft.characterName}}?`, BRINK_TIMEOUT, "Confirm Your Brink");
         if (!confirmation) {
           continue;
         }
@@ -358,7 +358,6 @@ export function numberToWords(number) {
 }
 
 export function loadGameData() {
-  console.log(`loadGameData: Loading game data...`);
   try {
     const data = fs.readFileSync('gameData.json', 'utf8');
     const loadedGameData = JSON.parse(data);
@@ -371,18 +370,13 @@ export function loadGameData() {
             gameData[channelId].channelId = channelId;
         }
     }
-    console.log('loadGameData: Game data loaded successfully.');
-    console.log('loadGameData: Loaded gameData:', gameData);
   } catch (err) {
     console.error('loadGameData: Error loading game data:', err);
     Object.keys(gameData).forEach(key => delete gameData[key]);
-    console.log('loadGameData: Game data initialized.');
   }
 }
 
 export function saveGameData() {
-  console.log('saveGameData: Saving game data...');
-  console.log('saveGameData: Game data before saving:', gameData);
   if (!validateGameData(gameData, gameDataSchema)) {
     console.error('saveGameData: Game data validation failed. Data not saved.');
     return;
@@ -393,7 +387,6 @@ export function saveGameData() {
       gameData[channelId].lastSaved = new Date().toISOString();
     }
     fs.writeFileSync('gameData.json', JSON.stringify(gameData));
-    console.log('saveGameData: Game data saved successfully.');
   } catch (err) {
     console.error('saveGameData: Error saving game data:', err);
   }
@@ -416,6 +409,7 @@ export function printActiveGames() {
       }
     }
   }
+  console.log('--------------------');
 }
 
 export function loadBlocklist() {
@@ -437,7 +431,6 @@ export function loadBlocklist() {
 export function saveBlocklist() {
   try {
     fs.writeFileSync('blocklist.json', JSON.stringify(blocklist));
-    console.log('Blocklist saved successfully.');
     saveGameData();
   } catch (err) {
     console.error(`Error saving blocklist: ${err.message}`);

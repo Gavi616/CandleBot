@@ -23,7 +23,6 @@ import {
 import { sendCharacterGenStep } from './chargen.js';
 import { startGame } from './commands/startgame.js';
 import { conflict } from './commands/conflict.js';
-import { playRecordings } from './commands/playrecordings.js';
 import { nextStep, prevStep } from './commands/nextstep.js';
 import { gameStatus } from './commands/gamestatus.js';
 import { removePlayer } from './commands/removeplayer.js';
@@ -43,7 +42,7 @@ export const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.9.911';
+const version = '0.9.912';
 const botName = 'Ten Candles Bot';
 const isTesting = true;
 let botRestarted = false;
@@ -214,7 +213,7 @@ client.on('messageCreate', async (message) => {
 
         const game = gameData[channelId];
 
-        const gameRequiredCommands = ['conflict', 'playrecordings', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x'];
+        const gameRequiredCommands = ['conflict', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x', 'theme'];
 
         if (gameRequiredCommands.includes(command)) {
           if (!game) {
@@ -225,17 +224,6 @@ client.on('messageCreate', async (message) => {
               console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
             }
             return;
-          }
-          if (command !== "playrecordings") {
-            if (game.inLastStand) {
-              await message.author.send({ content: `Message removed. The game is in **The Last Stand**. No more actions can be taken.` });
-              try {
-                await message.delete();
-              } catch (deleteError) {
-                console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
-              }
-              return;
-            }
           }
           if (!game.players[userId] && game.gmId !== userId) {
             await message.author.send({ content: `Message removed. You are not a participant in the **Ten Candles** game in <#${channelId}>.` });
@@ -256,8 +244,8 @@ client.on('messageCreate', async (message) => {
           await startGame(message, gameData);
         } else if (command === 'conflict' || command === 'c') {
           await conflict(message, args, gameData);
-        } else if (command === 'playrecordings') {
-          await playRecordings(message);
+        } else if (command === 'theme') {
+          await setTheme(message, args);
         } else if (command === 'nextstep') {
           nextStep(message);
         } else if (command === 'prevstep') {
@@ -361,7 +349,7 @@ export async function startTruthsSystem(client, message, channelId) {
   let fullMessage = `GM only: **These things are true. The world is dark.**\n\n`;
 
   if (truthOrderMessage) {
-    fullMessage += `Establishing Truths order: ${truthOrderMessage}\n\n`;
+    fullMessage += `Establishing Truths order:\n${truthOrderMessage}\n\n`;
   }
 
   fullMessage += `${finalTruthMessage}`;
@@ -408,6 +396,110 @@ function unblockUser(message, args) {
     if (message)
       message.channel.send(`${userId} is not on the blocklist.`);
   }
+}
+
+export async function setTheme(message, args) {
+  // Save theme description (if it was passed in) into gameData.json
+
+  // Only if CharacterGeneration step === 1, move to step 2
+}
+
+export async function playRecordings(message) {
+  const channelId = message.channel.id;
+  const game = gameData[channelId];
+  const players = game.players;
+
+  if (!game) {
+    message.reply('No game is in progress in this channel.');
+    return;
+  }
+
+  if (game.scene < 1) {
+    message.reply('The game has not started yet. Use `.nextstep` to continue.');
+    return;
+  }
+
+  message.channel.send('The final scene fades to black. The story is over. Your final recordings will now play.');
+
+  message.channel.send('Playing final recordings:');
+
+  let delay = 5000;
+
+  const playerIds = Object.keys(players);
+
+  async function playNextRecording(index) {
+    if (index >= playerIds.length) {
+      delete gameData[channelId];
+      saveGameData();
+      return;
+    }
+
+    const userId = playerIds[index];
+
+    setTimeout(async () => {
+      if (players[userId].recording) {
+        if (game.gameMode === 'voice-plus-text') {
+          // Handle voice+text mode logic
+          const voiceChannelId = game.voiceChannelId;
+
+          // Check if the bot is already in the voice channel
+          const existingConnection = getVoiceConnection(message.guild.id);
+          if (!existingConnection) {
+            const voiceChannel = client.channels.cache.get(voiceChannelId);
+            if (voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
+              try {
+                joinVoiceChannel({
+                  channelId: voiceChannelId,
+                  guildId: message.guild.id,
+                  adapterCreator: message.guild.voiceAdapterCreator,
+                });
+                console.log(`Joined voice channel: ${voiceChannel.name}`);
+              } catch (error) {
+                console.error('Failed to join voice channel:', error);
+                message.channel.send('Failed to join voice channel. Playing back in text only.');
+                game.gameMode = "text-only";
+              }
+            } else {
+              console.error(`Voice channel ${voiceChannelId} not found.`);
+              message.channel.send('Voice channel not found. Playing back in text only.');
+              game.gameMode = "text-only";
+            }
+          }
+
+          if (players[userId].recording.startsWith('http')) {
+            // It's an audio URL
+            try {
+              const voiceChannel = client.channels.cache.get(voiceChannelId);
+              await playAudioFromUrl(players[userId].recording, voiceChannel);
+              message.channel.send(`Recording for <@${userId}>: (Audio Played)`);
+            } catch (error) {
+              console.error(`Error playing audio recording for ${userId}:`, error);
+              message.channel.send(`Error playing recording for <@${userId}>. Check console for details.`);
+            }
+          } else {
+            message.channel.send(`Recording for <@${userId}>:\n*<@${userId}>'s final message...*`);
+            slowType(message.channel, players[userId].recording); // Use slowType here!
+          }
+        } else {
+          // Handle text-only mode logic
+          if (players[userId].recording.startsWith('http')) {
+            message.channel.send(`Recording for <@${userId}>:\n${players[userId].recording}`);
+          } else {
+            message.channel.send(`Recording for <@${userId}>:\n*<@${userId}>'s final message...*`);
+            slowType(message.channel, players[userId].recording);
+          }
+        }
+      } else {
+        message.channel.send(`No playable recording for <@${userId}>.`);
+      }
+
+      await playNextRecording(index + 1);
+    }, delay);
+
+    delay = 3000;
+  }
+
+  await playNextRecording(0);
 }
 
 client.login(process.env.DISCORD_TOKEN);

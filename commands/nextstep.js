@@ -32,7 +32,7 @@ export async function nextStep(message) {
 
   if (game.gmId !== message.author.id) {
     try {
-      await message.author.send({ content: 'Only the GM can use this command.' }); // Changed to message.author.send()
+      await message.author.send({ content: 'Only the GM can use this command.' });
       await message.delete();
     } catch (error) {
       console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
@@ -57,7 +57,7 @@ export async function prevStep(message) {
 
   if (game.gmId !== message.author.id) {
     try {
-      await message.author.send({ content: 'Only the GM can use this command.' }); // Changed to message.author.send()
+      await message.author.send({ content: 'Only the GM can use this command.' });
       await message.delete();
     } catch (error) {
       console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
@@ -104,16 +104,16 @@ export async function handleStepOne(gameChannel, game) {
     traitPromises.push(askForTraits(message, gameChannel, game, playerId));
   }
   await Promise.all(traitPromises);
+  const swappedTraits = await swapTraits(client, game.players, game, game.guildId);
+  game.players = swappedTraits;
   game.characterGenStep++;
   saveGameData();
+  gameChannel.send('Traits have now been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards.\n');
   sendCharacterGenStep(gameChannel, game);
 }
 
 export async function handleStepTwo(gameChannel, game) {
-  gameChannel.send('**Step Two: GM Introduces the Module / Theme**\nTraits have been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards. The GM will now introduce the module/theme. *Your GM must use `.nextstep` to continue.*');
-  const swappedTraits = await swapTraits(client, game.players, game, game.guildId);
-  game.players = swappedTraits;
-  saveGameData();
+  gameChannel.send('**Step Two: GM Introduces this session\'s Module / Theme**\nThe GM will now introduce the module/theme and then use `.theme [description]` to advance to Step Three');
 }
 
 export async function handleStepThree(gameChannel, game) {
@@ -155,10 +155,7 @@ export async function handleStepFive(gameChannel, game) {
       game.brinkResponses = game.brinkResponses || {};
       game.brinkResponses[participantId] = await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT); //Use BRINK_TIMEOUT here!
   }
-}
 
-export async function handleStepSix(gameChannel, game) {
-  gameChannel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. *Your GM must use `.nextstep` to continue.*');
   const swappedBrinks = swapBrinks(game.players, game.playerOrder, game.gmId);
   game.players = swappedBrinks;
   const brinkSwapPromises = game.playerOrder.map(async (playerId) => {
@@ -185,9 +182,14 @@ export async function handleStepSix(gameChannel, game) {
   saveGameData();
 }
 
+export async function handleStepSix(gameChannel, game) {
+  gameChannel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. See your DMs to confirm your stack order.');
+}
+
 export async function handleStepSeven(gameChannel, game) {
-  gameChannel.send('**Step Seven: Inventory Supplies**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). *Your GM must use `.nextstep` to continue.*\n**It begins.**');
+  gameChannel.send('**Step Seven: Inventory Supplies**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). See your DMs to input your gear.');
   sendCandleStatus(gameChannel, 10);
+  gameChannel.send('**It begins.**\n\n*For the remainder of the session, you should endeavor to act in-character.*');
 }
 
 export async function handleStepEight(gameChannel, game) {

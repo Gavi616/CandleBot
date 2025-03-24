@@ -7,7 +7,7 @@ import {
   AudioPlayerStatus,
   getVoiceConnection
 } from '@discordjs/voice';
-import { TRAIT_TIMEOUT, TIME_INTERVAL, defaultVirtues, defaultVices, defaultMoments, confirmButtonYesLabel, confirmButtonNoLabel, BRINK_TIMEOUT } from './config.js';
+import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js';
@@ -558,23 +558,23 @@ export async function askForGear(user, game, playerId, args) {
   if (args[0] === 'gear') {
     gearList = args.slice(1).join(' ').split(',').map(item => sanitizeString(item.trim()));
   } else {
-    await user.send('Invalid gear command. Please use `.gear gear item1, gear item2, ...`');
+    await user.send('Invalid command. Please use `.gear item1, item2, ...`');
     return;
   }
 
   if (gearList.length === 0) {
-    await user.send('Please provide at least one gear item.');
+    await user.send('Please provide at least one item.');
     return;
   }
 
-  await user.send(`Your gear list:\n${gearList.map((item, index) => `${index + 1}. ${item}`).join('\n')}`);
+  await user.send(`Your inventory:\n${gearList.map((item, index) => `${index + 1}. ${item}`).join('\n')}`);
 
-  const confirmation = await confirmInput(user, 'Is this gear list correct?', 60000);
+  const confirmation = await confirmInput(user, 'Is this inventory correct?', 60000);
 
   if (confirmation) {
     game.players[playerId].gear = gearList;
     saveGameData();
-    await user.send('Your gear list has been saved.');
+    await user.send('Your inventory has been saved.');
     const allPlayersHaveGear = Object.values(game.players).every(player => player.gear);
     if (allPlayersHaveGear) {
       const gameChannel = client.channels.cache.get(game.textChannelId);
@@ -597,25 +597,25 @@ export async function addGear(user, game, playerId, item) {
   }
   game.players[playerId].gear.push(sanitizeString(item));
   saveGameData();
-  await user.send(`Added "${item}" to your gear list.`);
+  await user.send(`Added "${item}" to your inventory.`);
 }
 
 export async function removeGear(user, game, playerId, item) {
   if (!item) {
-    await user.send('Please provide an item to remove.');
+    await user.send('Please provide an item to remove from your inventory.');
     return;
   }
   if (!game.players[playerId].gear) {
-    await user.send('You have no gear to remove.');
+    await user.send(`You have no "${item}" to remove from your inventory.`);
     return;
   }
   const index = game.players[playerId].gear.indexOf(item);
   if (index > -1) {
     game.players[playerId].gear.splice(index, 1);
     saveGameData();
-    await user.send(`Removed "${item}" from your gear list.`);
+    await user.send(`Removed "${item}" from your inventory.`);
   } else {
-    await user.send(`"${item}" is not in your gear list.`);
+    await user.send(`"${item}" is not in your inventory.`);
   }
 }
 
@@ -634,12 +634,12 @@ export async function editGear(user, game, playerId, item) {
     if (newItem) {
       game.players[playerId].gear[index] = sanitizeString(newItem);
       saveGameData();
-      await user.send(`Changed "${item}" to "${newItem}" in your gear list.`);
+      await user.send(`Changed "${item}" to "${newItem}" in your inventory.`);
     } else {
       await user.send(`No new item provided.`);
     }
   } else {
-    await user.send(`"${item}" is not in your gear list.`);
+    await user.send(`"${item}" is not in your inventory.`);
   }
 }
 

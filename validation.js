@@ -58,18 +58,20 @@ export function validateGameData(data, schema) {
 
 export function validateGameSetup(message) {
     const gmMention = message.mentions.members.first();
-    const playerMentions = message.mentions.members.filter(member => member.id !== gmMention.id);
+    const gmId = gmMention.id;
+    const playerIds = [...new Set(message.mentions.members.filter(member => member.id !== gmId).map(member => member.id))];
 
     if (!gmMention) {
-        return { valid: false, reason: 'Please mention the GM.' };
+        return { valid: false, reason: 'Please use @userid to mention the GM.' };
     }
 
-    if (playerMentions.size < 1) {
-        return { valid: false, reason: 'Please mention at least one player.' };
+    if (playerIds.length < 2) {
+        return { valid: false, reason: 'Please mention at least two unique players.' };
     }
 
-    const gmId = gmMention.id;
-    const playerIds = playerMentions.map(member => member.id);
+    if (playerIds.length !== message.mentions.members.filter(member => member.id !== gmId).size) {
+        return { valid: false, reason: 'Please do not mention the same player more than once.' };
+    }
 
     return { valid: true, gmId, playerIds };
 }

@@ -2,7 +2,7 @@ import {
   sendCharacterGenStep,
   swapTraits,
   swapBrinks,
-} from '../chargen.js';
+} from './chargen.js';
 import {
   saveGameData,
   getGameData,
@@ -18,41 +18,16 @@ import {
   normalizePlayerBrink,
   normalizeGMBrink,
   handleTraitStacking
-} from '../utils.js';
-import { client } from '../index.js';
-import { TRAIT_TIMEOUT, BRINK_TIMEOUT } from '../config.js';
-
-export async function nextStep(message) {
-  const channelId = message.channel.id;
-  const game = getGameData(channelId);
-
-  if (!game) {
-    message.channel.send('No game in progress.');
-    return;
-  }
-
-  if (game.gmId !== message.author.id) {
-    try {
-      await message.author.send({ content: 'Only the GM can use this command.' });
-      await message.delete();
-    } catch (error) {
-      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
-    }
-    return;
-  }
-
-  game.characterGenStep++;
-  saveGameData();
-  const gameChannel = message.guild.channels.cache.get(game.textChannelId);
-  sendCharacterGenStep(gameChannel, game);
-}
+} from './utils.js';
+import { client } from './index.js';
+import { TRAIT_TIMEOUT, BRINK_TIMEOUT } from './config.js';
 
 export async function prevStep(message) {
   const channelId = message.channel.id;
   const game = getGameData(channelId);
 
   if (!game) {
-    message.channel.send('No game in progress.');
+    message.channel.send('There is no game in progress in this channel.');
     return;
   }
 
@@ -68,11 +43,6 @@ export async function prevStep(message) {
   
   if (game.characterGenStep <= 1) {
     message.channel.send('Cannot go back further than Step 1.');
-    return;
-  }
-
-  if (game.characterGenStep === 2) {
-    message.channel.send('Cannot go back to Step 2.');
     return;
   }
 
@@ -99,6 +69,7 @@ export async function handleStepOne(gameChannel, game) {
   game.traitsRequested = true;
   gameChannel.send(`\n**Step One: Players Write Traits**\nPlayers, check your DMs and reply with a Virtue and a Vice.`);
   sendCandleStatus(gameChannel, 3);
+  await new Promise(resolve => setTimeout(resolve, 5000));
   const traitPromises = [];
   for (const playerId of game.playerOrder) {
     const message = await gameChannel.messages.fetch({ limit: 1 }).then(messages => messages.first());
@@ -109,7 +80,8 @@ export async function handleStepOne(gameChannel, game) {
   game.players = swappedTraits;
   game.characterGenStep++;
   saveGameData();
-  gameChannel.send('Traits have now been swapped (check your DMs and look over what you have received). Write your Virtue and Vice on two index cards.\n');
+  gameChannel.send('Traits have now been swapped. Players, check your DMs and look over the Virtue and Vice you have received.');
+  await new Promise(resolve => setTimeout(resolve, 5000));
   sendCharacterGenStep(gameChannel, game);
 }
 
@@ -118,8 +90,8 @@ export async function handleStepTwo(gameChannel, game) {
 }
 
 export async function handleStepThree(gameChannel, game) {
-  gameChannel.send(`**Step Three: Players Create Concepts**\nPlayers, check your DMs and respond with your character\'s Name, Look and Concept, in that order as three separate messages.`);
-  const message = await gameChannel.messages.fetch({ limit: 1 }).then(messages => messages.first());
+  gameChannel.send(`**Step Three: Players Create Concepts**\nPlayers, expect a DM and respond with your character\'s Name, Look and Concept, in that order as three separate messages.`);
+  await new Promise(resolve => setTimeout(resolve, 5000));
   await askPlayersForCharacterInfo(message, gameChannel.id);
   game.characterGenStep++;
   sendCharacterGenStep(gameChannel, game);
@@ -128,6 +100,7 @@ export async function handleStepThree(gameChannel, game) {
 export async function handleStepFour(gameChannel, game) {
   gameChannel.send(`**Step Four: Players Plan Moments**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.`);
   sendCandleStatus(gameChannel, 6);
+  await new Promise(resolve => setTimeout(resolve, 5000));
   const momentPromises = game.playerOrder.map(async (playerId) => {
       const player = await gameChannel.guild.members.fetch(playerId);
       const user = player.user;
@@ -139,6 +112,7 @@ export async function handleStepFour(gameChannel, game) {
 export async function handleStepFive(gameChannel, game) {
   gameChannel.send(`**Step Five: Players and GM Discover Brinks**\nCheck your DMs for personalized instructions on this step.`);
   sendCandleStatus(gameChannel, 9);
+  await new Promise(resolve => setTimeout(resolve, 5000));
   const brinkOrder = getVirtualTableOrder(game, true);
   const threatPlayerId = brinkOrder[(brinkOrder.indexOf(game.gmId) + 1) % brinkOrder.length];
 
@@ -185,6 +159,7 @@ export async function handleStepFive(gameChannel, game) {
 
 export async function handleStepSix(gameChannel, game) {
   gameChannel.send('**Step Six: Arrange Trait Stacks**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. See your DMs to confirm your stack order.');
+  await new Promise(resolve => setTimeout(resolve, 5000));
   const stackPromises = [];
   for (const playerId of game.playerOrder) {
     const player = await gameChannel.guild.members.fetch(playerId);
@@ -197,6 +172,7 @@ export async function handleStepSix(gameChannel, game) {
 export async function handleStepSeven(gameChannel, game) {
   gameChannel.send('**Step Seven: Inventory Supplies**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). See your DMs to input your gear.');
   sendCandleStatus(gameChannel, 10);
+  await new Promise(resolve => setTimeout(resolve, 5000));
   gameChannel.send('**It begins.**\n\n*For the remainder of the session, you should endeavor to act in-character.*');
   const gearPromises = [];
   for (const playerId of game.playerOrder) {
@@ -209,7 +185,7 @@ export async function handleStepSeven(gameChannel, game) {
 
 export async function handleStepEight(gameChannel, game) {
   gameChannel.send('**Final Recordings**\nPlayers, please check your DMs for instructions on sending your final recordings.');
-
+  await new Promise(resolve => setTimeout(resolve, 5000));
   const players = game.players;
   const gameMode = game.gameMode;
 
@@ -248,10 +224,11 @@ export async function handleStepNine(gameChannel, game) {
   game.dicePool = 10;
   game.scene = 1;
   sendCandleStatus(gameChannel, 10);
+  await new Promise(resolve => setTimeout(resolve, 5000));
   const commandUsagePromises = game.playerOrder.map(async (playerId) => {
       try {
         const player = await gameChannel.guild.members.fetch(playerId);
-        const playerMessage = `**Mechanics**
+        const playerMessage = `**Ten Candles Game Mechanics**
   Resolving a Conflict: Use \`.conflict\` after you have declared the action you'd like to take to roll the communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).
   Burning Traits: A trait can be burned in order to reroll all dice which come up 1 in a conflict.
   Moment: If you live your Moment successfully, gain a Hope Die to add to your conflict rolls.
@@ -277,7 +254,7 @@ export async function handleStepNine(gameChannel, game) {
 
   try {
     const gm = await gameChannel.guild.members.fetch(game.gmId);
-    const gmMessage = `**Mechanics**
+    const gmMessage = `**Ten Candles Game Mechanics**
 Resolving a Conflict: Players use \`.conflict\` to roll a communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).
 Burning Traits: A player may burn a Trait to reroll all dice which come up 1 in a conflict.
 Moment: If a player lives their Moment successfully, they gain a Hope Die to add to their conflict rolls.

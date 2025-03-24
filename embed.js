@@ -18,6 +18,7 @@ export function getHelpEmbed(isAdmin, message) {
       '`.gamestatus`: Shows the game\'s status.\n' +
       '`.leavegame [Reason]`: Player leaves the game.\n\n' +
       '**Direct Message Commands:**\n' +
+      '`.gear [add, remove, edit] itemname`: Edit your character\'s inventory\n' +
       '`.x`: Signals anonymously to wrap up the scene.\n' +
       '`.me`: View your character sheet.\n'
     )
@@ -27,7 +28,6 @@ export function getHelpEmbed(isAdmin, message) {
     baseEmbed.addFields({
       name: '\n\n**GM Only Commands:**',
       value: '`.theme [description]`: Saves the theme description and advances character generation to Step Two.\n' +
-      '`.nextstep`: Advances character generation one step.\n' +
         '`.prevstep`: Goes back one character generation step.\n' +
         '`.cancelgame`: Cancel the game.\n' +
         '`.removeplayer <Player ID> [Reason]`: Removes a player.\n' +

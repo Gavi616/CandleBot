@@ -25,7 +25,7 @@ import {
   handleStepSeven,
   handleStepEight,
   handleStepNine
-} from './commands/nextstep.js';
+} from './steps.js';
 
 export async function sendCharacterGenStep(gameChannel, game) {
   console.log(`sendCharacterGenStep has been called with step: ${game.characterGenStep}`);

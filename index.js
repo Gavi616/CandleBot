@@ -1,55 +1,26 @@
 import 'dotenv/config';
-import {
-  Client,
-  EmbedBuilder,
-  ChannelType,
-  GatewayIntentBits,
-  PermissionsBitField
-} from 'discord.js';
+import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, PermissionsBitField } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
-import {
-  sanitizeString,
-  loadGameData,
-  saveGameData,
-  getGameData,
-  printActiveGames,
-  loadBlocklist,
-  saveBlocklist,
-  gameData,
-  blocklist,
-  askPlayerForCharacterInfoWithRetry,
-  askForGear,
-  addGear,
-  removeGear,
-  editGear,
-  handleTraitStacking,
-} from './utils.js';
+import { sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames,
+  loadBlocklist, saveBlocklist, gameData, blocklist, askPlayerForCharacterInfoWithRetry,
+  askForGear, addGear, removeGear, editGear } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { startGame } from './commands/startgame.js';
 import { conflict } from './commands/conflict.js';
-import { nextStep, prevStep } from './commands/nextstep.js';
+import { prevStep } from './steps.js';
 import { gameStatus } from './commands/gamestatus.js';
 import { removePlayer } from './commands/removeplayer.js';
 import { leaveGame } from './commands/leavegame.js';
 import { cancelGame } from './commands/cancelgame.js';
 import { died } from './commands/died.js';
 
-export const client = new Client({
-  intents: [
-    GatewayIntentBits.Guilds,
-    GatewayIntentBits.GuildMessages,
-    GatewayIntentBits.MessageContent,
-    GatewayIntentBits.GuildMembers,
-    GatewayIntentBits.DirectMessages,
-    GatewayIntentBits.GuildMessageReactions
-  ],
-});
+export const client = new Client({ intents: [ GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions ] });
 
 const prefix = '.';
-const version = '0.9.920';
+const version = '0.9.922a';
 const botName = 'Ten Candles Bot';
-const isTesting = true;
+const isTesting = false;
 let botRestarted = false;
 
 client.once('ready', async () => {
@@ -64,7 +35,12 @@ client.once('ready', async () => {
   console.log(`Use ${prefix}help for a list of commands.`);
 
   if (!fs.existsSync('config.js')) {
-    console.error('Configuration file not found. Please create a config.js file with the required settings or copy from github.');
+    console.error('Configuration file not found. Please create a config.js file or copy one from https://github.com/Gavi616/CandleBot');
+    return;
+  }
+
+  if (isTesting) {
+    console.log('-- Testing Mode Engaged! --');
     return;
   }
 

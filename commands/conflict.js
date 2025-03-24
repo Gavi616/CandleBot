@@ -1,6 +1,6 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { startTruthsSystem } from '../index.js';
-import { sendCandleStatus, saveGameData, numberToWords, getDMResponse } from '../utils.js';
+import { saveGameData, numberToWords, getDMResponse } from '../utils.js';
 import { SACRIFICE_TIMEOUT, BRINK_TIMEOUT, TRAIT_TIMEOUT } from '../config.js';
 import { died } from './died.js';
 

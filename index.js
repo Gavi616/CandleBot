@@ -47,7 +47,7 @@ export const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.9.915';
+const version = '0.9.920';
 const botName = 'Ten Candles Bot';
 const isTesting = true;
 let botRestarted = false;
@@ -387,7 +387,7 @@ export async function startTruthsSystem(client, message, channelId) {
   message.channel.send(fullMessage);
 
   game.diceLost = 0;
-  // save gamedata here?
+  saveGameData();
 }
 
 function blockUser(message, args) {
@@ -460,20 +460,34 @@ export async function setTheme(message, args) {
   }
 }
 
+async function playAudioFromUrl(url, voiceChannel) {
+  return new Promise((resolve, reject) => {
+    const connection = getVoiceConnection(voiceChannel.guild.id);
+    if (!connection) {
+      reject(new Error('Not connected to a voice channel.'));
+      return;
+    }
+
+    const player = createAudioPlayer();
+    const resource = createAudioResource(url);
+
+    player.play(resource);
+    connection.subscribe(player);
+
+    player.on(AudioPlayerStatus.Idle, () => {
+      resolve();
+    });
+
+    player.on('error', (error) => {
+      reject(error);
+    });
+  });
+}
+
 export async function playRecordings(message) {
   const channelId = message.channel.id;
   const game = gameData[channelId];
   const players = game.players;
-
-  if (!game) {
-    message.reply('No game is in progress in this channel.');
-    return;
-  }
-
-  if (game.scene < 1) {
-    message.reply('The game has not started yet. Use `.nextstep` to continue.');
-    return;
-  }
 
   message.channel.send('The final scene fades to black. The story is over. Your final recordings will play after a moment of silence.');
 
@@ -485,8 +499,57 @@ export async function playRecordings(message) {
 
   async function playNextRecording(index) {
     if (index >= playerIds.length) {
-      delete gameData[channelId];
-      saveGameData();
+      // All recordings have been played. Now prompt the Initiator.
+      const initiator = await message.guild.members.fetch(game.initiatorId);
+      const dmChannel = await initiator.user.createDM();
+
+      const dataEmbed = new EmbedBuilder()
+        .setColor(0x0099FF)
+        .setTitle('Game Data Management')
+        .setDescription(`Your Ten Candles session in <#${channelId}> has concluded. Are you ready to delete all session data?`);
+
+      const row = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId('delete_data')
+            .setLabel('Yes, delete')
+            .setStyle(ButtonStyle.Danger),
+          new ButtonBuilder()
+            .setCustomId('send_data')
+            .setLabel('Send me the data')
+            .setStyle(ButtonStyle.Primary),
+        );
+
+      const dataMessage = await dmChannel.send({ embeds: [dataEmbed], components: [row] });
+
+      const dataFilter = (interaction) => interaction.user.id === game.initiatorId && interaction.message.id === dataMessage.id; // Check for initiator's ID
+      const dataCollector = dmChannel.createMessageComponentCollector({ filter: dataFilter, time: 600000 }); // 10 minutes seems like ample time
+
+      dataCollector.on('collect', async (interaction) => {
+        await interaction.deferUpdate();
+        if (interaction.customId === 'delete_data') {
+          delete gameData[channelId];
+          saveGameData();
+          await interaction.editReply({ content: 'Game data has been deleted.', embeds: [], components: [] });
+        } else if (interaction.customId === 'send_data') {
+          const gameDataString = JSON.stringify(gameData[channelId], null, 2);
+          const buffer = Buffer.from(gameDataString, 'utf-8');
+          const attachment = new AttachmentBuilder(buffer, { name: `gameData-${channelId}-${new Date().toISOString()}.json` });
+          delete gameData[channelId];
+          saveGameData();
+          await interaction.editReply({ content: `Game data has been sent to you as a JSON file.`, embeds: [], components: [] });
+          await dmChannel.send({ content: `Please save the attached file to your computer.`, files: [attachment] });
+        }
+        dataCollector.stop();
+      });
+
+      dataCollector.on('end', async (collected, reason) => {
+        if (reason === 'time') {
+          delete gameData[channelId];
+          saveGameData();
+          await dataMessage.edit({ content: 'No response was recorded, Game data has been removed.', embeds: [], components: [] });
+        }
+      });
       return;
     }
 

@@ -59,6 +59,7 @@ export async function startGame(message, gameData) {
         guildId: guildId,
         voiceChannelId: voiceChannelId,
         gameMode: gameMode,
+        initiatorId: initiatorId,
         gm: {
             consent: null,
             brink: ""

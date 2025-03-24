@@ -33,6 +33,7 @@ export const gameDataSchema = Joi.object().pattern(
         guildId: Joi.string().required(),
         voiceChannelId: Joi.string().allow(null).required(),
         gameMode: Joi.string().valid('text-only', 'voice-plus-text').required(),
+        initiatorId: Joi.string().required(),
         gm: Joi.object({
             consent: Joi.boolean().allow(null).required(),
             brink: Joi.string().allow('').required(),

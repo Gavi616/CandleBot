@@ -13,9 +13,9 @@ async function extinguishCandle(message, channelId) {
 
   // Check if all the candles have been extinguished.
   if (litCandles < 1) {
-    game.inLastStand = true; //This is how we know we are in The Last Stand.
+    game.inLastStand = true;
     message.channel.send(`The last candle is extinguished. The darkness closes in. We are in **The Last Stand**.`);
-    return; // Do not change scenes, the game is over as far as the bot is concerned. The GM can now use .playrecordings
+    return;
   }
   await startChangingScenes(message, channelId);
 }
@@ -330,9 +330,9 @@ export async function conflict(message, args, gameData) {
     game.diceLost = 0;
   }
 
+  messageContent = `##You rolled (${rolls.length} dice${hopeDieEmoji ? ' + Hope die' : ''}): ${diceEmojis}${hopeDieEmoji ? ` + ${hopeDieEmoji}` : ''}\n`;
+  messageContent += `##GM rolled (${gmDiceCount} dice): ${gmDiceEmojis}\n`;
   messageContent = `**${totalPlayerSixes > 0 ? `Success!` : `Failure.`}**\n`;
-  messageContent += `You rolled (${rolls.length} dice${hopeDieEmoji ? ' + Hope die' : ''}): ${diceEmojis}${hopeDieEmoji ? ` + ${hopeDieEmoji}` : ''}\n`;
-  messageContent += `GM rolled (${gmDiceCount} dice): ${gmDiceEmojis}\n`;
 
   messageContent += `${ones > 0 ? `${ones} di${ones === 1 ? 'e' : 'ce'} removed from the communal dice pool. ${dicePool - ones} di${dicePool - ones === 1 ? 'e remains' : 'ce remain'}.` : `${dicePool - ones} di${dicePool - ones === 1 ? 'e remains' : 'ce remain'}.`}\n`;
   game.dicePool -= ones;
@@ -344,4 +344,5 @@ export async function conflict(message, args, gameData) {
   }
   await preRollMessage.edit(`**Conflict Initiated**\nCommunal Dice: ${dicePool}\nHope Dice: ${hopeDiceCount}\nGM Dice: ${gmDiceCount}\n\nThinking Complete!`);
   message.channel.send({ content: messageContent, allowedMentions: { repliedUser: false } });
+  saveGameData();
 }

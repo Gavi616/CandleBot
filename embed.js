@@ -26,12 +26,12 @@ export function getHelpEmbed(isAdmin, message) {
   if (isGM) {
     baseEmbed.addFields({
       name: '\n\n**GM Only Commands:**',
-      value: '`.theme [description]`: Advances character generation to Step Two and saves the theme description.\n' +
+      value: '`.theme [description]`: Saves the theme description and advances character generation to Step Two.\n' +
       '`.nextstep`: Advances character generation one step.\n' +
         '`.prevstep`: Goes back one character generation step.\n' +
         '`.cancelgame`: Cancel the game.\n' +
         '`.removeplayer <Player ID> [Reason]`: Removes a player.\n' +
-        '`.died <Player ID> [-martyr] [Cause]`: Marks a PC as dead.\n'
+        '`.died <Player ID> [-martyr] [Cause]`: Marks a PC as dead. Martyr modifier allows gifting of Hope die.\n'
     });
   }
 

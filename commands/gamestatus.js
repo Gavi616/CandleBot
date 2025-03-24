@@ -11,13 +11,15 @@ export async function gameStatus(message) {
   }
 
   let statusMessage = `**Game Status in #${gameChannelName}**:\n`;
+  statusMessage += `Theme / Module: ${game.theme}\n`;
+  statusMessage += `Game Mode: ${game.gameMode}\n`
   statusMessage += `GM: <@${game.gmId}>\n`;
   statusMessage += `Players: ${game.playerOrder.map(playerId => `<@${playerId}>`).join(', ')}\n\n`;
 
   if (game.characterGenStep < 9) {
     statusMessage += `Character Generation Step: ${game.characterGenStep}\n`;
   } else if (game.inLastStand) {
-    statusMessage += "No candles remain lit. We are in **The Last Stand**.";
+    statusMessage += "All candles have been extinguished. We are in **The Last Stand**.\n";
   } else {
     statusMessage += `Current Scene: ${game.scene}\n`;
   }

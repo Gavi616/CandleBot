@@ -552,3 +552,154 @@ export function normalizeGMBrink(brink, name) {
   }
   return `${name} has seen *them* ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
 }
+
+export async function askForGear(user, game, playerId, args) {
+  let gearList = [];
+  if (args[0] === 'gear') {
+    gearList = args.slice(1).join(' ').split(',').map(item => sanitizeString(item.trim()));
+  } else {
+    await user.send('Invalid gear command. Please use `.gear gear item1, gear item2, ...`');
+    return;
+  }
+
+  if (gearList.length === 0) {
+    await user.send('Please provide at least one gear item.');
+    return;
+  }
+
+  await user.send(`Your gear list:\n${gearList.map((item, index) => `${index + 1}. ${item}`).join('\n')}`);
+
+  const confirmation = await confirmInput(user, 'Is this gear list correct?', 60000);
+
+  if (confirmation) {
+    game.players[playerId].gear = gearList;
+    saveGameData();
+    await user.send('Your gear list has been saved.');
+    const allPlayersHaveGear = Object.values(game.players).every(player => player.gear);
+    if (allPlayersHaveGear) {
+      const gameChannel = client.channels.cache.get(game.textChannelId);
+      game.characterGenStep++;
+      sendCharacterGenStep(gameChannel, game);
+    }
+  } else {
+    await user.send('Please try again.');
+    await askForGear(user, game, playerId, args);
+  }
+}
+
+export async function addGear(user, game, playerId, item) {
+  if (!item) {
+    await user.send('Please provide an item to add.');
+    return;
+  }
+  if (!game.players[playerId].gear) {
+    game.players[playerId].gear = [];
+  }
+  game.players[playerId].gear.push(sanitizeString(item));
+  saveGameData();
+  await user.send(`Added "${item}" to your gear list.`);
+}
+
+export async function removeGear(user, game, playerId, item) {
+  if (!item) {
+    await user.send('Please provide an item to remove.');
+    return;
+  }
+  if (!game.players[playerId].gear) {
+    await user.send('You have no gear to remove.');
+    return;
+  }
+  const index = game.players[playerId].gear.indexOf(item);
+  if (index > -1) {
+    game.players[playerId].gear.splice(index, 1);
+    saveGameData();
+    await user.send(`Removed "${item}" from your gear list.`);
+  } else {
+    await user.send(`"${item}" is not in your gear list.`);
+  }
+}
+
+export async function editGear(user, game, playerId, item) {
+  if (!item) {
+    await user.send('Please provide an item to edit.');
+    return;
+  }
+  if (!game.players[playerId].gear) {
+    await user.send('You have no gear to edit.');
+    return;
+  }
+  const index = game.players[playerId].gear.indexOf(item);
+  if (index > -1) {
+    const newItem = await getDMResponse(user, `What would you like to change "${item}" to?`, 60000, m => m.author.id === playerId);
+    if (newItem) {
+      game.players[playerId].gear[index] = sanitizeString(newItem);
+      saveGameData();
+      await user.send(`Changed "${item}" to "${newItem}" in your gear list.`);
+    } else {
+      await user.send(`No new item provided.`);
+    }
+  } else {
+    await user.send(`"${item}" is not in your gear list.`);
+  }
+}
+
+export async function handleTraitStacking(user, game, playerId) {
+  const player = game.players[playerId];
+  const options = ['Virtue', 'Vice', 'Moment'];
+  const stackOrder = [];
+  let momentOnTop = false;
+
+  const momentOnTopConfirmation = await confirmInput(user, `Do you want your Moment on top of your stack?`, 60000);
+  if (momentOnTopConfirmation) {
+    momentOnTop = true;
+  }
+
+  if (momentOnTop) {
+    player.momentOnTop = true;
+  } else {
+    const topTrait = await getDMResponse(user, `Which trait do you want on top of your stack?`, 60000, m => m.author.id === playerId);
+    if (topTrait) {
+      if (topTrait.toLowerCase() === 'virtue') {
+        stackOrder.push('Virtue');
+        stackOrder.push('Vice');
+      } else if (topTrait.toLowerCase() === 'vice') {
+        stackOrder.push('Vice');
+        stackOrder.push('Virtue');
+      } else {
+        await user.send(`Invalid trait. Please type either "Virtue" or "Vice".`);
+        await handleTraitStacking(user, game, playerId);
+        return;
+      }
+      stackOrder.push('Moment');
+    } else {
+      await user.send(`No trait provided. Please try again.`);
+      await handleTraitStacking(user, game, playerId);
+      return;
+    }
+  }
+
+  if (momentOnTop) {
+    player.stackOrder = ['Moment', 'Virtue', 'Vice'];
+  } else {
+    player.stackOrder = stackOrder;
+  }
+
+  await user.send(`Your stack order is: ${player.stackOrder.join(', ')}`);
+
+  const confirmation = await confirmInput(user, `Is this stack order correct?`, 60000);
+
+  if (confirmation) {
+    player.stackConfirmed = true;
+    saveGameData();
+    await user.send('Your stack order has been saved.');
+    const allPlayersHaveConfirmed = Object.values(game.players).every(player => player.stackConfirmed);
+    if (allPlayersHaveConfirmed) {
+      const gameChannel = client.channels.cache.get(game.textChannelId);
+      game.characterGenStep++;
+      sendCharacterGenStep(gameChannel, game);
+    }
+  } else {
+    await user.send('Please try again.');
+    await handleTraitStacking(user, game, playerId);
+  }
+}

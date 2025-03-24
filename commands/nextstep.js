@@ -16,7 +16,8 @@ import {
   sendDM,
   sanitizeString,
   normalizePlayerBrink,
-  normalizeGMBrink
+  normalizeGMBrink,
+  handleTraitStacking
 } from '../utils.js';
 import { client } from '../index.js';
 import { TRAIT_TIMEOUT, BRINK_TIMEOUT } from '../config.js';
@@ -153,7 +154,7 @@ export async function handleStepFive(gameChannel, game) {
           prompt = `Please write a short descriptive phrase of when or where you saw the Brink of ${nextParticipantUsername}.`;
       }
       game.brinkResponses = game.brinkResponses || {};
-      game.brinkResponses[participantId] = await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT); //Use BRINK_TIMEOUT here!
+      game.brinkResponses[participantId] = await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT);
   }
 
   const swappedBrinks = swapBrinks(game.players, game.playerOrder, game.gmId);
@@ -183,13 +184,27 @@ export async function handleStepFive(gameChannel, game) {
 }
 
 export async function handleStepSix(gameChannel, game) {
-  gameChannel.send('**Step Six: Arrange Traits**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. See your DMs to confirm your stack order.');
+  gameChannel.send('**Step Six: Arrange Trait Stacks**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. See your DMs to confirm your stack order.');
+  const stackPromises = [];
+  for (const playerId of game.playerOrder) {
+    const player = await gameChannel.guild.members.fetch(playerId);
+    const user = player.user;
+    stackPromises.push(handleTraitStacking(user, game, playerId));
+  }
+  await Promise.all(stackPromises);
 }
 
 export async function handleStepSeven(gameChannel, game) {
   gameChannel.send('**Step Seven: Inventory Supplies**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). See your DMs to input your gear.');
   sendCandleStatus(gameChannel, 10);
   gameChannel.send('**It begins.**\n\n*For the remainder of the session, you should endeavor to act in-character.*');
+  const gearPromises = [];
+  for (const playerId of game.playerOrder) {
+    const player = await gameChannel.guild.members.fetch(playerId);
+    const user = player.user;
+    gearPromises.push(user.send('Please use `.gear gear item1, item2, ...` to input your gear.'));
+  }
+  await Promise.all(gearPromises);
 }
 
 export async function handleStepEight(gameChannel, game) {

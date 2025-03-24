@@ -29,7 +29,6 @@ export async function startGame(message, gameData) {
     const gmId = validationResult.gmId;
     const playerIds = validationResult.playerIds;
 
-    // Check for bots and role mentions
     for (const playerId of playerIds) {
         const player = message.guild.members.cache.get(playerId);
         if (!player) {
@@ -55,7 +54,7 @@ export async function startGame(message, gameData) {
         characterGenStep: 1,
         scene: 0,
         traitsRequested: false,
-        theme: "",
+        theme: "No session theme / module set.",
         textChannelId: channelId,
         guildId: guildId,
         voiceChannelId: voiceChannelId,
@@ -119,7 +118,7 @@ const gmConsentPromise = new Promise(async (resolve) => {
   }
 });
 
-// Player Consents Prompts
+// Player Consent Prompts
 const playerConsentPromises = playerIds.map(async (playerId) => {
   return new Promise(async (resolve) => {
       try {
@@ -144,7 +143,6 @@ const playerConsentPromises = playerIds.map(async (playerId) => {
   });
 });
 
-
     // Promise.race() to detect any rejection/timeout
     try {
         await Promise.race([
@@ -155,33 +153,25 @@ const playerConsentPromises = playerIds.map(async (playerId) => {
         console.error("Error during consent checks:", error);
     }
 
-    //Check the results.
-    const consentResults = await Promise.all([gmConsentPromise, ...playerConsentPromises]); //Get the array of results.
-    console.log(`startGame: Consent results:`, consentResults);
+    const consentResults = await Promise.all([gmConsentPromise, ...playerConsentPromises]);
 
-    const nonConsentPlayers = [];
-    let gmConsented = true; //Assume they all consented.
+    let gmConsented = true;
     let playerConsented = true;
 
     for (const result of consentResults) {
-        if (result.type === "gm") { //If the result is from the GM.
-            if (result.consent === false || result.consent === undefined) { //If the GM does not consent.
-                nonConsentPlayers.push(`<@${result.id}>`); //Add them to the nonConsentPlayers array.
-                gmConsented = false; //The GM did not consent.
+        if (result.type === "gm") {
+            if (result.consent === false || result.consent === undefined) {
+                gmConsented = false;
             }
-        } else if (result.type === "player") { //If the result is from a player.
-            if (result.consent === false || result.consent === undefined) { //If the player did not consent.
-                nonConsentPlayers.push(`<@${result.id}>`); //Add them to the nonConsentPlayers array.
-                playerConsented = false; //A player did not consent.
+        } else if (result.type === "player") {
+            if (result.consent === false || result.consent === undefined) {
+                playerConsented = false;
             }
         }
     }
 
-    if (!gmConsented || !playerConsented) { //Check that the GM consented and that all the players consented.
-        //If there are non-consenting players, let everyone know.
-        const nonConsentList = nonConsentPlayers.join(", ");
-        message.channel.send(`One or more players and/or the GM's consent check failed. Game cancelled. ${nonConsentList} did not consent.`);
-        //Delete the game.
+    if (!gmConsented || !playerConsented) {
+        message.channel.send(`One or more players and/or the GM's consent check failed. Game cancelled.`);
         delete gameData[channelId];
         saveGameData();
         return;
@@ -193,6 +183,8 @@ const playerConsentPromises = playerIds.map(async (playerId) => {
     confirmationMessage += '**Ten Candles** focuses around shared narrative control.\n';
     confirmationMessage += 'Everyone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\n';
     confirmationMessage += 'Let\'s begin character generation. Check your DMs for instructions.\n\n';
+
+    // Pause for 10 seconds to let everyone read the chat message before DMing them
 
     message.channel.send(confirmationMessage)
         .then(() => {

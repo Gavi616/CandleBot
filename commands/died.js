@@ -1,4 +1,5 @@
 import { getGameData, saveGameData, sendDM } from '../utils.js';
+import { playRecordings } from '../index.js';
 
 export async function died(message, args) {
   const channelId = message.channel.id;
@@ -31,7 +32,7 @@ export async function died(message, args) {
 
   const playerIdToKill = args[0].replace(/<@!?(\d+)>/, '$1');
 
-  if (!/^\d+$/.test(playerIdToKill)) { // Check if playerIdToKill is a number
+  if (!/^\d+$/.test(playerIdToKill)) {
     message.reply('Invalid Player ID. Please mention a valid player in this game.');
     return;
   }
@@ -45,8 +46,14 @@ export async function died(message, args) {
   game.players[playerIdToKill].isDead = true;
   saveGameData();
 
+  const allPlayersDead = Object.values(game.players).every(player => player.isDead);
+
+  if (allPlayersDead) {
+    await playRecordings(message);
+  }
+
   if (reason) {
-    message.channel.send(`<@${playerIdToKill}> has died. Reason: ${reason}`);
+    message.channel.send(`<@${playerIdToKill}> has died from/by ${reason}`);
   } else {
     message.channel.send(`<@${playerIdToKill}> has died.`);
   }

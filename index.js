@@ -18,7 +18,12 @@ import {
   saveBlocklist,
   gameData,
   blocklist,
-  askPlayerForCharacterInfoWithRetry
+  askPlayerForCharacterInfoWithRetry,
+  askForGear,
+  addGear,
+  removeGear,
+  editGear,
+  handleTraitStacking,
 } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { startGame } from './commands/startgame.js';
@@ -42,7 +47,7 @@ export const client = new Client({
 });
 
 const prefix = '.';
-const version = '0.9.912';
+const version = '0.9.915';
 const botName = 'Ten Candles Bot';
 const isTesting = true;
 let botRestarted = false;
@@ -75,7 +80,7 @@ client.once('ready', async () => {
         const game = gameData[channelId];
         const channel = client.channels.cache.get(channelId);
         if (channel) {
-          await channel.send(`**${botName}** has restarted and found a game in-progress.`);
+          await channel.send(`**${botName}** has restarted and found one or more games in-progress.`);
           await gamestatus(channel);
         }
       }
@@ -142,7 +147,7 @@ client.on('messageCreate', async (message) => {
 
   if (message.channel.type === ChannelType.DM) {
     if (message.content.startsWith(prefix))
-      console.log('Command:', message.content, 'from', userName, 'in a Direct Message');
+      console.log('Command:', message.content, 'from', userName, 'in a Direct Message.');
 
     if (message.content.toLowerCase() === '.x') {
       const game = getGameData(channelId);
@@ -157,13 +162,38 @@ client.on('messageCreate', async (message) => {
         if (gameChannelId) {
           const gameChannel = client.channels.cache.get(gameChannelId);
           if (gameChannel) {
-            gameChannel.send(`One or more players and/or the GM are ready to move on, please wrap up the scene quickly.`);
+            gameChannel.send(`One or more players and/or the GM have asked the acting player or GM to please quickly move on from the current action or scene.`);
           }
         }
       }
     } else if (message.content.toLowerCase() === '.me') {
       me(message);
-    } else {
+    } else if (message.content.toLowerCase().startsWith('.gear')) {
+      const args = message.content.slice(prefix.length).split(/ +/);
+      const command = args.shift().toLowerCase();
+      const game = findGameByUserId(userId);
+      if (!game) {
+        await message.author.send(`You are not currently in a game in any channel.`);
+        return;
+      }
+      const player = game.players[userId];
+      if (game.characterGenStep === 7) {
+        await askForGear(message.author, game, userId, args);
+      } else if (game.characterGenStep > 7 && !game.inLastStand) {
+        if (args[0] === 'add') {
+          await addGear(message.author, game, userId, args.slice(1).join(' '));
+        } else if (args[0] === 'remove') {
+          await removeGear(message.author, game, userId, args.slice(1).join(' '));
+        } else if (args[0] === 'edit') {
+          await editGear(message.author, game, userId, args.slice(1).join(' '));
+        } else {
+          await message.author.send(`Invalid \`.gear\` command. Use \`.gear add [item]\`, \`.gear remove [item]\`, or \`.gear edit [item]\`.`);
+        }
+      } else {
+        await message.author.send(`The \`.gear\` command can only be used during Character Generation Step 7 or during a scene.`);
+      }
+    }
+    else {
       const game = findGameByUserId(userId);
 
       if (!game) return;
@@ -196,8 +226,13 @@ client.on('messageCreate', async (message) => {
 
   if (message.channel.type !== ChannelType.DM) {
     if (message.content.startsWith(prefix)) {
-      if (blocklist[userId]) {
-        message.author.send(`Message removed. You are blocked from using commands. Reason: ${blocklist[userId]}`);
+      const args = message.content.slice(prefix.length).split(/ +/);
+      const command = args.shift().toLowerCase();
+      console.log('Command:', message.content, 'from', userName, 'in' + message.channel.name);
+
+      // Blocklist check (only for .startgame)
+      if (blocklist[userId] && command === 'startgame') {
+        await message.author.send(`Message removed. You are blocked from using the \`.startgame\` command.`);
         try {
           await message.delete();
         } catch (deleteError) {
@@ -205,66 +240,60 @@ client.on('messageCreate', async (message) => {
         }
         return;
       }
-      console.log('Command:', message.content, 'from', userName, 'in', message.channel.name);
 
-      if (message.content.startsWith(prefix)) {
-        const args = message.content.slice(prefix.length).split(/ +/);
-        const command = args.shift().toLowerCase();
-
-        const game = gameData[channelId];
-
-        const gameRequiredCommands = ['conflict', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x', 'theme'];
-
-        if (gameRequiredCommands.includes(command)) {
-          if (!game) {
-            await message.author.send({ content: `Message removed. There is no **Ten Candles** game in progress in <#${channelId}>.` });
-            try {
-              await message.delete();
-            } catch (deleteError) {
-              console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
-            }
-            return;
+      // Game-required command check
+      const game = gameData[channelId];
+      const gameRequiredCommands = ['conflict', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x', 'theme'];
+      if (gameRequiredCommands.includes(command)) {
+        if (!game) {
+          await message.author.send({ content: `Message removed. There is no **Ten Candles** game in progress in <#${channelId}>.` });
+          try {
+            await message.delete();
+          } catch (deleteError) {
+            console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
           }
-          if (!game.players[userId] && game.gmId !== userId) {
-            await message.author.send({ content: `Message removed. You are not a participant in the **Ten Candles** game in <#${channelId}>.` });
-            try {
-              await message.delete();
-            } catch (deleteError) {
-              console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
-            }
-            return;
+          return;
+        }
+        if (!game.players[userId] && game.gmId !== userId) {
+          await message.author.send({ content: `Message removed. You are not a participant in the **Ten Candles** game in <#${channelId}>.` });
+          try {
+            await message.delete();
+          } catch (deleteError) {
+            console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
           }
+          return;
         }
+      }
 
-        if (command === 'help') {
-          const isAdmin = message.member.permissions.has('Administrator');
-          const helpEmbed = getHelpEmbed(isAdmin, message);
-          message.channel.send({ embeds: [helpEmbed.help] });
-        } else if (command === 'startgame') {
-          await startGame(message, gameData);
-        } else if (command === 'conflict' || command === 'c') {
-          await conflict(message, args, gameData);
-        } else if (command === 'theme') {
-          await setTheme(message, args);
-        } else if (command === 'nextstep') {
-          nextStep(message);
-        } else if (command === 'prevstep') {
-          prevStep(message);
-        } else if (command === 'gamestatus') {
-          gameStatus(message);
-        } else if (command === 'removeplayer') {
-          removePlayer(message, args);
-        } else if (command === 'leavegame') {
-          leaveGame(message, args);
-        } else if (command === 'cancelgame') {
-          await cancelGame(message);
-        } else if (command === 'died') {
-          await died(message, args);
-        } else if (command === 'block') {
-          blockUser(message, args);
-        } else if (command === 'unblock') {
-          unblockUser(message, args);
-        }
+      // Command handling
+      if (command === 'help') {
+        const isAdmin = message.member.permissions.has('Administrator');
+        const helpEmbed = getHelpEmbed(isAdmin, message);
+        await message.channel.send({ embeds: [helpEmbed.help] });
+      } else if (command === 'startgame') {
+        await startGame(message, gameData);
+      } else if (command === 'conflict' || command === 'c') {
+        await conflict(message, args, gameData);
+      } else if (command === 'theme') {
+        await setTheme(message, args);
+      } else if (command === 'nextstep') {
+        await nextStep(message);
+      } else if (command === 'prevstep') {
+        await prevStep(message);
+      } else if (command === 'gamestatus') {
+        await gameStatus(message);
+      } else if (command === 'removeplayer') {
+        await removePlayer(message, args);
+      } else if (command === 'leavegame') {
+        await leaveGame(message, args);
+      } else if (command === 'cancelgame') {
+        await cancelGame(message);
+      } else if (command === 'died') {
+        await died(message, args);
+      } else if (command === 'block') {
+        await blockUser(message, args);
+      } else if (command === 'unblock') {
+        await unblockUser(message, args);
       }
     }
   }
@@ -306,7 +335,8 @@ async function me(message) {
       { name: 'Virtue Burned', value: player ? player.virtueBurned ? 'Yes' : 'No' : 'No', inline: true },
       { name: 'Vice Burned', value: player ? player.viceBurned ? 'Yes' : 'No' : 'No', inline: true },
       { name: 'Moment Burned', value: player ? player.momentBurned ? 'Yes' : 'No' : 'No' },
-      { name: 'Game Channel:', value: `<#${gameChannelId}>` },
+      { name: 'Gear', value: player && player.gear ? player.gear.join(', ') : 'No Gear'},
+      { name: 'Active Game Channel:', value: `<#${gameChannelId}>` },
     )
     .setTimestamp();
 
@@ -343,7 +373,7 @@ export async function startTruthsSystem(client, message, channelId) {
   const livingPlayers = playerOrder.filter(playerId => game.players[playerId] && !game.players[playerId].isDead);
   let finalTruthMessage = "";
   if (livingPlayers.length > 0) {
-    finalTruthMessage = "All (living) together: **And we are alive.**";
+    finalTruthMessage = "*(Living characters only)* All together: **And we are alive.**";
   }
 
   let fullMessage = `GM only: **These things are true. The world is dark.**\n\n`;
@@ -357,6 +387,7 @@ export async function startTruthsSystem(client, message, channelId) {
   message.channel.send(fullMessage);
 
   game.diceLost = 0;
+  // save gamedata here?
 }
 
 function blockUser(message, args) {
@@ -399,9 +430,34 @@ function unblockUser(message, args) {
 }
 
 export async function setTheme(message, args) {
-  // Save theme description (if it was passed in) into gameData.json
+  const channelId = message.channel.id;
+  const game = gameData[channelId];
 
-  // Only if CharacterGeneration step === 1, move to step 2
+  if (!game) {
+    message.channel.send('No game in progress.');
+    return;
+  }
+
+  if (game.gmId !== message.author.id) {
+    try {
+      await message.author.send({ content: 'Only the GM can use this command.' });
+      await message.delete();
+    } catch (error) {
+      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
+    }
+    return;
+  }
+
+  const themeDescription = args.join(' ').trim();
+
+  if (themeDescription) { game.theme = themeDescription; }
+
+  if (game.characterGenStep === 2) {
+    game.characterGenStep++;
+    saveGameData();
+    const gameChannel = message.guild.channels.cache.get(game.textChannelId);
+    sendCharacterGenStep(gameChannel, game);
+  }
 }
 
 export async function playRecordings(message) {
@@ -419,11 +475,11 @@ export async function playRecordings(message) {
     return;
   }
 
-  message.channel.send('The final scene fades to black. The story is over. Your final recordings will now play.');
+  message.channel.send('The final scene fades to black. The story is over. Your final recordings will play after a moment of silence.');
 
-  message.channel.send('Playing final recordings:');
-
-  let delay = 5000;
+  // Total of 13 second 'moment of silence'
+  await new Promise(resolve => setTimeout(resolve, 10000));
+  let delay = 3000;
 
   const playerIds = Object.keys(players);
 
@@ -439,10 +495,8 @@ export async function playRecordings(message) {
     setTimeout(async () => {
       if (players[userId].recording) {
         if (game.gameMode === 'voice-plus-text') {
-          // Handle voice+text mode logic
           const voiceChannelId = game.voiceChannelId;
 
-          // Check if the bot is already in the voice channel
           const existingConnection = getVoiceConnection(message.guild.id);
           if (!existingConnection) {
             const voiceChannel = client.channels.cache.get(voiceChannelId);
@@ -467,7 +521,6 @@ export async function playRecordings(message) {
           }
 
           if (players[userId].recording.startsWith('http')) {
-            // It's an audio URL
             try {
               const voiceChannel = client.channels.cache.get(voiceChannelId);
               await playAudioFromUrl(players[userId].recording, voiceChannel);
@@ -478,7 +531,7 @@ export async function playRecordings(message) {
             }
           } else {
             message.channel.send(`Recording for <@${userId}>:\n*<@${userId}>'s final message...*`);
-            slowType(message.channel, players[userId].recording); // Use slowType here!
+            slowType(message.channel, players[userId].recording);
           }
         } else {
           // Handle text-only mode logic
@@ -495,8 +548,6 @@ export async function playRecordings(message) {
 
       await playNextRecording(index + 1);
     }, delay);
-
-    delay = 3000;
   }
 
   await playNextRecording(0);

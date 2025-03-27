@@ -1,6 +1,6 @@
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js';
 import { startTruthsSystem } from '../index.js';
-import { saveGameData, numberToWords, getDMResponse } from '../utils.js';
+import { saveGameData, numberToWords, getDMResponse, playRandomConflictSound } from '../utils.js';
 import { SACRIFICE_TIMEOUT, BRINK_TIMEOUT, TRAIT_TIMEOUT } from '../config.js';
 import { died } from './died.js';
 
@@ -8,10 +8,9 @@ async function extinguishCandle(message, channelId) {
   const game = gameData[channelId];
   if (!game) return;
 
-  game.scene++; // Increment the scene count (candle darkened)
+  game.scene++;
   const litCandles = 11 - game.scene;
 
-  // Check if all the candles have been extinguished.
   if (litCandles < 1) {
     game.inLastStand = true;
     message.channel.send(`The last candle is extinguished. The darkness closes in. We are in **The Last Stand**.`);
@@ -358,6 +357,14 @@ export async function conflict(message, args, gameData) {
     messageContent += `<@${message.author.id}>, the acting player, wins narration rights for this conflict.`;
   }
   await preRollMessage.edit(`**Conflict Initiated**\nCommunal Dice: ${dicePool}\nHope Dice: ${hopeDiceCount}\nGM Dice: ${gmDiceCount}\n\nThinking Complete!`);
+
+  const voiceChannelId = game.voiceChannelId;
+  const voiceChannel = client.channels.cache.get(voiceChannelId);
+
+  if (voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
+    await playRandomConflictSound(voiceChannel);
+  }
+
   message.channel.send({ content: messageContent, allowedMentions: { repliedUser: false } });
   saveGameData();
 }

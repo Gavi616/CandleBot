@@ -6,7 +6,7 @@ import { TEST_USER_ID, finalRecordingsMessage } from './config.js';
 import {
   sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames, getAudioDuration,
   loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, sendTestDM, deleteGameData,
-  playAudioFromUrl } from './utils.js';
+  playAudioFromUrl, playRandomConflictSound } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
@@ -152,12 +152,15 @@ client.on('messageCreate', async (message) => {
   const command = args.shift().toLowerCase();
 
   if (message.channel.type === ChannelType.DM) {
-    if (message.content.startsWith(prefix))
+    if (message.content.startsWith(prefix)) {
       console.log('Command:', message.content, 'from', userName, 'in a Direct Message.');
+    }
 
     if (isTesting && command.startsWith('test')) {
       if (command === 'testrecording') {
         await testRecordingCommand(message, args);
+      } else if (command === 'testdicesounds') {
+        await testDiceSounds(message, args);
       } else {
         await message.author.send(`Test command: \`.${command}\` not implemented.`);
       }
@@ -533,7 +536,89 @@ export async function playRecordings(message) {
 }
 
 export async function testRecordingCommand(message, args) {
-  throw "Not Implemented";
+  const targetChannelId = args[0];
+  const targetChannel = client.channels.cache.get(targetChannelId);
+
+  if (!targetChannel) {
+    await message.channel.send(`Could not find channel with ID: ${targetChannelId}`);
+    return;
+  }
+
+  if (targetChannel.type !== ChannelType.GuildText && targetChannel.type !== ChannelType.GuildVoice) {
+    await message.channel.send(`Channel ${targetChannel.name} is not a valid text or voice channel.`);
+    return;
+  }
+
+  if (targetChannel.type === ChannelType.GuildVoice) {
+    const existingConnection = getVoiceConnection(targetChannel.guild.id);
+    if (!existingConnection) {
+      // If not connected, join the voice channel
+      joinVoiceChannel({
+        channelId: targetChannelId,
+        guildId: targetChannel.guild.id,
+        adapterCreator: targetChannel.guild.voiceAdapterCreator,
+      });
+      console.log(`Joined voice channel: ${targetChannel.name}`);
+    }
+  }
+}
+
+async function testDiceSounds(message, args) {
+  try {
+    const channelId = args[0];
+
+    // Try to get the channel from the cache first
+    let voiceChannel = client.channels.cache.get(channelId);
+
+    // If not found in cache, fetch it from the API
+    if (!voiceChannel) {
+      try {
+        voiceChannel = await client.channels.fetch(channelId);
+      } catch (error) {
+        await message.channel.send(`Voice channel with ID ${channelId} not found.`);
+        return;
+      }
+    }
+
+    if (!voiceChannel) {
+      await message.channel.send(`Voice channel with ID ${channelId} not found.`);
+      return;
+    }
+
+    const guildId = voiceChannel.guildId;
+
+    if (!guildId) {
+      await message.channel.send(`Could not determine guild ID from channel ID ${channelId}.`);
+      return;
+    }
+
+    // Get the guild object
+    const guild = client.guilds.cache.get(guildId);
+
+    if (!guild) {
+      await message.channel.send(`Guild with ID ${guildId} not found.`);
+      return;
+    }
+
+    if (voiceChannel.type !== ChannelType.GuildVoice) {
+      await message.channel.send(`Channel ${channelId} is not a voice channel.`);
+      return;
+    }
+
+    const existingConnection = getVoiceConnection(guildId);
+    if (!existingConnection) {
+      joinVoiceChannel({
+        channelId: channelId,
+        guildId: guildId,
+        adapterCreator: guild.voiceAdapterCreator,
+      });
+    }
+
+    await playRandomConflictSound(voiceChannel);
+    await message.channel.send('Sending the playRandomConflictSound() call.');
+  } catch (error) {
+    await message.channel.send('An error occurred while testing dice sounds.');
+  }
 }
 
 client.login(process.env.DISCORD_TOKEN);

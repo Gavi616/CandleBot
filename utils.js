@@ -15,6 +15,8 @@ import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType
 import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks } from './config.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { isTesting } from './index.js';
+import path from 'path';
+import { fileURLToPath } from 'url';
 
 export const gameData = {};
 export const blocklist = {};
@@ -46,6 +48,69 @@ export function setGameData(channelId, data) {
 
 export function deleteGameData(channelId) {
   delete gameData[channelId];
+}
+
+export async function playRandomConflictSound(voiceChannel) {
+  try {
+    if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
+      console.error(`Invalid voice channel.`);
+      return;
+    }
+
+    const connection = getVoiceConnection(voiceChannel.guild.id);
+
+    if (!connection) {
+      console.error(`Not connected to a voice channel.`);
+      return;
+    }
+    
+    // Get the directory name of the current module
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+
+    // Construct the path to the audio files directory
+    const audioFilesDir = path.join(__dirname, 'audio_files');
+
+    // Get a list of all files in the audio_files directory
+    const files = fs.readdirSync(audioFilesDir);
+
+    // Filter for files matching the pattern 'two_[number].mp3'
+    const conflictSounds = files.filter(file => file.startsWith('two_') && file.endsWith('.mp3'));
+
+    if (conflictSounds.length === 0) {
+      console.error('No conflict sound files found.');
+      return;
+    }
+
+    // Select a random sound file
+    const randomSound = conflictSounds[Math.floor(Math.random() * conflictSounds.length)];
+    const soundFilePath = path.join(audioFilesDir, randomSound);
+
+    // Create an audio resource from the file
+    const resource = createAudioResource(soundFilePath);
+
+    // Create an audio player and play the resource
+    const player = createAudioPlayer();
+    player.play(resource);
+    connection.subscribe(player);
+
+    player.on('error', error => {
+      console.error('Error playing conflict sound:', error);
+    });
+
+    // Wait for the sound to finish playing
+    await new Promise((resolve, reject) => {
+      player.on(AudioPlayerStatus.Idle, () => {
+        resolve();
+      });
+
+      player.on('error', (error) => {
+        reject(error);
+      });
+    });
+  } catch (error) {
+    console.error('Error in playRandomConflictSound:', error);
+  }
 }
 
 export async function requestConsent(user, prompt, yesId, noId, time, title = 'Consent Required') {

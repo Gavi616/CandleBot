@@ -5,21 +5,36 @@ import {
   createAudioPlayer,
   createAudioResource,
   AudioPlayerStatus,
-  getVoiceConnection
+  getVoiceConnection,
+  StreamType
 } from '@discordjs/voice';
 import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js';
-import { defaultPlayerGMBrinks, defaultThreatBrinks } from './config.js';
+import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks } from './config.js';
+import { sendCharacterGenStep } from './chargen.js';
+import { isTesting } from './index.js';
+
+export const gameData = {};
+export const blocklist = {};
+
+export async function sendTestDM(client, message) {
+  if (isTesting) {
+    try {
+      const testUser = await client.users.fetch(TEST_USER_ID);
+      await testUser.send(message);
+      console.log(`Sent test DM to ${testUser.tag}`);
+    } catch (error) {
+      console.error(`Error sending test DM:`, error);
+    }
+  }
+}
 
 function assignRandomBrink(isThreat = false) {
   const brinks = isThreat ? defaultThreatBrinks : defaultPlayerGMBrinks;
   return brinks[Math.floor(Math.random() * brinks.length)];
 }
-
-export const gameData = {};
-export const blocklist = {};
 
 export function getGameData(channelId) {
   return gameData[channelId];
@@ -480,33 +495,6 @@ export async function sendConsentConfirmation(user, game, type, serverName, chan
   }
 }
 
-export async function slowType(channel, text, charDelay = 50, wordDelay = 500) {
-  if (typeof text !== 'string' || text.trim() === '') {
-    console.warn('slowType: Received empty or invalid text. Skipping slow typing.');
-    return;
-  }
-
-  let currentMessage = '';
-  const words = text.split(' ');
-  const sentMessage = await channel.send('...');
-
-  for (let i = 0; i < words.length; i++) {
-    const word = words[i];
-    for (const char of word) {
-      currentMessage += char;
-      await sentMessage.edit(currentMessage);
-      const randomCharDelay = charDelay + Math.floor(Math.random() * 50);
-      await new Promise(resolve => setTimeout(resolve, randomCharDelay));
-    }
-    if (i < words.length - 1) {
-      currentMessage += ' ';
-      await sentMessage.edit(currentMessage);
-      const randomWordDelay = wordDelay + Math.floor(Math.random() * 200);
-      await new Promise(resolve => setTimeout(resolve, randomWordDelay));
-    }
-  }
-}
-
 export async function playAudioFromUrl(url, voiceChannel) {
   try {
     if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
@@ -514,21 +502,26 @@ export async function playAudioFromUrl(url, voiceChannel) {
       return;
     }
 
-    const connection = joinVoiceChannel({
-      channelId: voiceChannel.id,
-      guildId: voiceChannel.guild.id,
-      adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-    });
+    const connection = getVoiceConnection(voiceChannel.guild.id);
 
-    if (!ytdl.validateURL(url)) {
-      console.error(`Invalid URL: ${url}`);
+    if (!connection) {
+      console.error(`Not connected to a voice channel.`);
       return;
     }
 
-    const stream = ytdl(url, { filter: 'audioonly' });
+    let resource;
+    if (ytdl.validateURL(url)) {
+      // Handle YouTube URLs
+      const stream = ytdl(url, { filter: 'audioonly' });
+      resource = createAudioResource(stream);
+    } else {
+      // Handle other URLs (like Discord attachments)
+      resource = createAudioResource(url, {
+        inputType: StreamType.OggOpus,
+      });
+    }
 
     const player = createAudioPlayer();
-    const resource = createAudioResource(stream);
     player.play(resource);
     connection.subscribe(player);
 
@@ -547,6 +540,17 @@ export async function playAudioFromUrl(url, voiceChannel) {
     });
   } catch (error) {
     console.error('Error in playAudioFromUrl:', error);
+  }
+}
+
+export async function getAudioDuration(url) {
+  try {
+    const info = await getInfo(url);
+    const durationSeconds = parseInt(info.videoDetails.lengthSeconds);
+    return durationSeconds * 1000; // Convert to ms
+  } catch (error) {
+    console.error(`Error getting audio duration for ${url}:`, error);
+    return null;
   }
 }
 

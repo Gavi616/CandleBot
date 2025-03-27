@@ -1,12 +1,12 @@
 import 'dotenv/config';
-import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, PermissionsBitField, AttachmentBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, MessageMentions, PermissionsBitField, AttachmentBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
-import { finalRecordingsMessage } from './config.js';
+import { TEST_USER_ID, finalRecordingsMessage } from './config.js';
 import {
-  sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames,
-  loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, slowType
-} from './utils.js';
+  sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames, getAudioDuration,
+  loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, sendTestDM, deleteGameData,
+  playAudioFromUrl } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
@@ -16,14 +16,14 @@ import { removePlayer } from './commands/removeplayer.js';
 import { leaveGame } from './commands/leavegame.js';
 import { cancelGame } from './commands/cancelgame.js';
 import { died } from './commands/died.js';
-import { createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel, AudioPlayerStatus } from '@discordjs/voice';
+import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
 const version = '0.9.933a';
 const botName = 'Ten Candles Bot';
-const isTesting = false;
+export const isTesting = false;
 let botRestarted = false;
 
 client.once('ready', async () => {
@@ -44,6 +44,7 @@ client.once('ready', async () => {
 
   if (isTesting) {
     console.log('-- Testing Mode Engaged! --');
+    await sendTestDM(client, 'Listening for test commands.');
     return;
   }
 
@@ -51,7 +52,6 @@ client.once('ready', async () => {
   loadGameData();
   printActiveGames();
 
-  // Check for a restart
   if (!isTesting) {
     if (Object.keys(gameData).length > 0) {
       botRestarted = true;
@@ -61,11 +61,24 @@ client.once('ready', async () => {
         if (channel) {
           await channel.send(`**${botName}** has restarted and found one or more games in-progress.`);
           if (game.characterGenStep < 9) {
-            await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs multiple times in a row, contact the developer.*");
+            await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs repeatedly, contact the developer and/or consider using `.cancelgame`*");
             await sendCharacterGenStep(channel, game);
+          } else if (game.inLastStand) {
+            if (Object.values(game.players).every(player => player.isDead)) {
+              if (game.endGame) {
+                await channel.send("The game has ended. Restarting **Session Data Management** processes.");
+                await cancelGame(channel);
+              } else {
+                await channel.send("All characters are dead. Restarting the **Final Recordings**.");
+                await playRecordings(channel);
+              }
+            } else {
+              await gameStatus(channel);
+              await channel.send("We are in **The Last Stand**. GM continues narration until all characters have `.died @PlayerId [cause]`");
+            }
           } else {
             await gameStatus(channel);
-            await channel.send("Players can use `.conflict` to take action to move the game forward.");
+            await channel.send("GM continues narration until a Player uses `.conflict` to move the story forward.");
           }
         }
       }
@@ -135,9 +148,20 @@ client.on('messageCreate', async (message) => {
   const userId = message.author.id;
   const userName = message.author.username;
 
+  const args = message.content.slice(prefix.length).split(/ +/);
+  const command = args.shift().toLowerCase();
+
   if (message.channel.type === ChannelType.DM) {
     if (message.content.startsWith(prefix))
       console.log('Command:', message.content, 'from', userName, 'in a Direct Message.');
+
+    if (isTesting && command.startsWith('test')) {
+      if (command === 'testrecording') {
+        await testRecordingCommand(message, args);
+      } else {
+        await message.author.send(`Test command: \`.${command}\` not implemented.`);
+      }
+    }
 
     if (message.content.toLowerCase() === '.x') {
       const game = getGameData(channelId);
@@ -420,36 +444,12 @@ export async function setTheme(message, args) {
   }
 }
 
-async function playAudioFromUrl(url, voiceChannel) {
-  return new Promise((resolve, reject) => {
-    const connection = getVoiceConnection(voiceChannel.guild.id);
-    if (!connection) {
-      reject(new Error('Not connected to a voice channel.'));
-      return;
-    }
-
-    const player = createAudioPlayer();
-    const resource = createAudioResource(url);
-
-    player.play(resource);
-    connection.subscribe(player);
-
-    player.on(AudioPlayerStatus.Idle, () => {
-      resolve();
-    });
-
-    player.on('error', (error) => {
-      reject(error);
-    });
-  });
-}
-
 export async function playRecordings(message) {
   const channelId = message.channel.id;
   const game = gameData[channelId];
   const players = game.players;
 
-  message.channel.send('The final scene fades to black. The story is over. Your final recordings will play after a moment of silence.');
+  message.channel.send(finalRecordingsMessage);
 
   // Total of 13 second 'moment of silence'
   await new Promise(resolve => setTimeout(resolve, 10000));
@@ -459,57 +459,8 @@ export async function playRecordings(message) {
 
   async function playNextRecording(index) {
     if (index >= playerIds.length) {
-      // All recordings have been played. Now prompt the Initiator.
-      const initiator = await message.guild.members.fetch(game.initiatorId);
-      const dmChannel = await initiator.user.createDM();
-
-      const dataEmbed = new EmbedBuilder()
-        .setColor(0x0099FF)
-        .setTitle('Game Data Management')
-        .setDescription(`Your Ten Candles session in <#${channelId}> has concluded. Are you ready to delete all session data?`);
-
-      const row = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId('delete_data')
-            .setLabel('Yes, delete')
-            .setStyle(ButtonStyle.Danger),
-          new ButtonBuilder()
-            .setCustomId('send_data')
-            .setLabel('Send it to me, then delete')
-            .setStyle(ButtonStyle.Primary),
-        );
-
-      const dataMessage = await dmChannel.send({ embeds: [dataEmbed], components: [row] });
-
-      const dataFilter = (interaction) => interaction.user.id === game.initiatorId && interaction.message.id === dataMessage.id; // Check for initiator's ID
-      const dataCollector = dmChannel.createMessageComponentCollector({ filter: dataFilter, time: 600000 }); // 10 minutes seems like ample time
-
-      dataCollector.on('collect', async (interaction) => {
-        await interaction.deferUpdate();
-        if (interaction.customId === 'delete_data') {
-          delete gameData[channelId];
-          saveGameData();
-          await interaction.editReply({ content: 'Game data has been deleted.', embeds: [], components: [] });
-        } else if (interaction.customId === 'send_data') {
-          const gameDataString = JSON.stringify(gameData[channelId], null, 2);
-          const buffer = Buffer.from(gameDataString, 'utf-8');
-          const attachment = new AttachmentBuilder(buffer, { name: `gameData-${channelId}-${new Date().toISOString()}.json` });
-          delete gameData[channelId];
-          saveGameData();
-          await interaction.editReply({ content: `Game data has been sent to you as a JSON file.`, embeds: [], components: [] });
-          await dmChannel.send({ content: `Please save the attached file to your computer.`, files: [attachment] });
-        }
-        dataCollector.stop();
-      });
-
-      dataCollector.on('end', async (collected, reason) => {
-        if (reason === 'time') {
-          delete gameData[channelId];
-          saveGameData();
-          await dataMessage.edit({ content: 'No response was recorded, Game data has been removed.', embeds: [], components: [] });
-        }
-      });
+      // All recordings have been played
+      await cancelGame(message);
       return;
     }
 
@@ -519,10 +470,11 @@ export async function playRecordings(message) {
       if (players[userId].recording) {
         if (game.gameMode === 'voice-plus-text') {
           const voiceChannelId = game.voiceChannelId;
+          const voiceChannel = client.channels.cache.get(voiceChannelId);
 
+          // Voice Channel Connection Check
           const existingConnection = getVoiceConnection(message.guild.id);
           if (!existingConnection) {
-            const voiceChannel = client.channels.cache.get(voiceChannelId);
             if (voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
               try {
                 joinVoiceChannel({
@@ -545,28 +497,31 @@ export async function playRecordings(message) {
 
           if (players[userId].recording.startsWith('http')) {
             try {
-              const voiceChannel = client.channels.cache.get(voiceChannelId);
+              message.channel.send(`Playing *${players[userId].name}'s final message...*`);
               await playAudioFromUrl(players[userId].recording, voiceChannel);
-              message.channel.send(`Recording for <@${userId}>: (Audio Played)`);
             } catch (error) {
               console.error(`Error playing audio recording for ${userId}:`, error);
               message.channel.send(`Error playing recording for <@${userId}>. Check console for details.`);
             }
           } else {
-            message.channel.send(`Recording for <@${userId}>:\n*<@${userId}>'s final message...*`);
-            slowType(message.channel, players[userId].recording);
+            message.channel.send(`Playing *${players[userId].name}'s final message...*`);
+            message.channel.send(players[userId].recording);
           }
         } else {
           // Handle text-only mode logic
           if (players[userId].recording.startsWith('http')) {
-            message.channel.send(`Recording for <@${userId}>:\n${players[userId].recording}`);
+            const duration = await getAudioDuration(players[userId].recording);
+            message.channel.send(`Click the link to listen to ${players[userId].name}'s final message: ${players[userId].recording}`);
+            if (duration) {
+              await new Promise(resolve => setTimeout(resolve, duration));
+            }
           } else {
-            message.channel.send(`Recording for <@${userId}>:\n*<@${userId}>'s final message...*`);
-            slowType(message.channel, players[userId].recording);
+            message.channel.send(`Playing *${players[userId].name}'s final message...*`);
+            message.channel.send(players[userId].recording);
           }
         }
       } else {
-        message.channel.send(`No playable recording for <@${userId}>.`);
+        message.channel.send(`No playable recording found for <@${userId}> / ${players[userId].name}.`);
       }
 
       await playNextRecording(index + 1);
@@ -575,6 +530,10 @@ export async function playRecordings(message) {
 
   await playNextRecording(0);
   saveGameData();
+}
+
+export async function testRecordingCommand(message, args) {
+  throw "Not Implemented";
 }
 
 client.login(process.env.DISCORD_TOKEN);

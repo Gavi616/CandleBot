@@ -40,7 +40,8 @@ export const gameDataSchema = Joi.object({
   gmId: Joi.string().pattern(/^\d+$/).required(),
   channelId: Joi.string().pattern(/^\d+$/).required(),
   diceLost: Joi.number().integer().min(0).required(),
-  lastSaved: Joi.string().isoDate().optional()
+  lastSaved: Joi.string().isoDate().optional(),
+  endGame: Joi.boolean().optional()
 });
 
 export function validateGameData(data, schema) {

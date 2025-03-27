@@ -4,6 +4,7 @@ import { saveGameData, requestConsent, sendDM, sendConsentConfirmation } from '.
 import { client } from '../index.js';
 import { ChannelType } from 'discord.js';
 import { CONSENT_TIMEOUT } from '../config.js';
+import { setGameData } from '../utils.js';
 
 export async function startGame(message, gameData) {
     const channelId = message.channel.id;
@@ -18,6 +19,11 @@ export async function startGame(message, gameData) {
     } else {
         gameMode = "text-only";
     }
+
+    if (!gameData[channelId]) {
+        gameData[channelId] = {};
+    }
+    setGameData(channelId, gameData[channelId]);
 
     const validationResult = validateGameSetup(message);
 

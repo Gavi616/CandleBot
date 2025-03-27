@@ -5,6 +5,8 @@ export const SACRIFICE_TIMEOUT = 60000;
 export const BRINK_TIMEOUT = 60000;
 export const TIME_INTERVAL = 15000;
 
+export const TEST_USER_ID = '583340515869589522';
+
 export const defaultVirtues = [
   'courageous', 'compassionate', 'just', 'wise', 'temperate', 'hopeful', 'faithful', 'loving', 'loyal', 'honest',
   'generous', 'patient', 'diligent', 'forgiving', 'kind', 'optimistic', 'reliable', 'respectful', 'selfless', 'sincere',

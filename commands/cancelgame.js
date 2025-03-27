@@ -1,16 +1,18 @@
-import { gameData, saveGameData } from '../utils.js';
+import { gameData, getGameData, saveGameData, sendDM } from '../utils.js';
 import { CANCEL_TIMEOUT } from '../config.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { client } from '../index.js';
 
 export async function cancelGame(message) {
   const channelId = message.channel.id;
-  if (!gameData[channelId]) {
-    message.channel.send('No game is in progress in this channel.');
+  const game = getGameData(channelId);
+
+  if (!game) {
+    message.channel.send('No game in progress.');
     return;
   }
-  const gmId = gameData[channelId].gmId;
 
-  if (message.author.id !== gmId) {
+  if (game.gmId !== message.author.id) {
     try {
       await message.author.send({ content: 'Only the GM can use this command.' });
       await message.delete();
@@ -20,64 +22,54 @@ export async function cancelGame(message) {
     return;
   }
 
-  try {
-    const gm = message.guild.members.cache.get(gmId);
-    const dmChannel = await gm.user.createDM();
+  const initiator = await message.guild.members.fetch(game.initiatorId);
+  const dmChannel = await initiator.user.createDM();
 
-    const consentEmbed = new EmbedBuilder()
-      .setColor(0x0099FF)
-      .setTitle('Cancel Game Confirmation')
-      .setDescription(`Are you sure you want to cancel the game in #${message.channel.name}?`);
+  const dataEmbed = new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle('Game Data Management')
+    .setDescription(`Your Ten Candles session in <#${channelId}> has been cancelled. Are you ready to delete all session data?`);
 
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId('cancel_game_yes')
-          .setLabel('Yes')
-          .setStyle(ButtonStyle.Danger),
-        new ButtonBuilder()
-          .setCustomId('cancel_game_no')
-          .setLabel('No')
-          .setStyle(ButtonStyle.Secondary)
-      );
+  const row = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('delete_data')
+        .setLabel('Yes, delete')
+        .setStyle(ButtonStyle.Danger),
+      new ButtonBuilder()
+        .setCustomId('send_data')
+        .setLabel('Send it to me, then delete')
+        .setStyle(ButtonStyle.Primary),
+    );
 
-    const initialMessage = await gm.user.send({
-      embeds: [consentEmbed],
-      components: [row],
-    });
+  const dataMessage = await dmChannel.send({ embeds: [dataEmbed], components: [row] });
 
-    const filter = (interaction) =>
-      interaction.user.id === gmId && interaction.message.id === initialMessage.id;
+  const dataFilter = (interaction) => interaction.user.id === game.initiatorId && interaction.message.id === dataMessage.id; // Check for initiator's ID
+  const dataCollector = dmChannel.createMessageComponentCollector({ filter: dataFilter, time: 600000 }); // 10 minutes seems like ample time
 
-    const collector = dmChannel.createMessageComponentCollector({
-      filter: filter,
-      time: CANCEL_TIMEOUT,
-    });
+  dataCollector.on('collect', async (interaction) => {
+    await interaction.deferUpdate();
+    if (interaction.customId === 'delete_data') {
+      delete gameData[channelId];
+      saveGameData();
+      await interaction.editReply({ content: 'Game data has been deleted.', embeds: [], components: [] });
+    } else if (interaction.customId === 'send_data') {
+      const gameDataString = JSON.stringify(gameData[channelId], null, 2);
+      const buffer = Buffer.from(gameDataString, 'utf-8');
+      const attachment = new AttachmentBuilder(buffer, { name: `gameData-${channelId}-${new Date().toISOString()}.json` });
+      delete gameData[channelId];
+      saveGameData();
+      await interaction.editReply({ content: `Game data has been sent to you as a JSON file.`, embeds: [], components: [] });
+      await dmChannel.send({ content: `Please save the attached file to your computer.`, files: [attachment] });
+    }
+    dataCollector.stop();
+  });
 
-    collector.on('collect', async (interaction) => {
-      await interaction.deferUpdate();
-      if (interaction.customId === 'cancel_game_yes') {
-        delete gameData[channelId];
-        message.channel.send(`Game in #${message.channel.name} has been cancelled by the GM.`);
-        saveGameData();
-        await interaction.editReply({ content: 'Game cancelled.', embeds: [], components: [] });
-      } else if (interaction.customId === 'cancel_game_no') {
-        message.channel.send('Game cancellation was aborted by GM.');
-        await interaction.editReply({ content: 'Game cancellation aborted.', embeds: [], components: [] });
-      }
-      collector.stop();
-    });
-
-    collector.on('end', async (collected, reason) => {
-      if (reason === 'time') {
-        await gm.user.send('Cancellation confirmation timed out.');
-        message.channel.send('Game cancellation confirmation timed out.');
-      }
-    });
-  } catch (error) {
-    console.error('Error requesting GM confirmation to cancel game:', error);
-    message.channel.send('Failed to request GM confirmation. Game not cancelled.');
-  }
-
-  saveGameData();
+  dataCollector.on('end', async (collected, reason) => {
+    if (reason === 'time') {
+      delete gameData[channelId];
+      saveGameData();
+      await dataMessage.edit({ content: 'No response was recorded, Game data has been removed.', embeds: [], components: [] });
+    }
+  });
 }

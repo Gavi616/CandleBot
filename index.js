@@ -2,6 +2,7 @@ import 'dotenv/config';
 import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, PermissionsBitField, AttachmentBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
+import { finalRecordingsMessage } from './config.js';
 import {
   sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames,
   loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, slowType
@@ -20,7 +21,7 @@ import { createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceCh
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.925a';
+const version = '0.9.933a';
 const botName = 'Ten Candles Bot';
 const isTesting = false;
 let botRestarted = false;
@@ -475,7 +476,7 @@ export async function playRecordings(message) {
             .setStyle(ButtonStyle.Danger),
           new ButtonBuilder()
             .setCustomId('send_data')
-            .setLabel('Send me the data')
+            .setLabel('Send it to me, then delete')
             .setStyle(ButtonStyle.Primary),
         );
 

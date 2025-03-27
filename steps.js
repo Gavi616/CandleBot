@@ -11,14 +11,17 @@ import {
   askForMoment,
   askForBrink,
   sendCandleStatus,
-  askPlayerForCharacterInfo,
+  askForCharacterInfo,
   getDMResponse,
   sendDM,
   normalizeBrink,
   handleTraitStacking
 } from './utils.js';
 import { client } from './index.js';
-import { TRAIT_TIMEOUT, BRINK_TIMEOUT } from './config.js';
+import {
+  TRAIT_TIMEOUT, BRINK_TIMEOUT, gameStartMessage, startingMessageGM, startingMessagePlayer, stepOneMessage, stepTwoMessage, stepThreeMessage, stepFourMessage, stepFiveMessage, stepSixMessage, stepSevenMessage, stepSevenReminder, stepEightMessage
+} from './config.js';
+
 
 export async function prevStep(message) {
   const channelId = message.channel.id;
@@ -54,7 +57,7 @@ export async function prevStep(message) {
 
 export async function handleStepOne(gameChannel, game) {
   game.traitsRequested = true;
-  gameChannel.send(`\n**Step One: Players Write Traits**\nPlayers, check your DMs and reply with a Virtue and a Vice.`);
+  gameChannel.send(stepOneMessage);
   sendCandleStatus(gameChannel, 3);
   await new Promise(resolve => setTimeout(resolve, 5000));
   const traitPromises = [];
@@ -67,17 +70,17 @@ export async function handleStepOne(gameChannel, game) {
   game.players = swappedTraits;
   game.characterGenStep++;
   saveGameData();
-  gameChannel.send('Traits have now been swapped. Players, check your DMs and look over the Virtue and Vice you have received.');
+  gameChannel.send('Traits have now been swapped.\nPlayers, check your DMs and look over the Virtue and Vice you have received.');
   await new Promise(resolve => setTimeout(resolve, 3000));
   sendCharacterGenStep(gameChannel, game);
 }
 
 export async function handleStepTwo(gameChannel, game) {
-  gameChannel.send('**Step Two: GM Introduces this session\'s Module / Theme**\nThe GM will now introduce the module/theme and then use `.theme [description]` to advance to Step Three');
+  gameChannel.send(stepTwoMessage);
 }
 
 export async function handleStepThree(gameChannel, game) {
-  gameChannel.send(`**Step Three: Players Create Concepts**\nPlayers, expect a DM and respond with your character\'s Name, Look and Concept, in that order as three separate messages.`);
+  gameChannel.send(stepThreeMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
   await getCharacterInfo(gameChannel, gameChannel.id);
   game.characterGenStep++;
@@ -85,21 +88,8 @@ export async function handleStepThree(gameChannel, game) {
   sendCharacterGenStep(gameChannel, game);
 }
 
-async function getCharacterInfo(gameChannel, channelId) {
-  const game = getGameData(channelId);
-  const playerOrder = game.playerOrder;
-  const infoPromises = playerOrder.map(async (playerId) => {
-    const player = await gameChannel.guild.members.fetch(playerId);
-    const user = player.user;
-    await askPlayerForCharacterInfo(user, game, playerId, 'name', "What's your character's name or nickname?", 60000);
-    await askPlayerForCharacterInfo(user, game, playerId, 'look', 'What does your character look like at a quick glance?', 60000);
-    await askPlayerForCharacterInfo(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
-  });
-  await Promise.all(infoPromises);
-}
-
 export async function handleStepFour(gameChannel, game) {
-  gameChannel.send(`**Step Four: Players Plan Moments**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.`);
+  gameChannel.send(stepFourMessage);
   sendCandleStatus(gameChannel, 6);
   await new Promise(resolve => setTimeout(resolve, 5000));
   const momentPromises = game.playerOrder.map(async (playerId) => {
@@ -114,7 +104,7 @@ export async function handleStepFour(gameChannel, game) {
 }
 
 export async function handleStepFive(gameChannel, game) {
-  gameChannel.send(`**Step Five: Players and GM Discover Brinks**\nCheck your DMs for personalized instructions on this step.`);
+  gameChannel.send(stepFiveMessage);
   sendCandleStatus(gameChannel, 9);
   await new Promise(resolve => setTimeout(resolve, 5000));
   let brinkOrder = getVirtualTableOrder(game, true);
@@ -179,7 +169,7 @@ export async function handleStepFive(gameChannel, game) {
 }
 
 export async function handleStepSix(gameChannel, game) {
-  gameChannel.send('**Step Six: Arrange Trait Stacks**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. See your DMs to confirm your stack order.');
+  gameChannel.send(stepSixMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
   const stackPromises = [];
   for (const playerId of game.playerOrder) {
@@ -192,7 +182,7 @@ export async function handleStepSix(gameChannel, game) {
 }
 
 export async function handleStepSeven(gameChannel, game) {
-  gameChannel.send('**Step Seven: Inventory Supplies**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). See your DMs to input your gear.');
+  gameChannel.send(stepSevenMessage);
   sendCandleStatus(gameChannel, 10);
   await new Promise(resolve => setTimeout(resolve, 5000));
   gameChannel.send('**It begins.**\n\n*For the remainder of the session, you should endeavor to act in-character.*');
@@ -200,14 +190,14 @@ export async function handleStepSeven(gameChannel, game) {
   for (const playerId of game.playerOrder) {
     const player = await gameChannel.guild.members.fetch(playerId);
     const user = player.user;
-    gearPromises.push(user.send('Please use `.gear gear item1, item2, ...` to input your gear.'));
+    gearPromises.push(user.send('Please use `.gear item1, item2, ...` to input your gear.'));
   }
   await Promise.all(gearPromises);
   saveGameData();
 }
 
 export async function handleStepEight(gameChannel, game) {
-  gameChannel.send('**Final Recordings**\nPlayers, please check your DMs for instructions on sending your final recordings.');
+  gameChannel.send(stepEightMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
   const players = game.players;
   const gameMode = game.gameMode;
@@ -237,16 +227,7 @@ export async function handleStepEight(gameChannel, game) {
 }
 
 export async function handleStepNine(gameChannel, game) {
-  gameChannel.send(
-    '**Game Start**\n' +
-    'Character generation is complete! Ten candles are lit, and the game begins.\n\n' +
-    '**How to Use `.conflict`:**\n' +
-    'Use the `.conflict` command to perform actions. Use modifiers such as `-burnvirtue`, `-burnvice` and `-burnmoment` as needed.\n' +
-    'Buring a Virtue or Vice from the top of your stack allows your `.conflict` to reroll all ones.\n' +
-    'Buring your Moment from the top of your stack will give you a valuable Hope die if the `.conflict` succeeds!\n' +
-    'Example(s): `.conflict` or `.conflict -burnvice`\n\n' +
-    'Candles will be extinguished as the scenes progress.'
-  );
+  gameChannel.send(gameStartMessage);
   game.dicePool = 10;
   game.scene = 1;
   sendCandleStatus(gameChannel, 10);
@@ -254,24 +235,7 @@ export async function handleStepNine(gameChannel, game) {
   const commandUsagePromises = game.playerOrder.map(async (playerId) => {
       try {
         const player = await gameChannel.guild.members.fetch(playerId);
-        const playerMessage = `**Ten Candles Game Mechanics**
-  Resolving a Conflict: Use \`.conflict\` after you have declared the action you'd like to take to roll the communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).
-  Burning Traits: A trait can be burned in order to reroll all dice which come up 1 in a conflict.
-  Moment: If you live your Moment successfully, gain a Hope Die to add to your conflict rolls.
-  Hope Die: A Hope Die succeeds on a 5 or a 6.
-  Brink: After all else has burned away, whenever you embrace your Brink, reroll all dice. If the conflict roll still fails, you lose your Hope die (if you had one).
-  Dire Conflicts: The GM may decide that a particular conflict roll will be dire. If they do so, you may either withdraw their action or press onward. If you press onward a success is handled normally, but a failure may result in permanent damage to your character (mental or physical).
-  Narration Rights: If you rolled more 6’s than the GM, you may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren’t playing to win, but to tell a good story. If the GM tied your roll or rolled more 6’s, the GM may describe what happens as a result of the conflict. If you fail a conflict roll, you may take over narration at any time, but the cost is your character's life.
-  Darkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.
-  Changing Scenes: Any time a candle darkens and a new scene begins, three events occur.
-  Transition: The GM transitions out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.
-  Establishing Truths:
-  These things are true. The world is dark.
-  Establish # truths equal to lit candles.
-  Truths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped.", "Our flashlights illuminated the water, but there were no waves." or "We filled the pickup’s tank by mouth-siphoning gas from cars on the highway".
-  After the last truth everyone left alive speaks, “and we are alive.”
-  Dice Pools Refresh: The Players’ pool of dice refills to the number of lit candles. The Players’ pool of dice refills to the number of lit candles. The GM’s pool equals the number of unlit candles.`;
-        await player.user.send(playerMessage);
+        await player.user.send(startingMessagePlayer);
       } catch (error) {
         console.error(`Error DMing player ${playerId}:`, error);
         gameChannel.send(`Could not DM player ${playerId} for command usage message.`);
@@ -280,27 +244,23 @@ export async function handleStepNine(gameChannel, game) {
 
   try {
     const gm = await gameChannel.guild.members.fetch(game.gmId);
-    const gmMessage = `**Ten Candles Game Mechanics**
-Resolving a Conflict: Players use \`.conflict\` to roll a communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).
-Burning Traits: A player may burn a Trait to reroll all dice which come up 1 in a conflict.
-Moment: If a player lives their Moment successfully, they gain a Hope Die to add to their conflict rolls.
-Hope Die: A Hope Die succeeds on a 5 or a 6.
-Brink: After all else has burned away, whenever a player embraces their Brink, they reroll all dice. If the conflict roll still fails, they lose their Hope die (if they had one).
-Dire Conflicts: You may decide that a particular conflict roll will be dire. The player may either withdraw their action or press onward. If they press onward a success is handled normally, but a failure may result in permanent damage to the character (mental or physical).
-Narration Rights: If the player rolled more 6’s than you (the GM), that player may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren’t playing to win, but to tell a good story. If you (the GM) tied the player's roll or rolled more 6’s than the player, you (the GM) may describe what happens as a result of the conflict. A player who fails a conflict roll may take over narration at any time, the cost is their character's life.
-Darkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.
-Changing Scenes: Any time a candle darkens and a new scene begins, three events occur.
-Transition: You (the GM) transition the players out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.
-Establishing Truths:
-These things are true. The world is dark.
-Establish # truths equal to lit candles.
-Truths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped"; "Our flashlights illuminated the water, but there were no waves."; or "We filled the pickup’s tank by mouth-siphoning gas from cars on the highway").
-After the last truth everyone left alive speaks, “and we are alive.”
-Dice Pools Refresh: The Players’ pool of dice refills to the number of lit candles. The GM’s pool equals the number of unlit candles.`;
-    await gm.user.send(gmMessage);
+    await gm.user.send(startingMessageGM);
   } catch (error) {
     console.error(`Error DMing GM ${game.gmId}:`, error);
     gameChannel.send(`Could not DM the GM ${game.gmId} for command usage message.`);
   }
   await Promise.all(commandUsagePromises);
+}
+
+async function getCharacterInfo(gameChannel, channelId) {
+  const game = getGameData(channelId);
+  const playerOrder = game.playerOrder;
+  const infoPromises = playerOrder.map(async (playerId) => {
+    const player = await gameChannel.guild.members.fetch(playerId);
+    const user = player.user;
+    await askForCharacterInfo(user, game, playerId, 'name', "What's your character's name or nickname?", 60000);
+    await askForCharacterInfo(user, game, playerId, 'look', 'What does your character look like at a quick glance?', 60000);
+    await askForCharacterInfo(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
+  });
+  await Promise.all(infoPromises);
 }

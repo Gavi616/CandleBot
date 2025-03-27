@@ -10,10 +10,10 @@ import {
 import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js'; // Add this line
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js';
 import { defaultPlayerGMBrinks, defaultThreatBrinks } from './config.js';
 
-function getRandomBrink(isThreat = false) {
+function assignRandomBrink(isThreat = false) {
   const brinks = isThreat ? defaultThreatBrinks : defaultPlayerGMBrinks;
   return brinks[Math.floor(Math.random() * brinks.length)];
 }
@@ -182,15 +182,15 @@ export async function sendDM(user, message) {
   }
 }
 
-export async function askPlayerForCharacterInfo(user, game, playerId, field, question, time) {
+export async function askForCharacterInfo(user, game, playerId, field, question, time) {
   let input;
-  try {
+  while (true) {
     const response = await getDMResponse(user, question, time, m => m.author.id === playerId);
     if (response) {
-      input = response;
+      input = response.trim();
       if (!input) {
         await user.send('Invalid input. Please provide a non-empty value.');
-        return;
+        continue;
       }
       input = sanitizeString(input);
       if (field === 'name') {
@@ -198,16 +198,18 @@ export async function askPlayerForCharacterInfo(user, game, playerId, field, que
       } else {
         input = normalizeSentence(input);
       }
-      game.players[playerId][field] = input;
-      await user.send(`Your character's ${field} has been recorded as: ${game.players[playerId][field]}`);
-      return;
+      const confirmation = await confirmInput(user, `Is this correct?\n${input}`, time);
+      if (confirmation) {
+        game.players[playerId][field] = input;
+        await user.send(`Your character's ${field} has been recorded.`);
+        return;
+      } else {
+        continue;
+      }
     } else {
-      await user.send(`You timed out. Please provide your ${field} again.`);
-      return;
+      await user.send(`Request timed out. Please provide your ${field} again.`);
+      continue;
     }
-  } catch (error) {
-    console.error(`Error in askPlayerForCharacterInfo:`, error);
-    await user.send(`An error occurred. Please try again.`);
   }
 }
 
@@ -219,10 +221,17 @@ export async function askForTraits(message, gameChannel, game, playerId) {
   do {
     const response = await getDMResponse(user, 'Please send a Virtue and a Vice, separated by a comma (e.g., "courageous, greedy").\nEach should be a single vague but descriptive adjective. (e.g. Sharpshooter => Steady)\nVirtues solve more problems than they create.\nVices cause more problems than they solve.', TRAIT_TIMEOUT, m => m.author.id === playerId, "Request for Traits");
     if (response) {
-      [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
-      virtue = normalizeVirtueVice(virtue);
-      vice = normalizeVirtueVice(vice);
-      const confirmation = await confirmInput(user, `Are you happy with this Virtue: ${virtue} and Vice: ${vice}?`, TRAIT_TIMEOUT, "Confirm these Traits");
+        if (response.trim() === "?") {
+            virtue = getRandomVirtue();
+            vice = getRandomVice();
+            await user.send(`Random traits have been assigned:\nVirtue: ${virtue}\nVice: ${vice}`);
+        } else {
+            [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
+            virtue = normalizeVirtueVice(virtue);
+            vice = normalizeVirtueVice(vice);
+        }
+
+      const confirmation = await confirmInput(user, `Are you happy with these Traits?\nVirtue: ${virtue}\nVice: ${vice}`, TRAIT_TIMEOUT, "Confirm these Traits");
       if (!confirmation) {
         continue;
       }
@@ -240,36 +249,30 @@ export async function askForTraits(message, gameChannel, game, playerId) {
   } while (true);
 }
 
-export async function askForMoment(user, game, playerId, time, retryCount = 0) {
+export async function askForMoment(user, game, playerId, time) {
   let input;
-  try {
-    const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would be reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
+  while (true) {
+    const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
     if (response) {
-      input = response;
+        if (response.trim() === "?") {
+            assignRandomMoment(user, game.players[playerId]);
+            return;
+        }
+      input = response.trim();
       if (!input) {
         await user.send('Invalid Moment. Please provide a non-empty value.');
-        await askForMoment(user, game, playerId, time, retryCount + 1);
-        return;
+        continue;
       }
       input = sanitizeString(input);
       input = normalizeSentence(input);
-      const confirmation = await confirmInput(user, `Are you happy with your Moment: ${input} ?`, time);
-      if (!confirmation) {
-        await askForMoment(user, game, playerId, time, retryCount + 1);
+      const confirmation = await confirmInput(user, `Are you happy with your Moment?\n${input}`, time);
+      if (confirmation) {
+        game.players[playerId].moment = input;
+        saveGameData();
         return;
+      } else {
+        continue;
       }
-      game.players[playerId].moment = input;
-      saveGameData();
-      return;
-    } else {
-      assignRandomMoment(user, game.players[playerId]);
-      return;
-    }
-  } catch (error) {
-    if (retryCount < 3) {
-      await user.send(`You timed out. Please provide your Moment again.`);
-      await askForMoment(user, game, playerId, time, retryCount + 1);
-      return;
     } else {
       assignRandomMoment(user, game.players[playerId]);
       return;
@@ -282,6 +285,20 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
   while (true) {
     const response = await getDMResponse(user, prompt, time, m => m.author.id === playerId, "Request for Brink");
     if (response) {
+        if (response.trim() === "?") {
+            if (isThreat) {
+                input = assignRandomBrink(true);
+            } else {
+                input = assignRandomBrink(false);
+            }
+            
+            const characterName = game.players[playerId].name || user.username;
+            input = normalizeBrink(input, characterName, isThreat);
+            game.players[playerId].brink = input;
+            await user.send(`A random Brink has been assigned: ${input}`);
+            saveGameData();
+            return input;
+        }
       input = response;
       if (!input) {
         await user.send('Invalid Brink. Please provide a non-empty value.');
@@ -296,7 +313,7 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
       } else {
         input = normalizeBrink(input, characterName);
       }
-      const confirmation = await confirmInput(user, `Are you happy with this Brink: ${input}?`, time, "Confirm Your Brink");
+      const confirmation = await confirmInput(user, `Are you happy with your Brink?\n${input}`, time, "Confirm Your Brink");
       if (confirmation) {
         game.players[playerId].brink = input;
         saveGameData();
@@ -552,7 +569,7 @@ export function normalizeSentence(str) {
 
 export function normalizeBrink(brink, name, isThreat = false) {
   if (brink === undefined) {
-    brink = getRandomBrink(isThreat);
+    brink = assignRandomBrink(isThreat);
   }
   if (isThreat) {
     if (!name) {

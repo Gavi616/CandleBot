@@ -78,4 +78,6 @@ export async function cancelGame(message) {
     console.error('Error requesting GM confirmation to cancel game:', error);
     message.channel.send('Failed to request GM confirmation. Game not cancelled.');
   }
+
+  saveGameData();
 }

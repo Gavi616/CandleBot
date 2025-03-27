@@ -57,4 +57,6 @@ export async function died(message, args) {
   } else {
     message.channel.send(`<@${playerIdToKill}> has died.`);
   }
+
+  saveGameData();
 }

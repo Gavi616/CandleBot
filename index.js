@@ -1,24 +1,26 @@
 import 'dotenv/config';
-import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, PermissionsBitField } from 'discord.js';
+import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, PermissionsBitField, AttachmentBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
-import { sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames,
-  loadBlocklist, saveBlocklist, gameData, blocklist, askPlayerForCharacterInfoWithRetry,
-  askForGear, addGear, removeGear, editGear } from './utils.js';
+import {
+  sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames,
+  loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, slowType
+} from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
+import { prevStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
 import { conflict } from './commands/conflict.js';
-import { prevStep } from './steps.js';
 import { gameStatus } from './commands/gamestatus.js';
 import { removePlayer } from './commands/removeplayer.js';
 import { leaveGame } from './commands/leavegame.js';
 import { cancelGame } from './commands/cancelgame.js';
 import { died } from './commands/died.js';
+import { createAudioPlayer, createAudioResource, getVoiceConnection, joinVoiceChannel, AudioPlayerStatus } from '@discordjs/voice';
 
-export const client = new Client({ intents: [ GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions ] });
+export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.922a';
+const version = '0.9.925a';
 const botName = 'Ten Candles Bot';
 const isTesting = false;
 let botRestarted = false;
@@ -57,7 +59,13 @@ client.once('ready', async () => {
         const channel = client.channels.cache.get(channelId);
         if (channel) {
           await channel.send(`**${botName}** has restarted and found one or more games in-progress.`);
-          await gamestatus(channel);
+          if (game.characterGenStep < 9) {
+            await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs multiple times in a row, contact the developer.*");
+            await sendCharacterGenStep(channel, game);
+          } else {
+            await gameStatus(channel);
+            await channel.send("Players can use `.conflict` to take action to move the game forward.");
+          }
         }
       }
       botRestarted = false;
@@ -71,14 +79,19 @@ client.on('interactionCreate', async (interaction) => {
   const game = findGameByUserId(interaction.user.id);
   if (!game) {
     console.error("Game not found for interaction.", interaction);
-    await interaction.editReply({ content: 'No game found.' });
+    if (!interaction.replied) {
+      await interaction.reply({ content: 'No game found.', ephemeral: true });
+    }
     return;
   }
+
   if (interaction.customId === 'gm_consent_yes' || interaction.customId === 'gm_consent_no' || interaction.customId === 'player_consent_yes' || interaction.customId === 'player_consent_no' || interaction.customId === 'input_yes' || interaction.customId === 'input_no') {
     return;
   }
 
-  await interaction.deferUpdate();
+  const row = ActionRowBuilder.from(interaction.message.components[0]);
+  row.components.forEach(component => component.setDisabled(true));
+  await interaction.update({ components: [row] });
 
   if (interaction.customId === 'sacrifice_yes' || interaction.customId === 'sacrifice_no') {
     if (interaction.customId === 'sacrifice_yes') {
@@ -154,48 +167,11 @@ client.on('messageCreate', async (message) => {
       }
       const player = game.players[userId];
       if (game.characterGenStep === 7) {
-        await askForGear(message.author, game, userId, args);
+        await handleGearCommand(message.author, game, userId, args);
       } else if (game.characterGenStep > 7 && !game.inLastStand) {
-        if (args[0] === 'add') {
-          await addGear(message.author, game, userId, args.slice(1).join(' '));
-        } else if (args[0] === 'remove') {
-          await removeGear(message.author, game, userId, args.slice(1).join(' '));
-        } else if (args[0] === 'edit') {
-          await editGear(message.author, game, userId, args.slice(1).join(' '));
-        } else {
-          await message.author.send(`Invalid \`.gear\` command. Use \`.gear add [item]\`, \`.gear remove [item]\`, or \`.gear edit [item]\`.`);
-        }
+        await handleGearCommand(message.author, game, userId, args);
       } else {
         await message.author.send(`The \`.gear\` command can only be used during Character Generation Step 7 or during a scene.`);
-      }
-    }
-    else {
-      const game = findGameByUserId(userId);
-
-      if (!game) return;
-
-      const player = game.players[userId];
-
-      if (game.characterGenStep === 3) {
-        if (!player.name || !player.look || !player.concept) {
-          if (!player.name) {
-            await askPlayerForCharacterInfoWithRetry(message.author, game, userId, 'name', "What's your character's name or nickname?", 60000);
-          }
-          if (!player.look) {
-            await askPlayerForCharacterInfoWithRetry(message.author, game, userId, 'look', 'What does your character look like at a quick glance?', 60000);
-          }
-          if (!player.concept) {
-            await askPlayerForCharacterInfoWithRetry(message.author, game, userId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
-          }
-        } else {
-          const channelId = game.textChannelId;
-          const gameChannel = client.channels.cache.get(channelId);
-          if (gameChannel) {
-            game.characterGenStep++;
-            sendCharacterGenStep(gameChannel, game);
-            saveGameData();
-          }
-        }
       }
     }
   }
@@ -204,7 +180,7 @@ client.on('messageCreate', async (message) => {
     if (message.content.startsWith(prefix)) {
       const args = message.content.slice(prefix.length).split(/ +/);
       const command = args.shift().toLowerCase();
-      console.log('Command:', message.content, 'from', userName, 'in' + message.channel.name);
+      console.log('Command:', message.content, 'from', userName, 'in ' + message.channel.name);
 
       // Blocklist check (only for .startgame)
       if (blocklist[userId] && command === 'startgame') {
@@ -311,7 +287,7 @@ async function me(message) {
       { name: 'Virtue Burned', value: player ? player.virtueBurned ? 'Yes' : 'No' : 'No', inline: true },
       { name: 'Vice Burned', value: player ? player.viceBurned ? 'Yes' : 'No' : 'No', inline: true },
       { name: 'Moment Burned', value: player ? player.momentBurned ? 'Yes' : 'No' : 'No' },
-      { name: 'Gear', value: player && player.gear ? player.gear.join(', ') : 'No Gear'},
+      { name: 'Gear', value: player && player.gear ? player.gear.join(', ') : 'No Gear' },
       { name: 'Active Game Channel:', value: `<#${gameChannelId}>` },
     )
     .setTimestamp();
@@ -363,6 +339,7 @@ export async function startTruthsSystem(client, message, channelId) {
   message.channel.send(fullMessage);
 
   game.diceLost = 0;
+
   saveGameData();
 }
 
@@ -385,6 +362,8 @@ function blockUser(message, args) {
       message.channel.send(`${userId} is already on the blocklist. Reason: ${blocklist[userId]}`);
     }
   }
+
+  saveGameData();
 }
 
 function unblockUser(message, args) {
@@ -403,6 +382,8 @@ function unblockUser(message, args) {
     if (message)
       message.channel.send(`${userId} is not on the blocklist.`);
   }
+
+  saveGameData();
 }
 
 export async function setTheme(message, args) {
@@ -421,6 +402,8 @@ export async function setTheme(message, args) {
     } catch (error) {
       console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
     }
+
+    saveGameData();
     return;
   }
 
@@ -590,6 +573,7 @@ export async function playRecordings(message) {
   }
 
   await playNextRecording(0);
+  saveGameData();
 }
 
 client.login(process.env.DISCORD_TOKEN);

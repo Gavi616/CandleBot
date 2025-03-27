@@ -42,4 +42,6 @@ export async function removePlayer(message, args) {
   } else {
     message.channel.send(`<@${playerIdToRemove}> has been removed from the game.`);
   }
+  
+  saveGameData();
 }

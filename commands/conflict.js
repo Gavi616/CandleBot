@@ -45,7 +45,17 @@ export async function conflict(message, args, gameData) {
   const game = gameData[channelId];
 
   if (!game) {
-    message.reply('No game is in progress in this channel. Use `.startgame` to begin.');
+    message.reply('There is no **Ten Candles** game is in progress in this channel.\nUse `.startgame` to begin a session.');
+    return;
+  }
+
+  if (game.gmId === playerId) {
+    try {
+      await message.author.send({ content: 'The GM cannot use this command.' });
+      await message.delete();
+    } catch (error) {
+      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
+    }
     return;
   }
 
@@ -55,7 +65,12 @@ export async function conflict(message, args, gameData) {
   }
 
   if (game.characterGenStep < 8) {
-    message.reply('Character generation is not complete. Please use `.nextstep` to proceed.');
+    try {
+      await message.author.send({ content: 'This command can only be used after character generation is complete.' });
+      await message.delete();
+    } catch (error) {
+      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
+    }
     return;
   }
 

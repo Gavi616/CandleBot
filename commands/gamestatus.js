@@ -1,12 +1,22 @@
-import { gameData } from '../utils.js';
+export async function gameStatus(messageOrChannel) {
+  let channelId, gameChannelName;
 
-export async function gameStatus(message) {
-  const channelId = message.channel.id;
+  if (messageOrChannel.channel) {
+    channelId = messageOrChannel.channel.id;
+    gameChannelName = messageOrChannel.channel.name;
+  } else {
+    channelId = messageOrChannel.id;
+    gameChannelName = messageOrChannel.name;
+  }
+
   const game = gameData[channelId];
-  const gameChannelName = message.channel.name;
 
   if (!game) {
-    message.channel.send(`There is no game in progress in #${gameChannelName}.`);
+    if (messageOrChannel.channel) {
+      messageOrChannel.channel.send(`There is no game in progress in #${gameChannelName}.`);
+    } else {
+      console.log(`There is no game in progress in #${gameChannelName}.`);
+    }
     return;
   }
 
@@ -22,6 +32,11 @@ export async function gameStatus(message) {
     statusMessage += "All candles have been extinguished. We are in **The Last Stand**.\n";
   } else {
     statusMessage += `Current Scene: ${game.scene}\n`;
+    statusMessage += `Communal Dice Remaining: ${game.dicePool}\n`;
   }
-  await message.channel.send(statusMessage);
+  if (messageOrChannel.channel) {
+    await messageOrChannel.channel.send(statusMessage);
+  } else {
+    await messageOrChannel.send(statusMessage);
+  }
 }

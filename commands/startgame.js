@@ -1,6 +1,6 @@
-import { validateGameSetup } from '../validation.js';
+import { validateGameSetup, gameDataSchema } from '../validation.js';
 import { sendCharacterGenStep } from '../chargen.js';
-import { saveGameData, requestConsent, sendDM } from '../utils.js';
+import { saveGameData, requestConsent, sendDM, sendConsentConfirmation } from '../utils.js';
 import { client } from '../index.js';
 import { ChannelType } from 'discord.js';
 import { CONSENT_TIMEOUT } from '../config.js';
@@ -34,6 +34,15 @@ export async function startGame(message, gameData) {
     const gmId = validationResult.gmId;
     const playerIds = validationResult.playerIds;
 
+    const guild = message.guild;
+    await guild.members.fetch();
+
+    if (!client.users.cache.get(gmId)) {
+        console.error(`startGame: Invalid GM ID: ${gmId}`);
+        await message.author.send({ content: `Invalid GM ID: <@${gmId}>. Game cancelled.` });
+        return;
+    }
+
     for (const playerId of playerIds) {
         const player = message.guild.members.cache.get(playerId);
         if (!player) {
@@ -61,26 +70,35 @@ export async function startGame(message, gameData) {
     }
 
     console.log(`startGame: Creating gameData object for channel ${channelId}`);
-    gameData[channelId] = {
-        channelId: channelId,
-        gmId: gmId,
-        players: {},
-        playerOrder: playerIds,
-        characterGenStep: 1,
-        scene: 0,
-        traitsRequested: false,
-        theme: "No session theme / module set.",
-        textChannelId: channelId,
-        guildId: guildId,
-        voiceChannelId: voiceChannelId,
-        gameMode: gameMode,
-        initiatorId: initiatorId,
-        gm: {
-            consent: null,
-            brink: ""
-        },
-    };
 
+    if (!gameData[channelId]) {
+        gameData[channelId] = {};
+    }
+
+    gameData[channelId].gm = {
+        consent: null,
+        brink: ""
+    };
+    gameData[channelId].players = {};
+    gameData[channelId].players[gmId] = {
+      playerUsername: client.users.cache.get(gmId).username,
+      consent: null,
+      brink: "",
+      moment: "",
+      virtue: "",
+      vice: "",
+      name: "",
+      look: "",
+      concept: "",
+      recordings: "",
+      hopeDice: 0,
+      virtueBurned: false,
+      viceBurned: false,
+      momentBurned: false,
+      isDead: false
+    };
+    gameData[channelId].players[gmId].consent = false;
+    gameData[channelId].gm.consent = false;
     for (const playerId of playerIds) {
         gameData[channelId].players[playerId] = {
             playerUsername: client.users.cache.get(playerId).username,
@@ -94,13 +112,26 @@ export async function startGame(message, gameData) {
             concept: "",
             recordings: "",
             hopeDice: 0,
-            trait_stack: {},
             virtueBurned: false,
             viceBurned: false,
             momentBurned: false,
-            isDead: false,
+            isDead: false
         };
     }
+    
+    gameData[channelId].playerOrder = playerIds;
+    gameData[channelId].characterGenStep = 1;
+    gameData[channelId].traitsRequested = false;
+    gameData[channelId].theme = "";
+    gameData[channelId].textChannelId = channelId;
+    gameData[channelId].guildId = guildId;
+    gameData[channelId].voiceChannelId = voiceChannelId;
+    gameData[channelId].gameMode = gameMode;
+    gameData[channelId].initiatorId = initiatorId;
+    gameData[channelId].gmId = gmId;
+    gameData[channelId].channelId = channelId;
+    gameData[channelId].diceLost = 0;
+
     console.log(`startGame: gameData object created:`, gameData[channelId]);
     console.log(`startGame: Calling saveGameData()`);
     saveGameData();
@@ -115,13 +146,16 @@ export async function startGame(message, gameData) {
 
             const gmConsented = await requestConsent(
                 gm.user,
-                `You have been designated as the GM role for a **Ten Candles** game in #${message.guild.name}. Do you consent to participate?`,
+                `You have been designated as the GM role for a **Ten Candles** game in ${message.guild.name}. Do you consent to participate?`,
                 'gm_consent_yes',
                 'gm_consent_no',
                 CONSENT_TIMEOUT,
                 "Request for Consent"
             );
             gameData[channelId].gm.consent = gmConsented;
+            if (gmConsented) {
+                await sendConsentConfirmation(gm.user, gameData[channelId], 'gm', message.guild.name, message.channel.name, guildId, channelId);
+            }
             resolve({ id: gmId, consent: gmConsented, type: "gm" });
         } catch (error) {
             console.error('Error requesting GM consent:', error);
@@ -144,13 +178,16 @@ export async function startGame(message, gameData) {
                 const player = await message.guild.members.fetch(playerId);
                 const playerConsented = await requestConsent(
                     player.user,
-                    `You have been added as a player to a **Ten Candles** game in #${message.guild.name}. Do you consent to participate?`,
+                    `You have been added as a player to a **Ten Candles** game in ${message.guild.name}. Do you consent to participate?`,
                     'player_consent_yes',
                     'player_consent_no',
                     CONSENT_TIMEOUT,
                     "Request for Consent"
                 );
                 gameData[channelId].players[playerId].consent = playerConsented;
+                if (playerConsented) {
+                    await sendConsentConfirmation(player.user, gameData[channelId], 'player', message.guild.name, message.channel.name, guildId, channelId);
+                }
                 resolve({ id: playerId, consent: playerConsented, type: "player" });
             } catch (error) {
                 console.error(`Error requesting player ${playerId} consent:`, error);
@@ -167,7 +204,6 @@ export async function startGame(message, gameData) {
         });
     });
 
-    // Promise.race() to detect any rejection/timeout
     try {
         await Promise.race([
             gmConsentPromise,
@@ -178,6 +214,14 @@ export async function startGame(message, gameData) {
     }
 
     const consentResults = await Promise.all([gmConsentPromise, ...playerConsentPromises]);
+
+    for (const result of consentResults) {
+        if (result.type === "gm") {
+            gameData[channelId].gm.consent = result.consent;
+        } else if (result.type === "player") {
+            gameData[channelId].players[result.id].consent = result.consent;
+        }
+    }
 
     let gmConsented = true;
     let playerConsented = true;
@@ -219,4 +263,5 @@ export async function startGame(message, gameData) {
     const gameChannel = message.guild.channels.cache.get(channelId);
     const game = gameData[channelId];
     sendCharacterGenStep(gameChannel, game);
+    saveGameData();
 }

@@ -10,7 +10,13 @@ import {
 import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js'; // Add this line
+import { defaultPlayerGMBrinks, defaultThreatBrinks } from './config.js';
+
+function getRandomBrink(isThreat = false) {
+  const brinks = isThreat ? defaultThreatBrinks : defaultPlayerGMBrinks;
+  return brinks[Math.floor(Math.random() * brinks.length)];
+}
 
 export const gameData = {};
 export const blocklist = {};
@@ -58,11 +64,12 @@ export async function requestConsent(user, prompt, yesId, noId, time, title = 'C
     return new Promise((resolve) => {
       collector.on('collect', async (interaction) => {
         console.log(`requestConsent: Button collected: ${interaction.customId} from ${interaction.user.tag}`);
+        row.components.forEach(component => component.setDisabled(true));
+        await interaction.update({ components: [row] });
+
         if (interaction.customId === yesId) {
-          await interaction.deferUpdate();
           resolve(true);
         } else if (interaction.customId === noId) {
-          await interaction.deferUpdate();
           await user.send({ content: 'You have declined.' });
           resolve(false);
         }
@@ -101,7 +108,7 @@ export async function getDMResponse(user, prompt, time, filter, title = "Respons
     }
   } catch (error) {
     if (error.message === 'time') {
-        return null;
+      return null;
     }
     console.error(`Error getting DM response from ${user.tag}:`, error);
     return null;
@@ -132,19 +139,19 @@ export async function confirmInput(user, question, time, title = "Confirm Input"
   const filter = (interaction) =>
     interaction.user.id === user.id && interaction.message.id === consentMessage.id;
 
-  const collector = dmChannel.createMessageComponentCollector({ filter, time });
+  const collector = dmChannel.createMessageComponentCollector({ filter, time, max: 1 });
 
   return new Promise((resolve) => {
     collector.on('collect', async (interaction) => {
       console.log(`confirmInput: Button collected: ${interaction.customId} from ${interaction.user.tag}`);
+      row.components.forEach(component => component.setDisabled(true));
+      await interaction.update({ components: [row] });
+
       if (interaction.customId === 'input_yes') {
-        await interaction.deferUpdate();
         resolve(true);
       } else if (interaction.customId === 'input_no') {
-        await interaction.deferUpdate();
         resolve(false);
       }
-      collector.stop();
     });
 
     collector.on('end', async (collected, reason) => {
@@ -152,7 +159,9 @@ export async function confirmInput(user, question, time, title = "Confirm Input"
       if (reason === 'time') {
         await user.send('Input Confirmation timed out.');
       }
-      resolve(false);
+      if (collected.size === 0) {
+        resolve(false);
+      }
     });
   });
 }
@@ -173,44 +182,33 @@ export async function sendDM(user, message) {
   }
 }
 
-export async function askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, time, retryCount = 0) {
+export async function askPlayerForCharacterInfo(user, game, playerId, field, question, time) {
   let input;
-  do {
-    try {
-      const response = await getDMResponse(user, question, time, m => m.author.id === playerId);
-      if (response) {
-        input = response;
-        if (!input) {
-          await user.send('Invalid input. Please provide a non-empty value.');
-          continue;
-        }
-        input = sanitizeString(input);
-        if (field === 'name') {
-          input = normalizeName(input);
-        } else {
-          input = normalizeSentence(input);
-        }
-        const confirmation = await confirmInput(user, `Your ${field}: ${input}`, time);
-        if (!confirmation) {
-          continue;
-        }
-        game.players[playerId][field] = input;
-        saveGameData();
-        await user.send(`Your character's ${field} has been recorded as: ${game.players[playerId][field]}`);
+  try {
+    const response = await getDMResponse(user, question, time, m => m.author.id === playerId);
+    if (response) {
+      input = response;
+      if (!input) {
+        await user.send('Invalid input. Please provide a non-empty value.');
         return;
-      } else {
-        throw new Error(`Player <@${playerId}> timed out while providing ${field}.`);
       }
-    } catch (error) {
-      if (retryCount < 3) {
-        await user.send(`You timed out. Please provide your ${field} again.`);
-        await askPlayerForCharacterInfoWithRetry(user, game, playerId, field, question, time, retryCount + 1);
-        return;
+      input = sanitizeString(input);
+      if (field === 'name') {
+        input = normalizeName(input);
       } else {
-        throw new Error(`Player <@${playerId}> timed out after multiple retries.`);
+        input = normalizeSentence(input);
       }
+      game.players[playerId][field] = input;
+      await user.send(`Your character's ${field} has been recorded as: ${game.players[playerId][field]}`);
+      return;
+    } else {
+      await user.send(`You timed out. Please provide your ${field} again.`);
+      return;
     }
-  } while (true);
+  } catch (error) {
+    console.error(`Error in askPlayerForCharacterInfo:`, error);
+    await user.send(`An error occurred. Please try again.`);
+  }
 }
 
 export async function askForTraits(message, gameChannel, game, playerId) {
@@ -242,81 +240,75 @@ export async function askForTraits(message, gameChannel, game, playerId) {
   } while (true);
 }
 
-export async function askForMoment(user, game, playerId, time) {
+export async function askForMoment(user, game, playerId, time, retryCount = 0) {
   let input;
-  do {
-    try {
-      const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would be reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
-      if (response) {
-        input = response;
-        if (!input) {
-          await user.send('Invalid Moment. Please provide a non-empty value.');
-          continue;
-        }
-        input = sanitizeString(input);
-        input = normalizeSentence(input);
-        const confirmation = await confirmInput(user, `Are you happy with your Moment: ${input} ?`, time);
-        if (!confirmation) {
-          continue;
-        }
-        game.players[playerId].moment = input;
-        saveGameData();
-        return;
-      } else {
-        assignRandomMoment(user, game.players[playerId]);
+  try {
+    const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would be reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
+    if (response) {
+      input = response;
+      if (!input) {
+        await user.send('Invalid Moment. Please provide a non-empty value.');
+        await askForMoment(user, game, playerId, time, retryCount + 1);
         return;
       }
-    } catch (error) {
+      input = sanitizeString(input);
+      input = normalizeSentence(input);
+      const confirmation = await confirmInput(user, `Are you happy with your Moment: ${input} ?`, time);
+      if (!confirmation) {
+        await askForMoment(user, game, playerId, time, retryCount + 1);
+        return;
+      }
+      game.players[playerId].moment = input;
+      saveGameData();
+      return;
+    } else {
       assignRandomMoment(user, game.players[playerId]);
       return;
     }
-  } while (true);
+  } catch (error) {
+    if (retryCount < 3) {
+      await user.send(`You timed out. Please provide your Moment again.`);
+      await askForMoment(user, game, playerId, time, retryCount + 1);
+      return;
+    } else {
+      assignRandomMoment(user, game.players[playerId]);
+      return;
+    }
+  }
 }
 
-export async function askForBrink(user, game, playerId, time) {
+export async function askForBrink(user, game, playerId, prompt, time, isThreat = false) {
   let input;
-  const brinkOrder = getVirtualTableOrder(game, true);
-  const threatPlayerId = brinkOrder[(brinkOrder.indexOf(game.gmId) + 1) % brinkOrder.length];
-  const playerToYourLeftId = brinkOrder[(brinkOrder.indexOf(playerId) - 1 + brinkOrder.length) % brinkOrder.length];
-  const playerToYourLeft = game.players[playerToYourLeftId]?.playerUsername || "the GM";
-
-  let prompt;
-  if (playerId === threatPlayerId) {
-    prompt = `Please send a Brink.\nYour Brink is about *them*, a threat controlled by the GM. What have you have seen *them* do?\nThe only limitations are that you can't name *them* and you can't give *them* a weakness.`;
-  } else {
-    prompt = `Please send a Brink.\nBrinks are things people do when they're pushed to their limit of desperation.\nYour Brink is for ${playerToYourLeft.characterName}. Don’t worry about making them too specific.`;
-  }
-
-  do {
-    try {
-      const response = await getDMResponse(user, prompt, BRINK_TIMEOUT, m => m.author.id === playerId, "Request for Brink");
-      if (response) {
-        input = response;
-        if (!input) {
-          await user.send('Invalid Brink. Please provide a non-empty value.');
-          continue;
-        }
-        input = sanitizeString(input);
-        const characterName = game.players[playerId].name || user.username;
-        if (playerId === game.gmId) {
-          input = normalizeGMBrink(input, characterName);
-        } else {
-          input = normalizePlayerBrink(input, characterName);
-        }
-        const confirmation = await confirmInput(user, `Are you happy with this Brink: ${input} for ${playerToYourLeft.characterName}}?`, BRINK_TIMEOUT, "Confirm Your Brink");
-        if (!confirmation) {
-          continue;
-        }
+  while (true) {
+    const response = await getDMResponse(user, prompt, time, m => m.author.id === playerId, "Request for Brink");
+    if (response) {
+      input = response;
+      if (!input) {
+        await user.send('Invalid Brink. Please provide a non-empty value.');
+        continue;
+      }
+      input = sanitizeString(input);
+      const characterName = game.players[playerId].name || user.username;
+      if (isThreat) {
+        input = normalizeBrink(input, characterName, true);
+      } else if (playerId === game.gmId) {
+        input = normalizeBrink(input, characterName);
+      } else {
+        input = normalizeBrink(input, characterName);
+      }
+      const confirmation = await confirmInput(user, `Are you happy with this Brink: ${input}?`, time, "Confirm Your Brink");
+      if (confirmation) {
         game.players[playerId].brink = input;
         saveGameData();
         return input;
       } else {
-        return "";
+        continue;
       }
-    } catch (error) {
-      return "";
+    } else {
+      await user.send(`You timed out. Please provide your Brink again.`);
+      continue;
     }
-  } while (true);
+  }
 }
 
 function assignRandomMoment(user, player) {
@@ -366,9 +358,9 @@ export function loadGameData() {
 
     Object.assign(gameData, loadedGameData);
     for (const channelId in gameData) {
-        if (!gameData[channelId].channelId) {
-            gameData[channelId].channelId = channelId;
-        }
+      if (!gameData[channelId].channelId) {
+        gameData[channelId].channelId = channelId;
+      }
     }
   } catch (err) {
     console.error('loadGameData: Error loading game data:', err);
@@ -377,16 +369,17 @@ export function loadGameData() {
 }
 
 export function saveGameData() {
-  if (!validateGameData(gameData, gameDataSchema)) {
-    console.error('saveGameData: Game data validation failed. Data not saved.');
-    return;
-  }
-
   try {
+    const gameDataToSave = {};
     for (const channelId in gameData) {
-      gameData[channelId].lastSaved = new Date().toISOString();
+      if (validateGameData(gameData[channelId], gameDataSchema)) {
+        gameDataToSave[channelId] = gameData[channelId];
+        gameDataToSave[channelId].lastSaved = new Date().toISOString();
+      } else {
+        console.error(`saveGameData: Game data validation failed for channel ${channelId}. Data not saved.`);
+      }
     }
-    fs.writeFileSync('gameData.json', JSON.stringify(gameData));
+    fs.writeFileSync('gameData.json', JSON.stringify(gameDataToSave));
   } catch (err) {
     console.error('saveGameData: Error saving game data:', err);
   }
@@ -431,7 +424,6 @@ export function loadBlocklist() {
 export function saveBlocklist() {
   try {
     fs.writeFileSync('blocklist.json', JSON.stringify(blocklist));
-    saveGameData();
   } catch (err) {
     console.error(`Error saving blocklist: ${err.message}`);
   }
@@ -449,6 +441,25 @@ export async function sendCandleStatus(channel, litCandles) {
     }
   } else {
     channel.send('***All candles have been extinguished.***');
+  }
+}
+
+export async function sendConsentConfirmation(user, game, type, serverName, channelName, guildId, channelId) {
+  try {
+    const dmChannel = await user.createDM();
+    let message;
+
+    if (type === 'gm') {
+      message = `Thank you for consenting to GM **Ten Candles** in <#${channelId}>.`;
+    } else if (type === 'player') {
+      message = `Thank you for consenting to play **Ten Candles** in <#${channelId}>.`;
+    } else {
+      console.error(`sendConsentConfirmation: Invalid consent type: ${type}`);
+      return;
+    }
+    await dmChannel.send(message);
+  } catch (error) {
+    console.error(`Error sending consent confirmation to ${user.tag}:`, error);
   }
 }
 
@@ -539,21 +550,51 @@ export function normalizeSentence(str) {
   return str;
 }
 
-export function normalizePlayerBrink(brink, name) {
+export function normalizeBrink(brink, name, isThreat = false) {
   if (brink === undefined) {
-    brink = "";
+    brink = getRandomBrink(isThreat);
   }
-  return `${name} has seen you ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
+  if (isThreat) {
+    if (!name) {
+      return `Someone has seen *them* ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
+    } else {
+      return `${name} has seen *them* ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
+    }
+  } else {
+    if (!name) {
+      return `Someone saw you ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
+    } else {
+      return `${name} saw you ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
+    }
+  }
 }
 
-export function normalizeGMBrink(brink, name) {
-  if (brink === undefined) {
-    brink = "";
+export async function handleGearCommand(user, game, playerId, args) {
+  const command = args[0];
+  const item = args.slice(1).join(' ');
+
+  try {
+    switch (command) {
+      case 'add':
+        await addGear(user, game, playerId, item);
+        break;
+      case 'remove':
+        await removeGear(user, game, playerId, item);
+        break;
+      case 'edit':
+        await editGear(user, game, playerId, item);
+        break;
+      default:
+        await askForGear(user, game, playerId, args);
+        break;
+    }
+  } catch (error) {
+    console.error(`Error handling gear command for ${user.tag}:`, error);
+    await user.send('An error occurred while processing your gear command.');
   }
-  return `${name} has seen *them* ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
 }
 
-export async function askForGear(user, game, playerId, args) {
+async function askForGear(user, game, playerId, args, retryCount = 0) {
   let gearList = [];
   if (args[0] === 'gear') {
     gearList = args.slice(1).join(' ').split(',').map(item => sanitizeString(item.trim()));
@@ -582,12 +623,16 @@ export async function askForGear(user, game, playerId, args) {
       sendCharacterGenStep(gameChannel, game);
     }
   } else {
-    await user.send('Please try again.');
-    await askForGear(user, game, playerId, args);
+    if (retryCount < 3) {
+      await user.send('Please try again.');
+      await askForGear(user, game, playerId, args, retryCount + 1);
+    } else {
+      await user.send('Too many retries. Please contact the developer.');
+    }
   }
 }
 
-export async function addGear(user, game, playerId, item) {
+async function addGear(user, game, playerId, item) {
   if (!item) {
     await user.send('Please provide an item to add.');
     return;
@@ -600,7 +645,7 @@ export async function addGear(user, game, playerId, item) {
   await user.send(`Added "${item}" to your inventory.`);
 }
 
-export async function removeGear(user, game, playerId, item) {
+async function removeGear(user, game, playerId, item) {
   if (!item) {
     await user.send('Please provide an item to remove from your inventory.');
     return;
@@ -619,7 +664,7 @@ export async function removeGear(user, game, playerId, item) {
   }
 }
 
-export async function editGear(user, game, playerId, item) {
+async function editGear(user, game, playerId, item, retryCount = 0) {
   if (!item) {
     await user.send('Please provide an item to edit.');
     return;
@@ -632,9 +677,19 @@ export async function editGear(user, game, playerId, item) {
   if (index > -1) {
     const newItem = await getDMResponse(user, `What would you like to change "${item}" to?`, 60000, m => m.author.id === playerId);
     if (newItem) {
-      game.players[playerId].gear[index] = sanitizeString(newItem);
-      saveGameData();
-      await user.send(`Changed "${item}" to "${newItem}" in your inventory.`);
+      const confirmation = await confirmInput(user, `Change "${item}" to "${newItem}"?`, 60000);
+      if (confirmation) {
+        game.players[playerId].gear[index] = sanitizeString(newItem);
+        saveGameData();
+        await user.send(`Changed "${item}" to "${newItem}" in your inventory.`);
+      } else {
+        if (retryCount < 3) {
+          await user.send('Please try again.');
+          await editGear(user, game, playerId, item, retryCount + 1);
+        } else {
+          await user.send('Too many retries. Please contact the developer.');
+        }
+      }
     } else {
       await user.send(`No new item provided.`);
     }
@@ -645,61 +700,131 @@ export async function editGear(user, game, playerId, item) {
 
 export async function handleTraitStacking(user, game, playerId) {
   const player = game.players[playerId];
-  const options = ['Virtue', 'Vice', 'Moment'];
-  const stackOrder = [];
-  let momentOnTop = false;
+  const dmChannel = await user.createDM();
+  let stackOrder = [];
+  let lotteryPlayers = [];
 
-  const momentOnTopConfirmation = await confirmInput(user, `Do you want your Moment on top of your stack?`, 60000);
-  if (momentOnTopConfirmation) {
-    momentOnTop = true;
-  }
+  const initialChoiceEmbed = new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle('Arrange Your Trait Stack')
+    .setDescription('Which Trait would you like on top of your stack?');
 
-  if (momentOnTop) {
-    player.momentOnTop = true;
-  } else {
-    const topTrait = await getDMResponse(user, `Which trait do you want on top of your stack?`, 60000, m => m.author.id === playerId);
-    if (topTrait) {
-      if (topTrait.toLowerCase() === 'virtue') {
-        stackOrder.push('Virtue');
-        stackOrder.push('Vice');
-      } else if (topTrait.toLowerCase() === 'vice') {
-        stackOrder.push('Vice');
-        stackOrder.push('Virtue');
-      } else {
-        await user.send(`Invalid trait. Please type either "Virtue" or "Vice".`);
-        await handleTraitStacking(user, game, playerId);
-        return;
-      }
-      stackOrder.push('Moment');
+  const initialChoiceRow = new ActionRowBuilder()
+    .addComponents(
+      new ButtonBuilder()
+        .setCustomId('virtue')
+        .setLabel('Virtue')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('vice')
+        .setLabel('Vice')
+        .setStyle(ButtonStyle.Primary),
+      new ButtonBuilder()
+        .setCustomId('moment')
+        .setLabel('Moment')
+        .setStyle(ButtonStyle.Primary)
+    );
+
+  const initialChoiceMessage = await user.send({ embeds: [initialChoiceEmbed], components: [initialChoiceRow] });
+
+  const filter = (interaction) =>
+    interaction.user.id === user.id && interaction.message.id === initialChoiceMessage.id;
+
+  const collector = dmChannel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+
+  collector.on('collect', async (interaction) => {
+    if (collector.ended) return;
+    await interaction.deferUpdate();
+    if (interaction.customId === 'moment') {
+      await user.send('Please wait for up to a minute for the lottery to complete.');
+      lotteryPlayers.push(playerId);
+      player.momentOnTop = false;
     } else {
-      await user.send(`No trait provided. Please try again.`);
+      stackOrder.push(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1));
+      player.momentOnTop = false;
+    }
+    collector.stop();
+  });
+
+  collector.on('end', async (collected, reason) => {
+    if (reason === 'time') {
+      await user.send('You did not make a selection in time. Please try again.');
       await handleTraitStacking(user, game, playerId);
       return;
     }
-  }
 
-  if (momentOnTop) {
-    player.stackOrder = ['Moment', 'Virtue', 'Vice'];
-  } else {
+    if (lotteryPlayers.length > 0) {
+      await runMomentLottery(user, game, lotteryPlayers);
+      if (player.momentOnTop) {
+        stackOrder = ['Moment'];
+      }
+    }
+
+    const remainingTraits = ['Virtue', 'Vice', 'Moment'].filter(trait => !stackOrder.includes(trait));
+    while (remainingTraits.length > 0) {
+      const nextChoiceEmbed = new EmbedBuilder()
+        .setColor(0x0099FF)
+        .setTitle('Arrange Your Trait Stack')
+        .setDescription('Which trait would you like next on your stack?');
+
+      const nextChoiceRow = new ActionRowBuilder();
+      for (const trait of remainingTraits) {
+        nextChoiceRow.addComponents(
+          new ButtonBuilder()
+            .setCustomId(trait.toLowerCase())
+            .setLabel(trait)
+            .setStyle(ButtonStyle.Primary)
+        );
+      }
+
+      const nextChoiceMessage = await user.send({ embeds: [nextChoiceEmbed], components: [nextChoiceRow] });
+
+      const nextChoiceCollector = dmChannel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+
+      await new Promise((resolve) => {
+        nextChoiceCollector.on('collect', async (interaction) => {
+          await interaction.deferUpdate();
+          stackOrder.push(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1));
+          remainingTraits.splice(remainingTraits.indexOf(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1)), 1);
+          nextChoiceCollector.stop();
+          resolve();
+        });
+        nextChoiceCollector.on('collect', async (interaction) => {
+          if (nextChoiceCollector.ended) return;
+          await interaction.deferUpdate();
+          stackOrder.push(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1));
+          remainingTraits.splice(remainingTraits.indexOf(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1)), 1);
+          nextChoiceCollector.stop();
+          resolve();
+        });
+      });
+    }
+
+    stackOrder.push('Brink');
     player.stackOrder = stackOrder;
-  }
-
-  await user.send(`Your stack order is: ${player.stackOrder.join(', ')}`);
-
-  const confirmation = await confirmInput(user, `Is this stack order correct?`, 60000);
-
-  if (confirmation) {
     player.stackConfirmed = true;
+    await user.send(`Your final stack order is: ${player.stackOrder.join(', ')}`);
     saveGameData();
-    await user.send('Your stack order has been saved.');
     const allPlayersHaveConfirmed = Object.values(game.players).every(player => player.stackConfirmed);
     if (allPlayersHaveConfirmed) {
       const gameChannel = client.channels.cache.get(game.textChannelId);
       game.characterGenStep++;
       sendCharacterGenStep(gameChannel, game);
     }
+  });
+}
+
+async function runMomentLottery(user, game, lotteryPlayers) {
+  await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for 5 seconds
+  const winnerId = lotteryPlayers[Math.floor(Math.random() * lotteryPlayers.length)];
+  const winner = await client.users.fetch(winnerId);
+  const loser = user;
+  const player = game.players[winnerId];
+  if (winnerId === user.id) {
+    await winner.send('Congratulations! You won the Moment lottery. Your Moment will be on top of your stack.');
+    player.momentOnTop = true;
   } else {
-    await user.send('Please try again.');
-    await handleTraitStacking(user, game, playerId);
+    await loser.send('You did not win the Moment lottery. Please continue to build your stack.');
+    player.momentOnTop = false;
   }
 }

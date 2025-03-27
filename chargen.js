@@ -1,20 +1,4 @@
-import {
-  gameData,
-  getVirtualTableOrder,
-  sendCandleStatus,
-  saveGameData,
-  askForTraits,
-  sanitizeString,
-  askForMoment,
-  askForBrink,
-  normalizePlayerBrink,
-  normalizeGMBrink,
-  getDMResponse,
-  requestConsent,
-  sendDM,
-} from './utils.js'
-import { TRAIT_TIMEOUT, BRINK_TIMEOUT } from './config.js';
-import { client, findGameByUserId } from './index.js'
+import { getVirtualTableOrder, normalizeBrink } from './utils.js'
 import {
   handleStepOne,
   handleStepTwo,
@@ -125,6 +109,9 @@ export async function swapTraits(client, players, game, guildId) {
         console.error("swapTraits: No user found with that recipientId. Check the recipientId.");
         return;
       }
+      const senderName = players[senderId].playerUsername;
+      const recipientName = players[recipientId].playerUsername;
+      await recipientUser.send(`Your Virtue (from ${senderName}): ${swappedPlayers[recipientId].virtue}\nYour Vice (from ${senderName}): ${swappedPlayers[recipientId].vice}`);
     } catch (error) {
       console.error(`Error sending trait swap DMs to player ${recipientId}:`, error);
     }
@@ -140,18 +127,18 @@ export function swapBrinks(players, playerOrder, gmId) {
   for (let i = 0; i < playerOrder.length; i++) {
     const currentPlayerId = playerOrder[i];
     const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
-    const characterName = players[currentPlayerId].name || "Unknown";
+    const characterName = players[currentPlayerId]?.name || "Someone";
     swappedPlayers[nextPlayerId] = {
       ...swappedPlayers[nextPlayerId],
-      brink: normalizePlayerBrink(players[currentPlayerId].brink, characterName)
+      brink: normalizeBrink(players[currentPlayerId]?.brink, characterName)
     };
   }
 
   const penultimatePlayerId = playerOrder[playerOrder.length - 1];
-  const characterName = players[gmId].name || "Unknown";
+  const threatCharacterName = players[penultimatePlayerId]?.name || "Someone";
   swappedPlayers[gmId] = {
     ...swappedPlayers[gmId],
-    brink: normalizeGMBrink(players[penultimatePlayerId].brink, characterName)
+    brink: normalizeBrink(players[penultimatePlayerId]?.brink, threatCharacterName, true)
   };
 
   return swappedPlayers;

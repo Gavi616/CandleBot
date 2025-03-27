@@ -22,4 +22,6 @@ export async function leaveGame(message, args) {
   saveGameData();
 
   message.channel.send(`<@${playerId}> has left the game. Reason: ${reason}`);
+
+  saveGameData();
 }

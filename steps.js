@@ -1,27 +1,12 @@
-import {
-  sendCharacterGenStep,
-  swapTraits,
-  swapBrinks
-} from './chargen.js';
-import {
-  saveGameData,
-  getGameData,
-  getVirtualTableOrder,
-  askForTraits,
-  askForMoment,
-  askForBrink,
-  sendCandleStatus,
-  askForCharacterInfo,
-  getDMResponse,
-  sendDM,
-  normalizeBrink,
-  handleTraitStacking
-} from './utils.js';
+import { sendCharacterGenStep, swapTraits, swapBrinks } from './chargen.js';
+import { saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
+  askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM, normalizeBrink,
+  handleTraitStacking, askForVoicePreference } from './utils.js';
 import { client } from './index.js';
-import {
-  TRAIT_TIMEOUT, BRINK_TIMEOUT, gameStartMessage, startingMessageGM, startingMessagePlayer, stepOneMessage, stepTwoMessage, stepThreeMessage, stepFourMessage, stepFiveMessage, stepSixMessage, stepSevenMessage, stepSevenReminder, stepEightMessage
-} from './config.js';
-
+import { TRAIT_TIMEOUT, BRINK_TIMEOUT, gameStartMessage, startingMessageGM,
+  startingMessagePlayer, stepOneMessage, stepTwoMessage, stepThreeMessage,
+  stepFourMessage, stepFiveMessage, stepSixMessage, stepSevenMessage,
+  stepSevenReminder, stepEightMessage } from './config.js';
 
 export async function prevStep(message) {
   const channelId = message.channel.id;
@@ -203,6 +188,14 @@ export async function handleStepEight(gameChannel, game) {
   const gameMode = game.gameMode;
 
   const finalRecordingPromises = [];
+  const voicePreferencePromises = [];
+  for (const userId in players) {
+    if (gameMode === "voice-plus-text") {
+      const user = await client.users.fetch(userId);
+      voicePreferencePromises.push(askForVoicePreference(user, game, userId, 60000));
+    }
+  }
+  await Promise.all(voicePreferencePromises);
   for (const userId in players) {
     finalRecordingPromises.push(
       (async () => {
@@ -211,7 +204,7 @@ export async function handleStepEight(gameChannel, game) {
           if (gameMode === "text-only") {
             await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as a text message.');
           } else {
-            await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as an audio file or a text message.');
+            await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as an audio message (mobile app only) or a text message.');
           }
         } catch (error) {
           console.error(`Error DMing user ${userId}:`, error);

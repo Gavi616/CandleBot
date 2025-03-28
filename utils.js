@@ -1,3 +1,6 @@
+import textToSpeech from '@google-cloud/text-to-speech';
+import { Readable } from 'stream';
+import ffmpeg from 'ffmpeg-static';
 import fs from 'fs';
 import ytdl from 'ytdl-core';
 import {
@@ -8,10 +11,10 @@ import {
   getVoiceConnection,
   StreamType
 } from '@discordjs/voice';
-import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments } from './config.js';
+import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments, languageOptions } from './config.js'; // Import languageOptions here
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js';
+import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
 import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks } from './config.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { isTesting } from './index.js';
@@ -20,6 +23,169 @@ import { fileURLToPath } from 'url';
 
 export const gameData = {};
 export const blocklist = {};
+const ttsClient = new textToSpeech.TextToSpeechClient();
+
+export async function askForVoicePreference(user, game, playerId, time) {
+  const dmChannel = await user.createDM();
+  const languageSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId('language_select')
+    .setPlaceholder('Select a language')
+    .addOptions(Object.keys(languageOptions).map(key => {
+      return {
+        label: languageOptions[key].name,
+        value: key,
+        default: false,
+      };
+    }));
+  const languageRow = new ActionRowBuilder().addComponents(languageSelectMenu);
+  const voiceSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId('voice_select')
+    .setPlaceholder('Select a voice')
+    .addOptions([{
+      label: 'Select a language first',
+      value: 'placeholder',
+    }])
+    .setDisabled(true);
+  const voiceRow = new ActionRowBuilder().addComponents(voiceSelectMenu);
+  const useVoiceButton = new ButtonBuilder()
+    .setCustomId('use_voice')
+    .setLabel('Use this Voice')
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(true);
+  const buttonRow = new ActionRowBuilder().addComponents(useVoiceButton);
+  const voiceEmbed = new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle('Choose Your Character\'s Voice')
+    .setDescription(`Please choose a language and voice for your character.`);
+  const voiceMessage = await user.send({ embeds: [voiceEmbed], components: [languageRow, voiceRow, buttonRow] });
+
+  const filter = (interaction) => interaction.user.id === user.id && interaction.message.id === voiceMessage.id;
+  const collector = dmChannel.createMessageComponentCollector({ filter, componentType: ComponentType.StringSelect, time });
+  let selectedLanguage = null;
+  let selectedVoice = null;
+  return new Promise((resolve) => {
+    collector.on('collect', async (interaction) => {
+      await interaction.deferUpdate();
+      if (interaction.customId === 'language_select') {
+        selectedLanguage = interaction.values[0];
+        selectedVoice = null; // Reset selected voice when language changes
+        const newVoiceOptions = Object.entries(languageOptions[selectedLanguage].voices).map(([key, value]) => {
+          return {
+            label: value.name,
+            value: key,
+            default: false,
+          };
+        });
+        voiceSelectMenu.setOptions(newVoiceOptions)
+          .setDisabled(false)
+          .setPlaceholder(`Select a voice in ${languageOptions[selectedLanguage].name}`);
+        useVoiceButton.setDisabled(true);
+        await voiceMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
+      } else if (interaction.customId === 'voice_select') {
+        selectedVoice = interaction.values[0];
+        const updatedVoiceOptions = voiceSelectMenu.options.map(option => {
+          if (option.data) {
+            return {
+              label: option.data.label,
+              value: option.data.value,
+              default: option.data.value === selectedVoice,
+            };
+          } else {
+            return {
+              label: option.label,
+              value: option.value,
+              default: option.value === selectedVoice,
+            };
+          }
+        });
+        voiceSelectMenu.setOptions(updatedVoiceOptions);
+        useVoiceButton.setDisabled(false);
+        await voiceMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
+      }
+    });
+    const buttonCollector = dmChannel.createMessageComponentCollector({ filter, componentType: ComponentType.Button, time });
+    buttonCollector.on('collect', async (interaction) => {
+      await interaction.deferUpdate();
+      if (interaction.customId === 'use_voice') {
+        if (!selectedLanguage || !selectedVoice) {
+          await interaction.followUp({ content: 'Please select a language and voice first.', ephemeral: true });
+          return;
+        }
+        game.players[playerId].language = selectedLanguage;
+        game.players[playerId].voice = selectedVoice;
+        await interaction.editReply({ content: `You have chosen the voice: ${languageOptions[selectedLanguage].voices[selectedVoice].name} in ${languageOptions[selectedLanguage].name}`, embeds: [], components: [] });
+        collector.stop();
+        buttonCollector.stop();
+        resolve();
+      }
+    });
+    collector.on('end', async (collected, reason) => {
+      if (reason === 'time') {
+        await voiceMessage.edit({ content: 'You did not choose a voice in time. Please try again.', embeds: [], components: [] });
+        resolve();
+      }
+    });
+  });
+}
+
+export async function speakInChannel(text, voiceChannel, voiceCode = 'en-US-Standard-A') { // Add voiceCode parameter
+  try {
+    if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
+      console.error(`Invalid voice channel.`);
+      return;
+    }
+
+    const connection = getVoiceConnection(voiceChannel.guild.id);
+
+    if (!connection) {
+      console.error(`Not connected to a voice channel.`);
+      return;
+    }
+
+    let language = voiceCode.substring(0, 5);
+    let voice;
+    if (languageOptions[language] && languageOptions[language].voices[voiceCode]) {
+      voice = languageOptions[language].voices[voiceCode];
+    } else {
+      language = 'en-US';
+      voice = languageOptions['en-US'].voices['en-US-Standard-A'];
+    }
+
+    const request = {
+      input: { text: text },
+      voice: { languageCode: language, ssmlGender: voice.ssmlGender },
+      audioConfig: { audioEncoding: 'OGG_OPUS' },
+    };
+
+    const [response] = await ttsClient.synthesizeSpeech(request);
+
+    const audioStream = new Readable();
+    audioStream.push(response.audioContent);
+    audioStream.push(null);
+
+    const resource = createAudioResource(audioStream, { inputType: StreamType.OggOpus });
+    const player = createAudioPlayer();
+
+    player.play(resource);
+    connection.subscribe(player);
+
+    player.on('error', error => {
+      console.error('Error playing TTS audio:', error);
+    });
+
+    await new Promise((resolve, reject) => {
+      player.on(AudioPlayerStatus.Idle, () => {
+        resolve();
+      });
+
+      player.on('error', (error) => {
+        reject(error);
+      });
+    });
+  } catch (error) {
+    console.error('Error in speakInChannel:', error);
+  }
+}
 
 export async function sendTestDM(client, message) {
   if (isTesting) {

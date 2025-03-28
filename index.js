@@ -1,12 +1,14 @@
 import 'dotenv/config';
-import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, MessageMentions, PermissionsBitField, AttachmentBuilder, MessageFlags, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
+import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, MessageMentions,
+  PermissionsBitField, AttachmentBuilder, MessageFlags, ButtonStyle,
+  StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ComponentType } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
-import { TEST_USER_ID, finalRecordingsMessage } from './config.js';
+import { TEST_USER_ID, finalRecordingsMessage, languageOptions } from './config.js';
 import {
   sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames, getAudioDuration,
   loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, sendTestDM, deleteGameData,
-  playAudioFromUrl, playRandomConflictSound } from './utils.js';
+  playAudioFromUrl, playRandomConflictSound, speakInChannel } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
@@ -21,7 +23,7 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.933a';
+const version = '0.9.935a';
 const botName = 'Ten Candles Bot';
 export const isTesting = false;
 let botRestarted = false;
@@ -88,14 +90,22 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton()) return;
+  if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
+
+  // Check if the interaction is from the testTTS command
+  if (interaction.message.embeds.length > 0 && interaction.message.embeds[0].title === 'Test Google Cloud TTS') {
+    // Handle testTTS interactions here
+    if (interaction.customId === 'preview_voice') {
+      // Handle preview_voice button click
+      return; // Exit early since we've handled the testTTS interaction
+    } else if (interaction.customId === 'language_select' || interaction.customId === 'voice_select') {
+        return;
+    }
+  }
 
   const game = findGameByUserId(interaction.user.id);
   if (!game) {
     console.error("Game not found for interaction.", interaction);
-    if (!interaction.replied) {
-      await interaction.reply({ content: 'No game found.', ephemeral: true });
-    }
     return;
   }
 
@@ -161,6 +171,8 @@ client.on('messageCreate', async (message) => {
         await testRecordingCommand(message, args);
       } else if (command === 'testdicesounds') {
         await testDiceSounds(message, args);
+      } else if (command === 'testtts') {
+        await testTTS(message, args);
       } else {
         await message.author.send(`Test command: \`.${command}\` not implemented.`);
       }
@@ -619,6 +631,191 @@ async function testDiceSounds(message, args) {
   } catch (error) {
     await message.channel.send('An error occurred while testing dice sounds.');
   }
+}
+
+export async function testTTS(message, args) {
+  const voiceChannelId = args[0];
+
+  if (!voiceChannelId) {
+    message.reply('Usage: .testtts <voiceChannelID>');
+    return;
+  }
+
+  const voiceChannel = client.channels.cache.get(voiceChannelId);
+
+  if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
+    message.reply('Invalid voice channel ID.');
+    return;
+  }
+
+  // Create language select menu
+  const languageSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId('language_select')
+    .setPlaceholder('Select a language')
+    .addOptions(Object.keys(languageOptions).map(key => {
+      //console.log(`Adding language option: Label - ${languageOptions[key].name}, Value - ${key}`); // Removed this log
+      return {
+        label: languageOptions[key].name,
+        value: key,
+        default: false, // Initialize all options as not default
+      };
+    }));
+
+  // Create voice select menu (initially with a placeholder option)
+  const voiceSelectMenu = new StringSelectMenuBuilder()
+    .setCustomId('voice_select')
+    .setPlaceholder('Select a voice')
+    .addOptions([{
+      label: 'Select a language first',
+      value: 'placeholder',
+    }])
+    .setDisabled(true);
+
+  // Create preview button
+  const previewButton = new ButtonBuilder()
+    .setCustomId('preview_voice')
+    .setLabel('Preview Voice')
+    .setStyle(ButtonStyle.Primary)
+    .setDisabled(true);
+
+  // Create action rows
+  const languageRow = new ActionRowBuilder().addComponents(languageSelectMenu);
+  const voiceRow = new ActionRowBuilder().addComponents(voiceSelectMenu);
+  const buttonRow = new ActionRowBuilder().addComponents(previewButton);
+
+  // Create embed
+  const testEmbed = new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle('Test Google Cloud TTS')
+    .setDescription('Select a language and voice to preview.');
+
+  // Send the embed
+  const embedMessage = await message.channel.send({ embeds: [testEmbed], components: [languageRow, voiceRow, buttonRow] });
+
+  // Create collector
+  const filter = (interaction) => interaction.user.id === message.author.id && interaction.message.id === embedMessage.id;
+  const collector = message.channel.createMessageComponentCollector({ filter, componentType: ComponentType.StringSelect, time: 60000 });
+
+  let selectedLanguage = null;
+  let selectedVoice = null;
+
+  collector.on('collect', async (interaction) => {
+    await interaction.deferUpdate();
+
+    if (interaction.customId === 'language_select') {
+      selectedLanguage = interaction.values[0];
+      selectedVoice = null; // Reset selected voice when language changes
+
+      console.log(`Selected Language: ${selectedLanguage}`); // Kept this log
+
+      // Update language select menu
+      const updatedLanguageOptions = languageSelectMenu.options.map(option => {
+        if (option.data) {
+          // This is the first time, so we need to access data.label and data.value
+          return {
+            label: option.data.label,
+            value: option.data.value,
+            default: option.data.value === selectedLanguage,
+          };
+        } else {
+          // This is the second time, so we already have label and value
+          return {
+            label: option.label,
+            value: option.value,
+            default: option.value === selectedLanguage,
+          };
+        }
+      });
+      languageSelectMenu.setOptions(updatedLanguageOptions);
+
+      // Update voice select menu
+      const newVoiceOptions = Object.entries(languageOptions[selectedLanguage].voices).map(([key, value]) => {
+        //console.log(`Adding voice option: Label - ${value.name}, Value - ${key}`); // Removed this log
+        return {
+          label: value.name,
+          value: key,
+          default: false, // Initialize all options as not default
+        };
+      });
+
+      //console.log("New Voice Options:", newVoiceOptions); // Removed this log
+
+      voiceSelectMenu.setOptions(newVoiceOptions)
+        .setDisabled(false)
+        .setPlaceholder(`Select a voice in ${languageOptions[selectedLanguage].name}`); // Update placeholder
+
+      previewButton.setDisabled(true); // Disable preview button until a voice is selected
+
+      await embedMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
+    } else if (interaction.customId === 'voice_select') {
+      selectedVoice = interaction.values[0];
+      console.log(`Selected Voice: ${selectedVoice}`); // Kept this log
+
+      // Update the options to set the selected voice as default
+      const updatedVoiceOptions = voiceSelectMenu.options.map(option => {
+        if (option.data) {
+          // This is the first time, so we need to access data.label and data.value
+          return {
+            label: option.data.label,
+            value: option.data.value,
+            default: option.data.value === selectedVoice,
+          };
+        } else {
+          // This is the second time, so we already have label and value
+          return {
+            label: option.label,
+            value: option.value,
+            default: option.value === selectedVoice,
+          };
+        }
+      });
+      voiceSelectMenu.setOptions(updatedVoiceOptions);
+
+      previewButton.setDisabled(false); // Enable preview button when a voice is selected
+      await embedMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
+    }
+  });
+
+  const buttonCollector = message.channel.createMessageComponentCollector({ filter, componentType: ComponentType.Button, time: 60000 });
+
+  buttonCollector.on('collect', async (interaction) => {
+    await interaction.deferUpdate();
+
+    if (interaction.customId === 'preview_voice') {
+      if (!selectedLanguage || !selectedVoice) {
+        await interaction.followUp({ content: 'Please select a language and voice first.', ephemeral: true });
+        return;
+      }
+
+      // Join the voice channel only when the preview button is clicked
+      const existingConnection = getVoiceConnection(voiceChannel.guild.id);
+      if (!existingConnection) {
+        joinVoiceChannel({
+          channelId: voiceChannelId,
+          guildId: voiceChannel.guild.id,
+          adapterCreator: voiceChannel.guild.voiceAdapterCreator,
+        });
+      }
+
+      const languageVerbiage = {
+        'en-US': `This is a voice preview for <@${message.author.username}> in ${languageOptions['en-US'].name} using Google Cloud Text-To-Speech.`,
+        'en-GB': `This is a voice preview for <@${message.author.username}> in ${languageOptions['en-GB'].name} using Google Cloud Text-To-Speech.`,
+        'es-ES': `Esta es una vista previa de voz para <@${message.author.username}> en ${languageOptions['es-ES'].name} usando Google Cloud Text-To-Speech.`,
+        'fr-FR': `Ceci est un aperçu vocal pour <@${message.author.username}> en ${languageOptions['fr-FR'].name} utilisant Google Cloud Text-To-Speech.`,
+        'de-DE': `Dies ist eine Sprachvorschau für <@${message.author.username}> in ${languageOptions['de-DE'].name} mit Google Cloud Text-To-Speech.`,
+      };
+
+      const verbiage = languageVerbiage[selectedLanguage];
+      await message.channel.send(`Previewing TTS voice ${selectedVoice} in <#${voiceChannelId}>.`);
+      await speakInChannel(verbiage, voiceChannel, selectedVoice);
+    }
+  });
+
+  collector.on('end', async (collected, reason) => {
+    if (reason === 'time') {
+      await embedMessage.edit({ content: 'Test command timed out.', components: [] });
+    }
+  });
 }
 
 client.login(process.env.DISCORD_TOKEN);

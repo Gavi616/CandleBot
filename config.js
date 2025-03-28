@@ -7,6 +7,70 @@ export const TIME_INTERVAL = 15000;
 
 export const TEST_USER_ID = '583340515869589522';
 
+export const languageOptions = {
+  'en-US': {
+    name: 'English (US)',
+    voices: {
+      'en-US-Standard-A': { name: 'Standard A', ssmlGender: 'FEMALE' },
+      'en-US-Standard-B': { name: 'Standard B', ssmlGender: 'MALE' },
+      'en-US-Standard-C': { name: 'Standard C', ssmlGender: 'FEMALE' },
+      'en-US-Standard-D': { name: 'Standard D', ssmlGender: 'MALE' },
+      'en-US-Neural2-A': { name: 'Neural2 A', ssmlGender: 'FEMALE' },
+      'en-US-Neural2-B': { name: 'Neural2 B', ssmlGender: 'MALE' },
+      'en-US-Neural2-C': { name: 'Neural2 C', ssmlGender: 'FEMALE' },
+      'en-US-Neural2-D': { name: 'Neural2 D', ssmlGender: 'MALE' },
+      'en-US-Neural2-E': { name: 'Neural2 E', ssmlGender: 'FEMALE' },
+      'en-US-Neural2-F': { name: 'Neural2 F', ssmlGender: 'MALE' },
+      'en-US-Neural2-G': { name: 'Neural2 G', ssmlGender: 'FEMALE' },
+      'en-US-Neural2-H': { name: 'Neural2 H', ssmlGender: 'MALE' },
+      'en-US-Neural2-I': { name: 'Neural2 I', ssmlGender: 'FEMALE' },
+      'en-US-Neural2-J': { name: 'Neural2 J', ssmlGender: 'MALE' },
+    },
+  },
+  'en-GB': {
+    name: 'English (GB)',
+    voices: {
+      'en-GB-Neural2-A': { name: 'Neural2 A', ssmlGender: 'FEMALE' },
+      'en-GB-Neural2-B': { name: 'Neural2 B', ssmlGender: 'MALE' },
+      'en-GB-Neural2-C': { name: 'Neural2 C', ssmlGender: 'FEMALE' },
+      'en-GB-Neural2-D': { name: 'Neural2 D', ssmlGender: 'MALE' },
+      'en-GB-Neural2-F': { name: 'Neural2 F', ssmlGender: 'FEMALE' },
+    },
+  },
+  'es-ES': {
+    name: 'Spanish (ES)',
+    voices: {
+      'es-ES-Standard-A': { name: 'Standard A', ssmlGender: 'FEMALE' },
+      'es-ES-Standard-B': { name: 'Standard B', ssmlGender: 'MALE' },
+      'es-ES-Neural2-A': { name: 'Neural2 A', ssmlGender: 'FEMALE' },
+      'es-ES-Neural2-B': { name: 'Neural2 B', ssmlGender: 'MALE' },
+    },
+  },
+  'fr-FR': {
+    name: 'French (FR)',
+    voices: {
+      'fr-FR-Standard-A': { name: 'Standard A', ssmlGender: 'FEMALE' },
+      'fr-FR-Standard-B': { name: 'Standard B', ssmlGender: 'MALE' },
+      'fr-FR-Standard-C': { name: 'Standard C', ssmlGender: 'FEMALE' },
+      'fr-FR-Standard-D': { name: 'Standard D', ssmlGender: 'MALE' },
+      'fr-FR-Neural2-A': { name: 'Neural2 A', ssmlGender: 'FEMALE' },
+      'fr-FR-Neural2-B': { name: 'Neural2 B', ssmlGender: 'MALE' },
+      'fr-FR-Neural2-C': { name: 'Neural2 C', ssmlGender: 'FEMALE' },
+      'fr-FR-Neural2-D': { name: 'Neural2 D', ssmlGender: 'MALE' },
+    },
+  },
+  'de-DE': {
+    name: 'German (DE)',
+    voices: {
+      'de-DE-Standard-A': { name: 'Standard A', ssmlGender: 'FEMALE' },
+      'de-DE-Standard-B': { name: 'Standard B', ssmlGender: 'MALE' },
+      'de-DE-Neural2-A': { name: 'Neural2 A', ssmlGender: 'FEMALE' },
+      'de-DE-Neural2-B': { name: 'Neural2 B', ssmlGender: 'MALE' },
+    },
+  },
+  // Add additional languages here...
+};
+
 export const defaultVirtues = [
   'courageous', 'compassionate', 'just', 'wise', 'temperate', 'hopeful', 'faithful', 'loving', 'loyal', 'honest',
   'generous', 'patient', 'diligent', 'forgiving', 'kind', 'optimistic', 'reliable', 'respectful', 'selfless', 'sincere',

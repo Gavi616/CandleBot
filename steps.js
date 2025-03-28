@@ -43,7 +43,6 @@ export async function prevStep(message) {
 export async function handleStepOne(gameChannel, game) {
   game.traitsRequested = true;
   gameChannel.send(stepOneMessage);
-  gameChannel.send(stepOneMessage);
   sendCandleStatus(gameChannel, 3);
   await new Promise(resolve => setTimeout(resolve, 5000));
   const traitPromises = [];
@@ -57,18 +56,15 @@ export async function handleStepOne(gameChannel, game) {
   game.characterGenStep++;
   saveGameData();
   gameChannel.send('Traits have now been swapped.\nPlayers, check your DMs and look over the Virtue and Vice you have received.');
-  gameChannel.send('Traits have now been swapped.\nPlayers, check your DMs and look over the Virtue and Vice you have received.');
   await new Promise(resolve => setTimeout(resolve, 3000));
   sendCharacterGenStep(gameChannel, game);
 }
 
 export async function handleStepTwo(gameChannel, game) {
   gameChannel.send(stepTwoMessage);
-  gameChannel.send(stepTwoMessage);
 }
 
 export async function handleStepThree(gameChannel, game) {
-  gameChannel.send(stepThreeMessage);
   gameChannel.send(stepThreeMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
   await getCharacterInfo(gameChannel, gameChannel.id);
@@ -78,7 +74,6 @@ export async function handleStepThree(gameChannel, game) {
 }
 
 export async function handleStepFour(gameChannel, game) {
-  gameChannel.send(stepFourMessage);
   gameChannel.send(stepFourMessage);
   sendCandleStatus(gameChannel, 6);
   await new Promise(resolve => setTimeout(resolve, 5000));
@@ -94,7 +89,6 @@ export async function handleStepFour(gameChannel, game) {
 }
 
 export async function handleStepFive(gameChannel, game) {
-  gameChannel.send(stepFiveMessage);
   gameChannel.send(stepFiveMessage);
   sendCandleStatus(gameChannel, 9);
   await new Promise(resolve => setTimeout(resolve, 5000));
@@ -161,7 +155,6 @@ export async function handleStepFive(gameChannel, game) {
 
 export async function handleStepSix(gameChannel, game) {
   gameChannel.send(stepSixMessage);
-  gameChannel.send(stepSixMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
   const stackPromises = [];
   for (const playerId of game.playerOrder) {
@@ -175,7 +168,6 @@ export async function handleStepSix(gameChannel, game) {
 
 export async function handleStepSeven(gameChannel, game) {
   gameChannel.send(stepSevenMessage);
-  gameChannel.send(stepSevenMessage);
   sendCandleStatus(gameChannel, 10);
   await new Promise(resolve => setTimeout(resolve, 5000));
   gameChannel.send('**It begins.**\n\n*For the remainder of the session, you should endeavor to act in-character.*');
@@ -184,14 +176,12 @@ export async function handleStepSeven(gameChannel, game) {
     const player = await gameChannel.guild.members.fetch(playerId);
     const user = player.user;
     gearPromises.push(user.send('Please use `.gear item1, item2, ...` to input your gear.'));
-    gearPromises.push(user.send('Please use `.gear item1, item2, ...` to input your gear.'));
   }
   await Promise.all(gearPromises);
   saveGameData();
 }
 
 export async function handleStepEight(gameChannel, game) {
-  gameChannel.send(stepEightMessage);
   gameChannel.send(stepEightMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
   const players = game.players;
@@ -231,7 +221,6 @@ export async function handleStepEight(gameChannel, game) {
 
 export async function handleStepNine(gameChannel, game) {
   gameChannel.send(gameStartMessage);
-  gameChannel.send(gameStartMessage);
   game.dicePool = 10;
   game.scene = 1;
   sendCandleStatus(gameChannel, 10);
@@ -239,7 +228,6 @@ export async function handleStepNine(gameChannel, game) {
   const commandUsagePromises = game.playerOrder.map(async (playerId) => {
       try {
         const player = await gameChannel.guild.members.fetch(playerId);
-        await player.user.send(startingMessagePlayer);
         await player.user.send(startingMessagePlayer);
       } catch (error) {
         console.error(`Error DMing player ${playerId}:`, error);
@@ -250,25 +238,11 @@ export async function handleStepNine(gameChannel, game) {
   try {
     const gm = await gameChannel.guild.members.fetch(game.gmId);
     await gm.user.send(startingMessageGM);
-    await gm.user.send(startingMessageGM);
   } catch (error) {
     console.error(`Error DMing GM ${game.gmId}:`, error);
     gameChannel.send(`Could not DM the GM ${game.gmId} for command usage message.`);
   }
   await Promise.all(commandUsagePromises);
-}
-
-async function getCharacterInfo(gameChannel, channelId) {
-  const game = getGameData(channelId);
-  const playerOrder = game.playerOrder;
-  const infoPromises = playerOrder.map(async (playerId) => {
-    const player = await gameChannel.guild.members.fetch(playerId);
-    const user = player.user;
-    await askForCharacterInfo(user, game, playerId, 'name', "What's your character's name or nickname?", 60000);
-    await askForCharacterInfo(user, game, playerId, 'look', 'What does your character look like at a quick glance?', 60000);
-    await askForCharacterInfo(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
-  });
-  await Promise.all(infoPromises);
 }
 
 async function getCharacterInfo(gameChannel, channelId) {

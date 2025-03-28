@@ -3,16 +3,8 @@ import { Readable } from 'stream';
 import ffmpeg from 'ffmpeg-static';
 import fs from 'fs';
 import ytdl from 'ytdl-core';
-import {
-  joinVoiceChannel,
-  createAudioPlayer,
-  createAudioResource,
-  AudioPlayerStatus,
-  getVoiceConnection,
-  StreamType
-  getVoiceConnection,
-  StreamType
-} from '@discordjs/voice';
+import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection,
+  StreamType } from '@discordjs/voice';
 import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments, languageOptions } from './config.js'; // Import languageOptions here
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
@@ -281,69 +273,6 @@ export async function playRandomConflictSound(voiceChannel) {
   }
 }
 
-export async function playRandomConflictSound(voiceChannel) {
-  try {
-    if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
-      console.error(`Invalid voice channel.`);
-      return;
-    }
-
-    const connection = getVoiceConnection(voiceChannel.guild.id);
-
-    if (!connection) {
-      console.error(`Not connected to a voice channel.`);
-      return;
-    }
-    
-    // Get the directory name of the current module
-    const __filename = fileURLToPath(import.meta.url);
-    const __dirname = path.dirname(__filename);
-
-    // Construct the path to the audio files directory
-    const audioFilesDir = path.join(__dirname, 'audio_files');
-
-    // Get a list of all files in the audio_files directory
-    const files = fs.readdirSync(audioFilesDir);
-
-    // Filter for files matching the pattern 'two_[number].mp3'
-    const conflictSounds = files.filter(file => file.startsWith('two_') && file.endsWith('.mp3'));
-
-    if (conflictSounds.length === 0) {
-      console.error('No conflict sound files found.');
-      return;
-    }
-
-    // Select a random sound file
-    const randomSound = conflictSounds[Math.floor(Math.random() * conflictSounds.length)];
-    const soundFilePath = path.join(audioFilesDir, randomSound);
-
-    // Create an audio resource from the file
-    const resource = createAudioResource(soundFilePath);
-
-    // Create an audio player and play the resource
-    const player = createAudioPlayer();
-    player.play(resource);
-    connection.subscribe(player);
-
-    player.on('error', error => {
-      console.error('Error playing conflict sound:', error);
-    });
-
-    // Wait for the sound to finish playing
-    await new Promise((resolve, reject) => {
-      player.on(AudioPlayerStatus.Idle, () => {
-        resolve();
-      });
-
-      player.on('error', (error) => {
-        reject(error);
-      });
-    });
-  } catch (error) {
-    console.error('Error in playRandomConflictSound:', error);
-  }
-}
-
 export async function requestConsent(user, prompt, yesId, noId, time, title = 'Consent Required') {
   console.log(`requestConsent: Called for user ${user.tag} with prompt: ${prompt}`);
   try {
@@ -494,17 +423,13 @@ export async function sendDM(user, message) {
 }
 
 export async function askForCharacterInfo(user, game, playerId, field, question, time) {
-export async function askForCharacterInfo(user, game, playerId, field, question, time) {
   let input;
-  while (true) {
   while (true) {
     const response = await getDMResponse(user, question, time, m => m.author.id === playerId);
     if (response) {
       input = response.trim();
-      input = response.trim();
       if (!input) {
         await user.send('Invalid input. Please provide a non-empty value.');
-        continue;
         continue;
       }
       input = sanitizeString(input);
@@ -513,17 +438,6 @@ export async function askForCharacterInfo(user, game, playerId, field, question,
       } else {
         input = normalizeSentence(input);
       }
-      const confirmation = await confirmInput(user, `Is this correct?\n${input}`, time);
-      if (confirmation) {
-        game.players[playerId][field] = input;
-        await user.send(`Your character's ${field} has been recorded.`);
-        return;
-      } else {
-        continue;
-      }
-    } else {
-      await user.send(`Request timed out. Please provide your ${field} again.`);
-      continue;
       const confirmation = await confirmInput(user, `Is this correct?\n${input}`, time);
       if (confirmation) {
         game.players[playerId][field] = input;
@@ -547,28 +461,18 @@ export async function askForTraits(message, gameChannel, game, playerId) {
   do {
     const response = await getDMResponse(user, 'Please send a Virtue and a Vice, separated by a comma (e.g., "courageous, greedy").\nEach should be a single vague but descriptive adjective. (e.g. Sharpshooter => Steady)\nVirtues solve more problems than they create.\nVices cause more problems than they solve.', TRAIT_TIMEOUT, m => m.author.id === playerId, "Request for Traits");
     if (response) {
-        if (response.trim() === "?") {
-            virtue = getRandomVirtue();
-            vice = getRandomVice();
-            await user.send(`Random traits have been assigned:\nVirtue: ${virtue}\nVice: ${vice}`);
-        } else {
-            [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
-            virtue = normalizeVirtueVice(virtue);
-            vice = normalizeVirtueVice(vice);
-        }
+      if (response.trim() === "?") {
+          virtue = getRandomVirtue();
+          vice = getRandomVice();
+          await user.send(`Random traits have been assigned:\nVirtue: ${virtue}\nVice: ${vice}`);
+      } else {
+          [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
+          virtue = normalizeVirtueVice(virtue);
+          vice = normalizeVirtueVice(vice);
+      }
 
       const confirmation = await confirmInput(user, `Are you happy with these Traits?\nVirtue: ${virtue}\nVice: ${vice}`, TRAIT_TIMEOUT, "Confirm these Traits");
-        if (response.trim() === "?") {
-            virtue = getRandomVirtue();
-            vice = getRandomVice();
-            await user.send(`Random traits have been assigned:\nVirtue: ${virtue}\nVice: ${vice}`);
-        } else {
-            [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
-            virtue = normalizeVirtueVice(virtue);
-            vice = normalizeVirtueVice(vice);
-        }
 
-      const confirmation = await confirmInput(user, `Are you happy with these Traits?\nVirtue: ${virtue}\nVice: ${vice}`, TRAIT_TIMEOUT, "Confirm these Traits");
       if (!confirmation) {
         continue;
       }
@@ -587,10 +491,7 @@ export async function askForTraits(message, gameChannel, game, playerId) {
 }
 
 export async function askForMoment(user, game, playerId, time) {
-export async function askForMoment(user, game, playerId, time) {
   let input;
-  while (true) {
-    const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
   while (true) {
     const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
     if (response) {
@@ -599,26 +500,14 @@ export async function askForMoment(user, game, playerId, time) {
             return;
         }
       input = response.trim();
-        if (response.trim() === "?") {
-            assignRandomMoment(user, game.players[playerId]);
-            return;
-        }
-      input = response.trim();
+
       if (!input) {
         await user.send('Invalid Moment. Please provide a non-empty value.');
         continue;
-        continue;
       }
+
       input = sanitizeString(input);
       input = normalizeSentence(input);
-      const confirmation = await confirmInput(user, `Are you happy with your Moment?\n${input}`, time);
-      if (confirmation) {
-        game.players[playerId].moment = input;
-        saveGameData();
-        return;
-      } else {
-        continue;
-      }
       const confirmation = await confirmInput(user, `Are you happy with your Moment?\n${input}`, time);
       if (confirmation) {
         game.players[playerId].moment = input;
@@ -653,20 +542,6 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
             saveGameData();
             return input;
         }
-        if (response.trim() === "?") {
-            if (isThreat) {
-                input = assignRandomBrink(true);
-            } else {
-                input = assignRandomBrink(false);
-            }
-            
-            const characterName = game.players[playerId].name || user.username;
-            input = normalizeBrink(input, characterName, isThreat);
-            game.players[playerId].brink = input;
-            await user.send(`A random Brink has been assigned: ${input}`);
-            saveGameData();
-            return input;
-        }
       input = response;
       if (!input) {
         await user.send('Invalid Brink. Please provide a non-empty value.');
@@ -681,7 +556,6 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
       } else {
         input = normalizeBrink(input, characterName);
       }
-      const confirmation = await confirmInput(user, `Are you happy with your Brink?\n${input}`, time, "Confirm Your Brink");
       const confirmation = await confirmInput(user, `Are you happy with your Brink?\n${input}`, time, "Confirm Your Brink");
       if (confirmation) {
         game.players[playerId].brink = input;
@@ -857,26 +731,12 @@ export async function playAudioFromUrl(url, voiceChannel) {
     }
 
     const connection = getVoiceConnection(voiceChannel.guild.id);
-    const connection = getVoiceConnection(voiceChannel.guild.id);
 
-    if (!connection) {
-      console.error(`Not connected to a voice channel.`);
     if (!connection) {
       console.error(`Not connected to a voice channel.`);
       return;
     }
 
-    let resource;
-    if (ytdl.validateURL(url)) {
-      // Handle YouTube URLs
-      const stream = ytdl(url, { filter: 'audioonly' });
-      resource = createAudioResource(stream);
-    } else {
-      // Handle other URLs (like Discord attachments)
-      resource = createAudioResource(url, {
-        inputType: StreamType.OggOpus,
-      });
-    }
     let resource;
     if (ytdl.validateURL(url)) {
       // Handle YouTube URLs
@@ -908,17 +768,6 @@ export async function playAudioFromUrl(url, voiceChannel) {
     });
   } catch (error) {
     console.error('Error in playAudioFromUrl:', error);
-  }
-}
-
-export async function getAudioDuration(url) {
-  try {
-    const info = await getInfo(url);
-    const durationSeconds = parseInt(info.videoDetails.lengthSeconds);
-    return durationSeconds * 1000; // Convert to ms
-  } catch (error) {
-    console.error(`Error getting audio duration for ${url}:`, error);
-    return null;
   }
 }
 

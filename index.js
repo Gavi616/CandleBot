@@ -19,14 +19,12 @@ import { leaveGame } from './commands/leavegame.js';
 import { cancelGame } from './commands/cancelgame.js';
 import { died } from './commands/died.js';
 import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
-import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
 const version = '0.9.936a';
 const botName = 'Ten Candles Bot';
-export const isTesting = false;
 export const isTesting = false;
 let botRestarted = false;
 
@@ -49,7 +47,6 @@ client.once('ready', async () => {
   if (isTesting) {
     console.log('-- Testing Mode Engaged! --');
     await sendTestDM(client, 'Listening for test commands.');
-    await sendTestDM(client, 'Listening for test commands.');
     return;
   }
 
@@ -66,7 +63,6 @@ client.once('ready', async () => {
         if (channel) {
           await channel.send(`**${botName}** has restarted and found one or more games in-progress.`);
           if (game.characterGenStep < 9) {
-            await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs repeatedly, contact the developer and/or consider using `.cancelgame`*");
             await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs repeatedly, contact the developer and/or consider using `.cancelgame`*");
             await sendCharacterGenStep(channel, game);
           } else if (game.inLastStand) {
@@ -97,7 +93,6 @@ client.once('ready', async () => {
             }
           } else {
             await gameStatus(channel);
-            await channel.send("GM continues narration until a Player uses `.conflict` to move the story forward.");
             await channel.send("GM continues narration until a Player uses `.conflict` to move the story forward.");
           }
         }
@@ -179,11 +174,7 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(prefix.length).split(/ +/);
   const command = args.shift().toLowerCase();
 
-  const args = message.content.slice(prefix.length).split(/ +/);
-  const command = args.shift().toLowerCase();
-
   if (message.channel.type === ChannelType.DM) {
-    if (message.content.startsWith(prefix)) {
     if (message.content.startsWith(prefix)) {
       console.log('Command:', message.content, 'from', userName, 'in a Direct Message.');
     }
@@ -511,9 +502,7 @@ export async function playRecordings(message) {
         if (game.gameMode === 'voice-plus-text') {
           const voiceChannelId = game.voiceChannelId;
           const voiceChannel = client.channels.cache.get(voiceChannelId);
-          const voiceChannel = client.channels.cache.get(voiceChannelId);
 
-          // Voice Channel Connection Check
           // Voice Channel Connection Check
           const existingConnection = getVoiceConnection(message.guild.id);
           if (!existingConnection) {
@@ -560,11 +549,6 @@ export async function playRecordings(message) {
             if (duration) {
               await new Promise(resolve => setTimeout(resolve, duration));
             }
-            const duration = await getAudioDuration(players[userId].recording);
-            message.channel.send(`Click the link to listen to ${players[userId].name}'s final message: ${players[userId].recording}`);
-            if (duration) {
-              await new Promise(resolve => setTimeout(resolve, duration));
-            }
           } else {
             message.channel.send(`Playing *${players[userId].name}'s final message...*`);
             message.channel.send(players[userId].recording);
@@ -573,7 +557,6 @@ export async function playRecordings(message) {
           }
         }
       } else {
-        message.channel.send(`No playable recording found for <@${userId}> / ${players[userId].name}.`);
         message.channel.send(`No playable recording found for <@${userId}> / ${players[userId].name}.`);
       }
 
@@ -686,136 +669,6 @@ export async function testTTS(message, args) {
     return;
   }
 
-  // Create language select menu
-  const languageSelectMenu = new StringSelectMenuBuilder()
-    .setCustomId('language_select')
-    .setPlaceholder('Select a language')
-    .addOptions(Object.keys(languageOptions).map(key => {
-      //console.log(`Adding language option: Label - ${languageOptions[key].name}, Value - ${key}`); // Removed this log
-      return {
-        label: languageOptions[key].name,
-        value: key,
-        default: false, // Initialize all options as not default
-      };
-    }));
-
-  // Create voice select menu (initially with a placeholder option)
-  const voiceSelectMenu = new StringSelectMenuBuilder()
-    .setCustomId('voice_select')
-    .setPlaceholder('Select a voice')
-    .addOptions([{
-      label: 'Select a language first',
-      value: 'placeholder',
-    }])
-    .setDisabled(true);
-
-  // Create preview button
-  const previewButton = new ButtonBuilder()
-    .setCustomId('preview_voice')
-    .setLabel('Preview Voice')
-    .setStyle(ButtonStyle.Primary)
-    .setDisabled(true);
-
-  // Create action rows
-  const languageRow = new ActionRowBuilder().addComponents(languageSelectMenu);
-  const voiceRow = new ActionRowBuilder().addComponents(voiceSelectMenu);
-  const buttonRow = new ActionRowBuilder().addComponents(previewButton);
-
-  // Create embed
-  const testEmbed = new EmbedBuilder()
-    .setColor(0x0099FF)
-    .setTitle('Test Google Cloud TTS')
-    .setDescription('Select a language and voice to preview.');
-
-  // Send the embed
-  const embedMessage = await message.channel.send({ embeds: [testEmbed], components: [languageRow, voiceRow, buttonRow] });
-
-  // Create collector
-  const filter = (interaction) => interaction.user.id === message.author.id && interaction.message.id === embedMessage.id;
-  const collector = message.channel.createMessageComponentCollector({ filter, componentType: ComponentType.StringSelect, time: 60000 });
-
-  let selectedLanguage = null;
-  let selectedVoice = null;
-
-  collector.on('collect', async (interaction) => {
-    await interaction.deferUpdate();
-
-    if (interaction.customId === 'language_select') {
-      selectedLanguage = interaction.values[0];
-      selectedVoice = null; // Reset selected voice when language changes
-
-      console.log(`Selected Language: ${selectedLanguage}`); // Kept this log
-
-      // Update language select menu
-      const updatedLanguageOptions = languageSelectMenu.options.map(option => {
-        if (option.data) {
-          // This is the first time, so we need to access data.label and data.value
-          return {
-            label: option.data.label,
-            value: option.data.value,
-            default: option.data.value === selectedLanguage,
-          };
-        } else {
-          // This is the second time, so we already have label and value
-          return {
-            label: option.label,
-            value: option.value,
-            default: option.value === selectedLanguage,
-          };
-        }
-      });
-      languageSelectMenu.setOptions(updatedLanguageOptions);
-
-      // Update voice select menu
-      const newVoiceOptions = Object.entries(languageOptions[selectedLanguage].voices).map(([key, value]) => {
-        //console.log(`Adding voice option: Label - ${value.name}, Value - ${key}`); // Removed this log
-        return {
-          label: value.name,
-          value: key,
-          default: false, // Initialize all options as not default
-        };
-      });
-
-      //console.log("New Voice Options:", newVoiceOptions); // Removed this log
-
-      voiceSelectMenu.setOptions(newVoiceOptions)
-        .setDisabled(false)
-        .setPlaceholder(`Select a voice in ${languageOptions[selectedLanguage].name}`); // Update placeholder
-
-      previewButton.setDisabled(true); // Disable preview button until a voice is selected
-
-      await embedMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
-    } else if (interaction.customId === 'voice_select') {
-      selectedVoice = interaction.values[0];
-      console.log(`Selected Voice: ${selectedVoice}`); // Kept this log
-
-      // Update the options to set the selected voice as default
-      const updatedVoiceOptions = voiceSelectMenu.options.map(option => {
-        if (option.data) {
-          // This is the first time, so we need to access data.label and data.value
-          return {
-            label: option.data.label,
-            value: option.data.value,
-            default: option.data.value === selectedVoice,
-          };
-        } else {
-          // This is the second time, so we already have label and value
-          return {
-            label: option.label,
-            value: option.value,
-            default: option.value === selectedVoice,
-          };
-        }
-      });
-      voiceSelectMenu.setOptions(updatedVoiceOptions);
-
-      previewButton.setDisabled(false); // Enable preview button when a voice is selected
-      await embedMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
-    }
-  });
-
-  const buttonCollector = message.channel.createMessageComponentCollector({ filter, componentType: ComponentType.Button, time: 60000 });
-
   buttonCollector.on('collect', async (interaction) => {
     await interaction.deferUpdate();
 
@@ -825,7 +678,6 @@ export async function testTTS(message, args) {
         return;
       }
 
-      // Join the voice channel only when the preview button is clicked
       const existingConnection = getVoiceConnection(voiceChannel.guild.id);
       if (!existingConnection) {
         joinVoiceChannel({

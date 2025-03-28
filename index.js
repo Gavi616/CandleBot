@@ -19,12 +19,14 @@ import { leaveGame } from './commands/leavegame.js';
 import { cancelGame } from './commands/cancelgame.js';
 import { died } from './commands/died.js';
 import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
+import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
 const version = '0.9.936a';
 const botName = 'Ten Candles Bot';
+export const isTesting = false;
 export const isTesting = false;
 let botRestarted = false;
 
@@ -47,6 +49,7 @@ client.once('ready', async () => {
   if (isTesting) {
     console.log('-- Testing Mode Engaged! --');
     await sendTestDM(client, 'Listening for test commands.');
+    await sendTestDM(client, 'Listening for test commands.');
     return;
   }
 
@@ -64,7 +67,21 @@ client.once('ready', async () => {
           await channel.send(`**${botName}** has restarted and found one or more games in-progress.`);
           if (game.characterGenStep < 9) {
             await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs repeatedly, contact the developer and/or consider using `.cancelgame`*");
+            await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs repeatedly, contact the developer and/or consider using `.cancelgame`*");
             await sendCharacterGenStep(channel, game);
+          } else if (game.inLastStand) {
+            if (Object.values(game.players).every(player => player.isDead)) {
+              if (game.endGame) {
+                await channel.send("The game has ended. Restarting **Session Data Management** processes.");
+                await cancelGame(channel);
+              } else {
+                await channel.send("All characters are dead. Restarting the **Final Recordings**.");
+                await playRecordings(channel);
+              }
+            } else {
+              await gameStatus(channel);
+              await channel.send("We are in **The Last Stand**. GM continues narration until all characters have `.died @PlayerId [cause]`");
+            }
           } else if (game.inLastStand) {
             if (Object.values(game.players).every(player => player.isDead)) {
               if (game.endGame) {
@@ -80,6 +97,7 @@ client.once('ready', async () => {
             }
           } else {
             await gameStatus(channel);
+            await channel.send("GM continues narration until a Player uses `.conflict` to move the story forward.");
             await channel.send("GM continues narration until a Player uses `.conflict` to move the story forward.");
           }
         }
@@ -161,7 +179,11 @@ client.on('messageCreate', async (message) => {
   const args = message.content.slice(prefix.length).split(/ +/);
   const command = args.shift().toLowerCase();
 
+  const args = message.content.slice(prefix.length).split(/ +/);
+  const command = args.shift().toLowerCase();
+
   if (message.channel.type === ChannelType.DM) {
+    if (message.content.startsWith(prefix)) {
     if (message.content.startsWith(prefix)) {
       console.log('Command:', message.content, 'from', userName, 'in a Direct Message.');
     }
@@ -465,6 +487,7 @@ export async function playRecordings(message) {
   const players = game.players;
 
   message.channel.send(finalRecordingsMessage);
+  message.channel.send(finalRecordingsMessage);
 
   // Total of 13 second 'moment of silence'
   await new Promise(resolve => setTimeout(resolve, 10000));
@@ -474,6 +497,8 @@ export async function playRecordings(message) {
 
   async function playNextRecording(index) {
     if (index >= playerIds.length) {
+      // All recordings have been played
+      await cancelGame(message);
       // All recordings have been played
       await cancelGame(message);
       return;
@@ -486,7 +511,9 @@ export async function playRecordings(message) {
         if (game.gameMode === 'voice-plus-text') {
           const voiceChannelId = game.voiceChannelId;
           const voiceChannel = client.channels.cache.get(voiceChannelId);
+          const voiceChannel = client.channels.cache.get(voiceChannelId);
 
+          // Voice Channel Connection Check
           // Voice Channel Connection Check
           const existingConnection = getVoiceConnection(message.guild.id);
           if (!existingConnection) {
@@ -513,12 +540,15 @@ export async function playRecordings(message) {
           if (players[userId].recording.startsWith('http')) {
             try {
               message.channel.send(`Playing *${players[userId].name}'s final message...*`);
+              message.channel.send(`Playing *${players[userId].name}'s final message...*`);
               await playAudioFromUrl(players[userId].recording, voiceChannel);
             } catch (error) {
               console.error(`Error playing audio recording for ${userId}:`, error);
               message.channel.send(`Error playing recording for <@${userId}>. Check console for details.`);
             }
           } else {
+            message.channel.send(`Playing *${players[userId].name}'s final message...*`);
+            message.channel.send(players[userId].recording);
             message.channel.send(`Playing *${players[userId].name}'s final message...*`);
             message.channel.send(players[userId].recording);
           }
@@ -530,12 +560,20 @@ export async function playRecordings(message) {
             if (duration) {
               await new Promise(resolve => setTimeout(resolve, duration));
             }
+            const duration = await getAudioDuration(players[userId].recording);
+            message.channel.send(`Click the link to listen to ${players[userId].name}'s final message: ${players[userId].recording}`);
+            if (duration) {
+              await new Promise(resolve => setTimeout(resolve, duration));
+            }
           } else {
+            message.channel.send(`Playing *${players[userId].name}'s final message...*`);
+            message.channel.send(players[userId].recording);
             message.channel.send(`Playing *${players[userId].name}'s final message...*`);
             message.channel.send(players[userId].recording);
           }
         }
       } else {
+        message.channel.send(`No playable recording found for <@${userId}> / ${players[userId].name}.`);
         message.channel.send(`No playable recording found for <@${userId}> / ${players[userId].name}.`);
       }
 

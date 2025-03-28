@@ -1,12 +1,13 @@
 import { sendCharacterGenStep, swapTraits, swapBrinks } from './chargen.js';
 import { saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
-  askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM, normalizeBrink,
+  askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM,
   handleTraitStacking, askForVoicePreference } from './utils.js';
 import { client } from './index.js';
 import { TRAIT_TIMEOUT, BRINK_TIMEOUT, gameStartMessage, startingMessageGM,
   startingMessagePlayer, stepOneMessage, stepTwoMessage, stepThreeMessage,
   stepFourMessage, stepFiveMessage, stepSixMessage, stepSevenMessage,
   stepSevenReminder, stepEightMessage } from './config.js';
+import { ChannelType } from 'discord.js';
 
 export async function prevStep(message) {
   const channelId = message.channel.id;
@@ -109,18 +110,20 @@ export async function handleStepFive(gameChannel, game) {
       prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
       isThreat = true;
     } else if (participantId === game.gmId) {
-      const nextPlayerId = brinkOrder[(brinkOrder.indexOf(participantId) + 1) % brinkOrder.length];
-      const nextPlayer = game.players[nextPlayerId];
-      const nextCharacterName = nextPlayer.name || nextPlayer.playerUsername || "Someone";
-      prompt = `Write a phrase to follow, “Someone has seen you..” & a detail about what you saw ${nextCharacterName} do in a moment of desperation.`;
+      prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
+      isThreat = true;
     } else {
       const nextParticipantId = brinkOrder[(brinkOrder.indexOf(participantId) + 1) % brinkOrder.length];
       const nextPlayer = game.players[nextParticipantId];
-      const nextCharacterName = nextPlayer.name || nextPlayer.playerUsername || "Someone";
-      prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${nextCharacterName} do in a moment of desperation.`;
+      if (nextPlayer) {
+        const nextCharacterName = nextPlayer.name || nextPlayer.playerUsername || "Someone";
+        prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${nextCharacterName} do in a moment of desperation.`;
+      } else {
+        console.error(`No next player found after ${participantId}.`);
+        return;
+      }
     }
-    game.brinkResponses = game.brinkResponses || {};
-    game.brinkResponses[participantId] = await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT, isThreat);
+    await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT, isThreat);
   });
 
   await Promise.all(brinkPromises);
@@ -170,7 +173,7 @@ export async function handleStepSeven(gameChannel, game) {
   gameChannel.send(stepSevenMessage);
   sendCandleStatus(gameChannel, 10);
   await new Promise(resolve => setTimeout(resolve, 5000));
-  gameChannel.send('**It begins.**\n\n*For the remainder of the session, you should endeavor to act in-character.*');
+  gameChannel.send(stepSevenReminder);
   const gearPromises = [];
   for (const playerId of game.playerOrder) {
     const player = await gameChannel.guild.members.fetch(playerId);
@@ -187,32 +190,34 @@ export async function handleStepEight(gameChannel, game) {
   const players = game.players;
   const gameMode = game.gameMode;
 
-  const finalRecordingPromises = [];
-  const voicePreferencePromises = [];
-  for (const userId in players) {
-    if (gameMode === "voice-plus-text") {
+  const finalRecordingPromises = Object.keys(players).map(async (userId) => {
+    try {
       const user = await client.users.fetch(userId);
-      voicePreferencePromises.push(askForVoicePreference(user, game, userId, 60000));
-    }
-  }
-  await Promise.all(voicePreferencePromises);
-  for (const userId in players) {
-    finalRecordingPromises.push(
-      (async () => {
+      if (gameMode === "text-only") {
+        await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as a text message.');
+      } else {
+        await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as an audio message (mobile app only) or a text message.');
+      }
+      const member = gameChannel.guild.members.cache.get(userId);
+      const voiceChannelId = game.voiceChannelId;
+      const voiceChannel = client.channels.cache.get(voiceChannelId);
+      if (gameMode === "voice-plus-text" && voiceChannel && member.voice.channelId === voiceChannelId) {
         try {
-          const user = await client.users.fetch(userId);
-          if (gameMode === "text-only") {
-            await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as a text message.');
-          } else {
-            await sendDM(user, 'Please record your final message for the world, in character. Send it via DM as an audio message (mobile app only) or a text message.');
+          const ttsConsent = await requestConsent(user, 'Would you like to use Text to Speech to read your final message aloud at the appropriate time during the session?', 'tts_consent_yes', 'tts_consent_no', 60000, 'Text-to-Speech Consent');
+          if (ttsConsent) {
+            await askForVoicePreference(user, game, userId, 600000);
           }
         } catch (error) {
-          console.error(`Error DMing user ${userId}:`, error);
-          gameChannel.send(`Could not DM user ${userId} for final recordings.`);
+          console.error(`Error during TTS consent or voice preference for user ${userId}:`, error);
+          gameChannel.send(`An error occurred during TTS consent or voice preference for <@${userId}>.`);
         }
-      })()
-    );
-  }
+      }
+    } catch (error) {
+      console.error(`Error DMing user ${userId}:`, error);
+      gameChannel.send(`Could not DM user ${userId} for final recordings.`);
+    }
+  });
+
   await Promise.all(finalRecordingPromises);
   game.characterGenStep++;
   saveGameData();

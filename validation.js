@@ -25,7 +25,10 @@ export const gameDataSchema = Joi.object({
       momentBurned: Joi.boolean().required(),
       isDead: Joi.boolean().required(),
       recording: Joi.string().allow('').optional(),
-      gear: Joi.array().items(Joi.string()).optional()
+      gear: Joi.array().items(Joi.string()).optional(),
+      stackOrder: Joi.array().items(Joi.string()).optional(),
+      stackConfirmed: Joi.boolean().optional(),
+      momentOnTop: Joi.boolean().optional()
     }).required()
   ).required(),
   playerOrder: Joi.array().items(Joi.string().pattern(/^\d+$/)).required(),

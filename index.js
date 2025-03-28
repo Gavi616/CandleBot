@@ -1,14 +1,17 @@
 import 'dotenv/config';
-import { Client, EmbedBuilder, ChannelType, GatewayIntentBits, MessageMentions,
+import {
+  Client, EmbedBuilder, ChannelType, GatewayIntentBits, MessageMentions,
   PermissionsBitField, AttachmentBuilder, MessageFlags, ButtonStyle,
-  StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ComponentType } from 'discord.js';
+  StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ComponentType
+} from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
 import { TEST_USER_ID, finalRecordingsMessage, languageOptions } from './config.js';
 import {
   sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames, getAudioDuration,
   loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, sendTestDM, deleteGameData,
-  playAudioFromUrl, playRandomConflictSound, speakInChannel } from './utils.js';
+  playAudioFromUrl, playRandomConflictSound, speakInChannel, requestConsent
+} from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
@@ -23,7 +26,7 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.936a';
+const version = '0.9.939a';
 const botName = 'Ten Candles Bot';
 export const isTesting = false;
 let botRestarted = false;
@@ -105,14 +108,13 @@ client.once('ready', async () => {
 client.on('interactionCreate', async (interaction) => {
   if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
 
-  // Check if the interaction is from the testTTS command
   if (interaction.message.embeds.length > 0 && interaction.message.embeds[0].title === 'Test Google Cloud TTS') {
     // Handle testTTS interactions here
     if (interaction.customId === 'preview_voice') {
       // Handle preview_voice button click
-      return; // Exit early since we've handled the testTTS interaction
+      return;
     } else if (interaction.customId === 'language_select' || interaction.customId === 'voice_select') {
-        return;
+      return;
     }
   }
 
@@ -122,39 +124,64 @@ client.on('interactionCreate', async (interaction) => {
     return;
   }
 
-  if (interaction.customId === 'gm_consent_yes' || interaction.customId === 'gm_consent_no' || interaction.customId === 'player_consent_yes' || interaction.customId === 'player_consent_no' || interaction.customId === 'input_yes' || interaction.customId === 'input_no') {
-    return;
+  // Disable buttons after interaction
+  if (interaction.isButton()) {
+    const row = ActionRowBuilder.from(interaction.message.components[0]);
+    row.components.forEach(component => component.setDisabled(true));
+    await interaction.update({ components: [row] });
   }
 
-  const row = ActionRowBuilder.from(interaction.message.components[0]);
-  row.components.forEach(component => component.setDisabled(true));
-  await interaction.update({ components: [row] });
-
-  if (interaction.customId === 'sacrifice_yes' || interaction.customId === 'sacrifice_no') {
+  if (interaction.customId.startsWith('final_recording_')) {
+    // Handle final recording confirmation
+    if (interaction.customId === 'final_recording_yes') {
+      interaction.editReply({ content: 'Your final recording has been received.' });
+    } else if (interaction.customId === 'final_recording_no') {
+      interaction.editReply({ content: 'Your recording has been saved, but you can send another one if you wish.' });
+    }
+  } else if (interaction.customId.startsWith('tts_consent_')) {
+    // Handle TTS consent
+    if (interaction.customId === 'tts_consent_yes') {
+      interaction.editReply({ content: 'You have consented to use Text-to-Speech.' });
+    } else if (interaction.customId === 'tts_consent_no') {
+      interaction.editReply({ content: 'You have declined to use Text-to-Speech.' });
+    }
+  } else if (interaction.customId.startsWith('language_select') || interaction.customId.startsWith('voice_select') || interaction.customId.startsWith('preview_voice') || interaction.customId.startsWith('use_voice')) {
+    // Handle voice preference
+    await handleVoicePreferenceInteraction(interaction, game);
+  } else if (interaction.customId === 'sacrifice_yes' || interaction.customId === 'sacrifice_no') {
     if (interaction.customId === 'sacrifice_yes') {
       await interaction.editReply({ content: 'You have chosen to sacrifice your character for narration rights!' });
     } else {
       await interaction.editReply({ content: 'You chose not to sacrifice your character.' });
     }
-    return;
-  }
-
-  if (interaction.customId === 'brink_yes' || interaction.customId === 'brink_no') {
+  } else if (interaction.customId === 'brink_yes' || interaction.customId === 'brink_no') {
     if (interaction.customId === 'brink_yes') {
       await interaction.editReply({ content: 'You embraced your Brink!' });
     } else {
       await interaction.editReply({ content: 'You chose not to embrace your Brink, for now.' });
     }
-    return;
-  }
-
-  if (interaction.customId === 'cancel_game_yes' || interaction.customId === 'cancel_game_no') {
+  } else if (interaction.customId === 'cancel_game_yes' || interaction.customId === 'cancel_game_no') {
     if (interaction.customId === 'cancel_game_yes') {
       await interaction.editReply({ content: 'Game cancelled.' });
     } else {
       await interaction.editReply({ content: 'Game cancellation aborted.' });
     }
+  } else if (interaction.customId === 'input_yes' || interaction.customId === 'input_no') {
     return;
+  } else if (interaction.customId.startsWith('player_consent_') || interaction.customId.startsWith('gm_consent_')) {
+    if (interaction.customId === 'player_consent_yes') {
+      interaction.editReply({ content: 'You have consented to play.' });
+    } else if (interaction.customId === 'player_consent_no') {
+      interaction.editReply({ content: 'You have declined to play.' });
+    } else if (interaction.customId === 'gm_consent_yes') {
+      interaction.editReply({ content: 'You have consented to GM.' });
+    } else if (interaction.customId === 'gm_consent_no') {
+      interaction.editReply({ content: 'You have declined to GM.' });
+    }
+  } else if (interaction.customId === 'moment') {
+    return;
+  } else {
+    console.warn(`Unhandled interaction: ${interaction.customId}`);
   }
 });
 
@@ -191,21 +218,22 @@ client.on('messageCreate', async (message) => {
       }
     }
 
+    const game = findGameByUserId(userId);
+    if (!game) {
+      try {
+        await message.author.send(`You are not currently in a game in any channel.`);
+      } catch (error) {
+        console.error('Could not send DM to user:', error);
+      }
+      return;
+    }
+
     if (message.content.toLowerCase() === '.x') {
-      const game = getGameData(channelId);
-      if (!game) {
-        try {
-          await message.author.send(`You are not currently in a game in any channel.`);
-        } catch (error) {
-          console.error('Could not send DM to user:', error);
-        }
-      } else {
-        const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
-        if (gameChannelId) {
-          const gameChannel = client.channels.cache.get(gameChannelId);
-          if (gameChannel) {
-            gameChannel.send(`One or more players and/or the GM have asked the acting player or GM to please quickly move on from the current action or scene.`);
-          }
+      const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
+      if (gameChannelId) {
+        const gameChannel = client.channels.cache.get(gameChannelId);
+        if (gameChannel) {
+          gameChannel.send(`One or more players and/or the GM have asked the acting player or GM to please quickly move on from the current action or scene.`);
         }
       }
     } else if (message.content.toLowerCase() === '.me') {
@@ -213,19 +241,14 @@ client.on('messageCreate', async (message) => {
     } else if (message.content.toLowerCase().startsWith('.gear')) {
       const args = message.content.slice(prefix.length).split(/ +/);
       const command = args.shift().toLowerCase();
-      const game = findGameByUserId(userId);
-      if (!game) {
-        await message.author.send(`You are not currently in a game in any channel.`);
-        return;
-      }
       const player = game.players[userId];
-      if (game.characterGenStep === 7) {
-        await handleGearCommand(message.author, game, userId, args);
-      } else if (game.characterGenStep > 7 && !game.inLastStand) {
+      if (game.characterGenStep === 7 || (game.characterGenStep > 7 && !game.inLastStand)) {
         await handleGearCommand(message.author, game, userId, args);
       } else {
         await message.author.send(`The \`.gear\` command can only be used during Character Generation Step 7 or during a scene.`);
       }
+    } else if (game.characterGenStep === 8) {
+      await handleFinalRecording(message);
     }
   }
 
@@ -235,7 +258,6 @@ client.on('messageCreate', async (message) => {
       const command = args.shift().toLowerCase();
       console.log('Command:', message.content, 'from', userName, 'in ' + message.channel.name);
 
-      // Blocklist check (only for .startgame)
       if (blocklist[userId] && command === 'startgame') {
         await message.author.send(`Message removed. You are blocked from using the \`.startgame\` command.`);
         try {
@@ -246,7 +268,6 @@ client.on('messageCreate', async (message) => {
         return;
       }
 
-      // Game-required command check
       const game = gameData[channelId];
       const gameRequiredCommands = ['conflict', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x', 'theme'];
       if (gameRequiredCommands.includes(command)) {
@@ -270,7 +291,7 @@ client.on('messageCreate', async (message) => {
         }
       }
 
-      // Command handling
+      // Channel command handling
       if (command === 'help') {
         const isAdmin = message.member.permissions.has('Administrator');
         const helpEmbed = getHelpEmbed(isAdmin, message);
@@ -472,6 +493,38 @@ export async function setTheme(message, args) {
   }
 }
 
+async function handleFinalRecording(message) {
+  const userId = message.author.id;
+  const game = findGameByUserId(userId);
+
+  if (!game) return;
+  if (game.characterGenStep !== 8) return;
+  if (!game.players[userId]) return;
+
+  const player = game.players[userId];
+
+  if (message.attachments.size > 0) {
+    const attachment = message.attachments.first();
+    if (attachment.contentType.startsWith('audio/')) {
+      player.recording = attachment.url;
+    }
+  } else {
+    player.recording = message.content;
+  }
+
+  const isFinal = await requestConsent(message.author, 'Are you happy with this recording?', 'final_recording_yes', 'final_recording_no', 60000, 'Final Recording Confirmation');
+
+  if (isFinal) {
+    await message.author.send('Your final recording has been received.');
+    const allPlayersHaveRecordings = Object.values(game.players).every(player => player.recording);
+    if (allPlayersHaveRecordings) {
+      await playRecordings(message);
+    }
+  } else {
+    await message.author.send('Your recording has been saved, but you can send another one if you wish.');
+  }
+}
+
 export async function playRecordings(message) {
   const channelId = message.channel.id;
   const game = gameData[channelId];
@@ -488,9 +541,6 @@ export async function playRecordings(message) {
 
   async function playNextRecording(index) {
     if (index >= playerIds.length) {
-      // All recordings have been played
-      await cancelGame(message);
-      // All recordings have been played
       await cancelGame(message);
       return;
     }
@@ -529,20 +579,22 @@ export async function playRecordings(message) {
           if (players[userId].recording.startsWith('http')) {
             try {
               message.channel.send(`Playing *${players[userId].name}'s final message...*`);
-              message.channel.send(`Playing *${players[userId].name}'s final message...*`);
               await playAudioFromUrl(players[userId].recording, voiceChannel);
             } catch (error) {
               console.error(`Error playing audio recording for ${userId}:`, error);
               message.channel.send(`Error playing recording for <@${userId}>. Check console for details.`);
             }
           } else {
-            message.channel.send(`Playing *${players[userId].name}'s final message...*`);
-            message.channel.send(players[userId].recording);
-            message.channel.send(`Playing *${players[userId].name}'s final message...*`);
-            message.channel.send(players[userId].recording);
+            if (players[userId].language && players[userId].voice) {
+              const verbiage = players[userId].recording;
+              await message.channel.send(`Playing *${players[userId].name}'s final message...*`);
+              await speakInChannel(verbiage, voiceChannel, players[userId].voice);
+            } else {
+              message.channel.send(`Playing *${players[userId].name}'s final message...*`);
+              message.channel.send(players[userId].recording);
+            }
           }
         } else {
-          // Handle text-only mode logic
           if (players[userId].recording.startsWith('http')) {
             const duration = await getAudioDuration(players[userId].recording);
             message.channel.send(`Click the link to listen to ${players[userId].name}'s final message: ${players[userId].recording}`);
@@ -550,8 +602,6 @@ export async function playRecordings(message) {
               await new Promise(resolve => setTimeout(resolve, duration));
             }
           } else {
-            message.channel.send(`Playing *${players[userId].name}'s final message...*`);
-            message.channel.send(players[userId].recording);
             message.channel.send(`Playing *${players[userId].name}'s final message...*`);
             message.channel.send(players[userId].recording);
           }
@@ -585,7 +635,6 @@ export async function testRecordingCommand(message, args) {
   if (targetChannel.type === ChannelType.GuildVoice) {
     const existingConnection = getVoiceConnection(targetChannel.guild.id);
     if (!existingConnection) {
-      // If not connected, join the voice channel
       joinVoiceChannel({
         channelId: targetChannelId,
         guildId: targetChannel.guild.id,
@@ -600,10 +649,8 @@ async function testDiceSounds(message, args) {
   try {
     const channelId = args[0];
 
-    // Try to get the channel from the cache first
     let voiceChannel = client.channels.cache.get(channelId);
 
-    // If not found in cache, fetch it from the API
     if (!voiceChannel) {
       try {
         voiceChannel = await client.channels.fetch(channelId);
@@ -625,7 +672,6 @@ async function testDiceSounds(message, args) {
       return;
     }
 
-    // Get the guild object
     const guild = client.guilds.cache.get(guildId);
 
     if (!guild) {

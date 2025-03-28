@@ -134,8 +134,7 @@ export const defaultThreatBrinks = [
   "as a profound sense of dread washed over me."
 ];
 
-export const confirmButtonYesLabel = 'Yes';
-export const confirmButtonNoLabel = 'Try again';
+export const newGameMessage = `**The World of Ten Candles**\nYour characters will face unimaginable terrors in the dying of the light.\n\n**Though you know your characters will die, you must have hope that they will survive.**\n\n**Ten Candles** focuses around shared narrative control.\nEveryone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\nLet\'s begin character generation. Check your DMs for instructions.\n\n`;
 
 export const stepOneMessage = `**Step One: Players Write Traits**\nPlayers, check your DMs and reply with a Virtue and a Vice.`;
 

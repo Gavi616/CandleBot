@@ -136,10 +136,7 @@ export function swapBrinks(players, playerOrder, gmId) {
 
   const penultimatePlayerId = playerOrder[playerOrder.length - 1];
   const threatCharacterName = players[penultimatePlayerId]?.name || "Someone";
-  swappedPlayers[gmId] = {
-    ...swappedPlayers[gmId],
-    brink: normalizeBrink(players[penultimatePlayerId]?.brink, threatCharacterName, true)
-  };
+  const gmBrink = normalizeBrink(players[penultimatePlayerId]?.brink, threatCharacterName, true);
 
-  return swappedPlayers;
+  return { ...swappedPlayers, [gmId]: { ...swappedPlayers[gmId], brink: gmBrink } };
 }

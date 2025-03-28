@@ -41,20 +41,26 @@ export async function askForVoicePreference(user, game, playerId, time) {
     }])
     .setDisabled(true);
   const voiceRow = new ActionRowBuilder().addComponents(voiceSelectMenu);
+  const previewVoiceButton = new ButtonBuilder()
+    .setCustomId('preview_voice')
+    .setLabel('Preview Voice')
+    .setStyle(ButtonStyle.Secondary)
+    .setDisabled(true);
   const useVoiceButton = new ButtonBuilder()
     .setCustomId('use_voice')
     .setLabel('Use this Voice')
     .setStyle(ButtonStyle.Primary)
     .setDisabled(true);
-  const buttonRow = new ActionRowBuilder().addComponents(useVoiceButton);
+  const buttonRow = new ActionRowBuilder().addComponents(previewVoiceButton, useVoiceButton);
   const voiceEmbed = new EmbedBuilder()
     .setColor(0x0099FF)
     .setTitle('Choose Your Character\'s Voice')
-    .setDescription(`Please choose a language and voice for your character.`);
+    .setDescription(`Please choose a language and voice for your character. Once you have made your selections, you can preview the voice or click "Use this Voice".`);
   const voiceMessage = await user.send({ embeds: [voiceEmbed], components: [languageRow, voiceRow, buttonRow] });
 
   const filter = (interaction) => interaction.user.id === user.id && interaction.message.id === voiceMessage.id;
   const collector = dmChannel.createMessageComponentCollector({ filter, componentType: ComponentType.StringSelect, time });
+  const buttonCollector = dmChannel.createMessageComponentCollector({ filter, componentType: ComponentType.Button, time });
   let selectedLanguage = null;
   let selectedVoice = null;
   return new Promise((resolve) => {
@@ -62,7 +68,7 @@ export async function askForVoicePreference(user, game, playerId, time) {
       await interaction.deferUpdate();
       if (interaction.customId === 'language_select') {
         selectedLanguage = interaction.values[0];
-        selectedVoice = null; // Reset selected voice when language changes
+        selectedVoice = null;
         const newVoiceOptions = Object.entries(languageOptions[selectedLanguage].voices).map(([key, value]) => {
           return {
             label: value.name,
@@ -73,6 +79,7 @@ export async function askForVoicePreference(user, game, playerId, time) {
         voiceSelectMenu.setOptions(newVoiceOptions)
           .setDisabled(false)
           .setPlaceholder(`Select a voice in ${languageOptions[selectedLanguage].name}`);
+        previewVoiceButton.setDisabled(true);
         useVoiceButton.setDisabled(true);
         await voiceMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
       } else if (interaction.customId === 'voice_select') {
@@ -93,11 +100,11 @@ export async function askForVoicePreference(user, game, playerId, time) {
           }
         });
         voiceSelectMenu.setOptions(updatedVoiceOptions);
+        previewVoiceButton.setDisabled(false);
         useVoiceButton.setDisabled(false);
         await voiceMessage.edit({ components: [languageRow, voiceRow, buttonRow] });
       }
     });
-    const buttonCollector = dmChannel.createMessageComponentCollector({ filter, componentType: ComponentType.Button, time });
     buttonCollector.on('collect', async (interaction) => {
       await interaction.deferUpdate();
       if (interaction.customId === 'use_voice') {
@@ -111,12 +118,53 @@ export async function askForVoicePreference(user, game, playerId, time) {
         collector.stop();
         buttonCollector.stop();
         resolve();
+      } else if (interaction.customId === 'preview_voice') {
+        if (!selectedLanguage || !selectedVoice) {
+          await interaction.followUp({ content: 'Please select a language and voice first.', ephemeral: true });
+          return;
+        }
+        const existingConnection = getVoiceConnection(interaction.guild.id);
+        if (!existingConnection) {
+          const voiceChannelId = game.voiceChannelId;
+          const voiceChannel = client.channels.cache.get(voiceChannelId);
+          if (voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
+            joinVoiceChannel({
+              channelId: voiceChannelId,
+              guildId: interaction.guild.id,
+              adapterCreator: interaction.guild.voiceAdapterCreator,
+            });
+          } else {
+            await interaction.followUp({ content: 'Voice channel not found.', ephemeral: true });
+            return;
+          }
+        }
+        const languageVerbiage = {
+          'en-US': `This is a voice preview for <@${user.id}> in ${languageOptions['en-US'].name} using Google Cloud Text-To-Speech.`,
+          'en-GB': `This is a voice preview for <@${user.id}> in ${languageOptions['en-GB'].name} using Google Cloud Text-To-Speech.`,
+          'es-ES': `Esta es una vista previa de voz para <@${user.id}> en ${languageOptions['es-ES'].name} usando Google Cloud Text-To-Speech.`,
+          'fr-FR': `Ceci est un aperçu vocal pour <@${user.id}> en ${languageOptions['fr-FR'].name} utilisant Google Cloud Text-To-Speech.`,
+          'de-DE': `Dies ist eine Sprachvorschau für <@${user.id}> in ${languageOptions['de-DE'].name} mit Google Cloud Text-To-Speech.`,
+        };
+        const verbiage = languageVerbiage[selectedLanguage];
+        await interaction.followUp({ content: `Previewing TTS voice ${selectedVoice} in <#${game.voiceChannelId}>.`, ephemeral: true });
+        const voiceChannel = client.channels.cache.get(game.voiceChannelId);
+        await speakInChannel(verbiage, voiceChannel, selectedVoice);
       }
     });
     collector.on('end', async (collected, reason) => {
       if (reason === 'time') {
         await voiceMessage.edit({ content: 'You did not choose a voice in time. Please try again.', embeds: [], components: [] });
         resolve();
+      } else {
+        await voiceMessage.edit({ components: [] });
+      }
+    });
+    buttonCollector.on('end', async (collected, reason) => {
+      if (reason === 'time') {
+        await voiceMessage.edit({ content: 'Response timed out, no TTS Voice was selected.', embeds: [], components: [] });
+        resolve();
+      } else {
+        await voiceMessage.edit({ components: [] });
       }
     });
   });
@@ -304,13 +352,12 @@ export async function requestConsent(user, prompt, yesId, noId, time, title = 'C
     return new Promise((resolve) => {
       collector.on('collect', async (interaction) => {
         console.log(`requestConsent: Button collected: ${interaction.customId} from ${interaction.user.tag}`);
-        row.components.forEach(component => component.setDisabled(true));
-        await interaction.update({ components: [row] });
+        //row.components.forEach(component => component.setDisabled(true));
+        //await interaction.update({ components: [row] });
 
         if (interaction.customId === yesId) {
           resolve(true);
         } else if (interaction.customId === noId) {
-          await user.send({ content: 'You have declined.' });
           resolve(false);
         }
         collector.stop();
@@ -535,9 +582,13 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
                 input = assignRandomBrink(false);
             }
             
-            const characterName = game.players[playerId].name || user.username;
+            const characterName = game.players[playerId]?.name || user.username;
             input = normalizeBrink(input, characterName, isThreat);
-            game.players[playerId].brink = input;
+            if (playerId === game.gmId) {
+              game.gm.brink = input;
+            } else {
+              game.players[playerId].brink = input;
+            }
             await user.send(`A random Brink has been assigned: ${input}`);
             saveGameData();
             return input;
@@ -548,17 +599,19 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
         continue;
       }
       input = sanitizeString(input);
-      const characterName = game.players[playerId].name || user.username;
+      const characterName = game.players[playerId]?.name || user.username;
       if (isThreat) {
         input = normalizeBrink(input, characterName, true);
-      } else if (playerId === game.gmId) {
-        input = normalizeBrink(input, characterName);
       } else {
         input = normalizeBrink(input, characterName);
       }
       const confirmation = await confirmInput(user, `Are you happy with your Brink?\n${input}`, time, "Confirm Your Brink");
       if (confirmation) {
-        game.players[playerId].brink = input;
+        if (playerId === game.gmId) {
+          game.gm.brink = input;
+        } else {
+          game.players[playerId].brink = input;
+        }
         saveGameData();
         return input;
       } else {

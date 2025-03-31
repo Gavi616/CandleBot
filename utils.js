@@ -5,11 +5,11 @@ import fs from 'fs';
 import ytdl from 'ytdl-core';
 import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection,
   StreamType } from '@discordjs/voice';
-import { TRAIT_TIMEOUT, BRINK_TIMEOUT, defaultVirtues, defaultVices, defaultMoments, languageOptions } from './config.js'; // Import languageOptions here
+import { defaultVirtues, defaultVices, defaultMoments, languageOptions } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
-import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks } from './config.js';
+import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks, reminders } from './config.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { isTesting } from './index.js';
 import path from 'path';
@@ -231,15 +231,12 @@ export async function speakInChannel(text, voiceChannel, voiceCode = 'en-US-Stan
   }
 }
 
-export async function sendTestDM(client, message) {
-  if (isTesting) {
-    try {
-      const testUser = await client.users.fetch(TEST_USER_ID);
-      await testUser.send(message);
-      console.log(`Sent test DM to ${testUser.tag}`);
-    } catch (error) {
-      console.error(`Error sending test DM:`, error);
-    }
+export async function respondViaDM(message, dmText) {
+  try {
+    await message.author.send(dmText);
+    return true;
+  } catch (error) {
+    return false;
   }
 }
 
@@ -1161,4 +1158,40 @@ export function saveChannelWhitelist() {
 
 export function isWhitelisted(channelId) {
   return !!channelWhitelist[channelId];
+}
+
+export function startReminderTimers(gameChannel, game) {
+  game.reminderTimers = [];
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 0), reminders[0]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 1), reminders[1]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 2), reminders[2]));
+}
+
+export function clearReminderTimers(game) {
+  if (game.reminderTimers) {
+    game.reminderTimers.forEach(timer => clearTimeout(timer));
+    game.reminderTimers = [];
+  }
+}
+
+function formatDuration(milliseconds) {
+  const totalSeconds = Math.round(milliseconds / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = Math.round(totalSeconds % 60 / 5) * 5; // round to nearest 5 seconds
+  return `${minutes}:${seconds.toString().padStart(2, '0')}`;
+}
+
+async function sendReminder(gameChannel, game, reminderIndex, step) {
+  const gm = await gameChannel.guild.members.fetch(game.gmId);
+  const user = gm.user;
+  const reminderTimes = reminders.map(time => formatDuration(time));
+  const reminderMessage = `**${reminderTimes[reminderIndex]} Reminder**: Character Creation **Step ${step}** is taking longer than expected. Please check with your players to ensure they are responding to their DMs.`;
+  await user.send(reminderMessage);
+  if (reminderIndex === 2) {
+    clearReminderTimers(game);
+  }
+}
+
+export async function findGameByUserId(userId) {
+  return Object.values(gameData).find(game => game.players[userId] || game.gmId === userId);
 }

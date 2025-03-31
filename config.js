@@ -1,9 +1,8 @@
-export const TRAIT_TIMEOUT = 60000;
-export const CANCEL_TIMEOUT = 60000;
 export const CONSENT_TIMEOUT = 60000;
 export const SACRIFICE_TIMEOUT = 60000;
 export const BRINK_TIMEOUT = 60000;
-export const TIME_INTERVAL = 15000;
+
+export const reminders = [120000, 300000, 600000];
 
 export const TEST_USER_ID = '583340515869589522';
 

@@ -9,9 +9,10 @@ import { getHelpEmbed } from './embed.js';
 import { TEST_USER_ID, finalRecordingsMessage, languageOptions } from './config.js';
 import {
   sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames, getAudioDuration,
-  gameData, handleGearCommand, sendTestDM, deleteGameData, playAudioFromUrl, playRandomConflictSound,
+  gameData, handleGearCommand, deleteGameData, playAudioFromUrl, playRandomConflictSound,
   speakInChannel, requestConsent, loadBlockUserList, saveBlockUserList, isWhitelisted,
-  isBlockedUser, loadChannelWhitelist, saveChannelWhitelist, userBlocklist, channelWhitelist
+  isBlockedUser, loadChannelWhitelist, saveChannelWhitelist, userBlocklist, channelWhitelist,
+  respondViaDM, findGameByUserId
 } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
@@ -27,7 +28,7 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.939a';
+const version = '0.9.940a';
 const botName = 'Ten Candles Bot';
 export const isTesting = false;
 let botRestarted = false;
@@ -719,6 +720,18 @@ export async function testTTS(message, args) {
       await embedMessage.edit({ content: 'Test command timed out.', components: [] });
     }
   });
+}
+
+async function sendTestDM(client, message) {
+  if (isTesting) {
+    try {
+      const testUser = await client.users.fetch(TEST_USER_ID);
+      await testUser.send(message);
+      console.log(`Sent test DM to ${testUser.tag}`);
+    } catch (error) {
+      console.error(`Error sending test DM:`, error);
+    }
+  }
 }
 
 client.login(process.env.DISCORD_TOKEN);

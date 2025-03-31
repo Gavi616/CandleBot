@@ -1,5 +1,5 @@
 import { gameData, getGameData, saveGameData, sendDM } from '../utils.js';
-import { CANCEL_TIMEOUT } from '../config.js';
+import { CONSENT_TIMEOUT } from '../config.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
 import { client } from '../index.js';
 
@@ -44,8 +44,8 @@ export async function cancelGame(message) {
 
   const dataMessage = await dmChannel.send({ embeds: [dataEmbed], components: [row] });
 
-  const dataFilter = (interaction) => interaction.user.id === game.initiatorId && interaction.message.id === dataMessage.id; // Check for initiator's ID
-  const dataCollector = dmChannel.createMessageComponentCollector({ filter: dataFilter, time: 600000 }); // 10 minutes seems like ample time
+  const dataFilter = (interaction) => interaction.user.id === game.initiatorId && interaction.message.id === dataMessage.id;
+  const dataCollector = dmChannel.createMessageComponentCollector({ filter: dataFilter, time: CANCEL_TIMEOUT });
 
   dataCollector.on('collect', async (interaction) => {
     await interaction.deferUpdate();

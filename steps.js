@@ -1,12 +1,13 @@
 import { sendCharacterGenStep, swapTraits, swapBrinks } from './chargen.js';
 import { saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
   askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM,
-  handleTraitStacking, askForVoicePreference } from './utils.js';
+  handleTraitStacking, askForVoicePreference, startReminderTimers, clearReminderTimers
+} from './utils.js';
 import { client } from './index.js';
-import { TRAIT_TIMEOUT, BRINK_TIMEOUT, gameStartMessage, startingMessageGM,
-  startingMessagePlayer, stepOneMessage, stepTwoMessage, stepThreeMessage,
-  stepFourMessage, stepFiveMessage, stepSixMessage, stepSevenMessage,
-  stepSevenReminder, stepEightMessage } from './config.js';
+import { gameStartMessage, startingMessageGM, startingMessagePlayer, stepOneMessage,
+  stepTwoMessage, stepThreeMessage, stepFourMessage, stepFiveMessage, stepSixMessage,
+  stepSevenMessage, stepSevenReminder, stepEightMessage
+} from './config.js';
 import { ChannelType } from 'discord.js';
 
 export async function prevStep(message) {
@@ -46,6 +47,7 @@ export async function handleStepOne(gameChannel, game) {
   gameChannel.send(stepOneMessage);
   sendCandleStatus(gameChannel, 3);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   const traitPromises = [];
   for (const playerId of game.playerOrder) {
     const message = await gameChannel.messages.fetch({ limit: 1 }).then(messages => messages.first());
@@ -54,6 +56,7 @@ export async function handleStepOne(gameChannel, game) {
   await Promise.all(traitPromises);
   const swappedTraits = await swapTraits(client, game.players, game, game.guildId);
   game.players = swappedTraits;
+  clearReminderTimers(game);
   game.characterGenStep++;
   saveGameData();
   gameChannel.send('Traits have now been swapped.\nPlayers, check your DMs and look over the Virtue and Vice you have received.');
@@ -68,7 +71,9 @@ export async function handleStepTwo(gameChannel, game) {
 export async function handleStepThree(gameChannel, game) {
   gameChannel.send(stepThreeMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   await getCharacterInfo(gameChannel, gameChannel.id);
+  clearReminderTimers(game);
   game.characterGenStep++;
   saveGameData();
   sendCharacterGenStep(gameChannel, game);
@@ -78,12 +83,14 @@ export async function handleStepFour(gameChannel, game) {
   gameChannel.send(stepFourMessage);
   sendCandleStatus(gameChannel, 6);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   const momentPromises = game.playerOrder.map(async (playerId) => {
     const player = await gameChannel.guild.members.fetch(playerId);
     const user = player.user;
     await askForMoment(user, game, playerId, TRAIT_TIMEOUT);
   });
   await Promise.all(momentPromises);
+  clearReminderTimers(game);
   game.characterGenStep++;
   saveGameData();
   sendCharacterGenStep(gameChannel, game);
@@ -93,6 +100,7 @@ export async function handleStepFive(gameChannel, game) {
   gameChannel.send(stepFiveMessage);
   sendCandleStatus(gameChannel, 9);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   let brinkOrder = getVirtualTableOrder(game, true);
   brinkOrder = brinkOrder.filter(participantId => game.players[participantId] || participantId === game.gmId);
   const threatPlayerId = brinkOrder[(brinkOrder.indexOf(game.gmId) + 1) % brinkOrder.length];
@@ -151,6 +159,7 @@ export async function handleStepFive(gameChannel, game) {
     console.error(`Error DMing GM ${game.gmId} for swapped brink:`, error);
     gameChannel.send(`Could not DM the GM for swapped brink.`);
   }
+  clearReminderTimers(game);
   game.characterGenStep++;
   saveGameData();
   sendCharacterGenStep(gameChannel, game);
@@ -159,6 +168,7 @@ export async function handleStepFive(gameChannel, game) {
 export async function handleStepSix(gameChannel, game) {
   gameChannel.send(stepSixMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   const stackPromises = [];
   for (const playerId of game.playerOrder) {
     const player = await gameChannel.guild.members.fetch(playerId);
@@ -173,6 +183,7 @@ export async function handleStepSeven(gameChannel, game) {
   gameChannel.send(stepSevenMessage);
   sendCandleStatus(gameChannel, 10);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   gameChannel.send(stepSevenReminder);
   const gearPromises = [];
   for (const playerId of game.playerOrder) {
@@ -187,6 +198,7 @@ export async function handleStepSeven(gameChannel, game) {
 export async function handleStepEight(gameChannel, game) {
   gameChannel.send(stepEightMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   const players = game.players;
   const gameMode = game.gameMode;
 
@@ -219,6 +231,7 @@ export async function handleStepEight(gameChannel, game) {
   });
 
   await Promise.all(finalRecordingPromises);
+  clearReminderTimers(game);
   game.characterGenStep++;
   saveGameData();
   sendCharacterGenStep(gameChannel, game);
@@ -230,6 +243,7 @@ export async function handleStepNine(gameChannel, game) {
   game.scene = 1;
   sendCandleStatus(gameChannel, 10);
   await new Promise(resolve => setTimeout(resolve, 5000));
+  startReminderTimers(gameChannel, game);
   const commandUsagePromises = game.playerOrder.map(async (playerId) => {
       try {
         const player = await gameChannel.guild.members.fetch(playerId);
@@ -248,6 +262,7 @@ export async function handleStepNine(gameChannel, game) {
     gameChannel.send(`Could not DM the GM ${game.gmId} for command usage message.`);
   }
   await Promise.all(commandUsagePromises);
+  clearReminderTimers(game);
 }
 
 async function getCharacterInfo(gameChannel, channelId) {

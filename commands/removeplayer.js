@@ -1,4 +1,5 @@
-import { gameData, sanitizeString, saveGameData } from '../utils.js';
+import { gameData, sanitizeString, saveGameData, getDMResponse } from '../utils.js';
+import { CONSENT_TIMEOUT } from '../config.js';
 
 export async function removePlayer(message, args) {
   const channelId = message.channel.id;
@@ -11,7 +12,7 @@ export async function removePlayer(message, args) {
 
   if (message.author.id !== game.gmId) {
     try {
-      await message.author.send({ content: 'Only the GM can use this command.' }); // Changed to message.author.send()
+      await message.author.send({ content: 'Only the GM can use this command.' });
       await message.delete();
     } catch (error) {
       console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
@@ -24,24 +25,31 @@ export async function removePlayer(message, args) {
     return;
   }
 
-  const playerIdToRemove = args[0].replace(/<@!?(\d+)>/, '$1'); // Extract player ID from mention
+  const playerIdToRemove = args[0].replace(/<@!?(\d+)>/, '$1');
 
   if (!game.players[playerIdToRemove]) {
     message.channel.send('Invalid Player ID. Please mention a valid player in this game.');
     return;
   }
 
-  let reason = args.slice(1).join(' '); // Extract the reason (if any)
+  let reason = args.slice(1).join(' ');
 
-  delete game.players[playerIdToRemove];
-  game.playerOrder = game.playerOrder.filter(id => id !== playerIdToRemove);
-  saveGameData();
+  const playerToRemove = await message.guild.members.fetch(playerIdToRemove);
+  const player = playerToRemove.user;
+  const confirmation = await getDMResponse(player, `You are being removed from the game in <#${channelId}>. Do you agree?`, CONSENT_TIMEOUT, m => m.author.id === playerIdToRemove, "Remove Player Confirmation");
 
-  if (reason) {
-    message.channel.send(`<@${playerIdToRemove}> has been removed from the game. Reason: ${reason}`);
+  if (confirmation && confirmation.toLowerCase() === 'yes') {
+    delete game.players[playerIdToRemove];
+    game.playerOrder = game.playerOrder.filter(id => id !== playerIdToRemove);
+    saveGameData();
+
+    if (reason) {
+      message.channel.send(`<@${playerIdToRemove}> has been removed from the game. Reason: ${reason}`);
+    } else {
+      message.channel.send(`<@${playerIdToRemove}> has been removed from the game.`);
+    }
   } else {
-    message.channel.send(`<@${playerIdToRemove}> has been removed from the game.`);
+    message.channel.send(`<@${playerIdToRemove}> did not confirm or timed out. They have not been removed from the game.`);
   }
-  
   saveGameData();
 }

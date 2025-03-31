@@ -16,7 +16,9 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 export const gameData = {};
-export const blocklist = {};
+export const userBlocklist = {};
+export const channelWhitelist = {};
+
 const ttsClient = new textToSpeech.TextToSpeechClient();
 
 export async function askForVoicePreference(user, game, playerId, time) {
@@ -352,8 +354,6 @@ export async function requestConsent(user, prompt, yesId, noId, time, title = 'C
     return new Promise((resolve) => {
       collector.on('collect', async (interaction) => {
         console.log(`requestConsent: Button collected: ${interaction.customId} from ${interaction.user.tag}`);
-        //row.components.forEach(component => component.setDisabled(true));
-        //await interaction.update({ components: [row] });
 
         if (interaction.customId === yesId) {
           resolve(true);
@@ -718,30 +718,6 @@ export function printActiveGames() {
   console.log('--------------------');
 }
 
-export function loadBlocklist() {
-  try {
-    const data = fs.readFileSync('blocklist.json', 'utf8');
-    const loadedBlocklist = JSON.parse(data);
-
-    Object.keys(blocklist).forEach(key => delete blocklist[key]);
-
-    Object.assign(blocklist, loadedBlocklist);
-    console.log('Blocklist loaded successfully.');
-  } catch (err) {
-    console.error(`Error loading blocklist: ${err.message}`);
-    Object.keys(blocklist).forEach(key => delete blocklist[key]);
-    console.log('Blocklist initialized.');
-  }
-}
-
-export function saveBlocklist() {
-  try {
-    fs.writeFileSync('blocklist.json', JSON.stringify(blocklist));
-  } catch (err) {
-    console.error(`Error saving blocklist: ${err.message}`);
-  }
-}
-
 export async function sendCandleStatus(channel, litCandles) {
   if (litCandles === 10) {
     channel.send('***Ten Candles are lit.***');
@@ -792,11 +768,9 @@ export async function playAudioFromUrl(url, voiceChannel) {
 
     let resource;
     if (ytdl.validateURL(url)) {
-      // Handle YouTube URLs
       const stream = ytdl(url, { filter: 'audioonly' });
       resource = createAudioResource(stream);
     } else {
-      // Handle other URLs (like Discord attachments)
       resource = createAudioResource(url, {
         inputType: StreamType.OggOpus,
       });
@@ -828,7 +802,7 @@ export async function getAudioDuration(url) {
   try {
     const info = await getInfo(url);
     const durationSeconds = parseInt(info.videoDetails.lengthSeconds);
-    return durationSeconds * 1000; // Convert to ms
+    return durationSeconds * 1000;
   } catch (error) {
     console.error(`Error getting audio duration for ${url}:`, error);
     return null;
@@ -1118,7 +1092,7 @@ export async function handleTraitStacking(user, game, playerId) {
 }
 
 async function runMomentLottery(user, game, lotteryPlayers) {
-  await new Promise(resolve => setTimeout(resolve, 5000)); // Wait for 5 seconds
+  await new Promise(resolve => setTimeout(resolve, 5000));
   const winnerId = lotteryPlayers[Math.floor(Math.random() * lotteryPlayers.length)];
   const winner = await client.users.fetch(winnerId);
   const loser = user;
@@ -1130,4 +1104,61 @@ async function runMomentLottery(user, game, lotteryPlayers) {
     await loser.send('You did not win the Moment lottery. Please continue to build your stack.');
     player.momentOnTop = false;
   }
+}
+
+export function loadBlockUserList() {
+  try {
+    const data = fs.readFileSync('userBlocklist.json', 'utf8');
+    const loadedBlocklist = JSON.parse(data);
+
+    Object.keys(userBlocklist).forEach(key => delete userBlocklist[key]);
+
+    Object.assign(userBlocklist, loadedBlocklist);
+    console.log('User Blocklist loaded successfully.');
+  } catch (err) {
+    console.error(`Error loading user blocklist: ${err.message}`);
+    Object.keys(userBlocklist).forEach(key => delete userBlocklist[key]);
+    console.log('User Blocklist initialized.');
+  }
+}
+
+export function saveBlockUserList() {
+  try {
+    fs.writeFileSync('userBlocklist.json', JSON.stringify(userBlocklist));
+  } catch (err) {
+    console.error(`Error saving user blocklist: ${err.message}`);
+  }
+}
+
+export function isBlockedUser(userId) {
+  return !!userBlocklist[userId];
+}
+
+export function loadChannelWhitelist() {
+  try {
+    const data = fs.readFileSync('channelWhitelist.json', 'utf8');
+    const loadedChannelWhitelist = JSON.parse(data);
+
+    Object.keys(channelWhitelist).forEach(key => delete channelWhitelist[key]);
+
+    Object.assign(channelWhitelist, loadedChannelWhitelist);
+    console.log('Channel Whitelist loaded successfully.');
+  } catch (err) {
+    console.error(`Error loading channel whitelist: ${err.message}`);
+    Object.keys(channelWhitelist).forEach(key => delete channelWhitelist[key]);
+    console.log('Channel Whitelist initialized.');
+  }
+}
+
+export function saveChannelWhitelist() {
+  try {
+    fs.writeFileSync('channelWhitelist.json', JSON.stringify(channelWhitelist));
+    console.log('Channel Whitelist saved successfully.');
+  } catch (err) {
+    console.error(`Error saving channel whitelist: ${err.message}`);
+  }
+}
+
+export function isWhitelisted(channelId) {
+  return !!channelWhitelist[channelId];
 }

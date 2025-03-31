@@ -9,8 +9,9 @@ import { getHelpEmbed } from './embed.js';
 import { TEST_USER_ID, finalRecordingsMessage, languageOptions } from './config.js';
 import {
   sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames, getAudioDuration,
-  loadBlocklist, saveBlocklist, gameData, blocklist, handleGearCommand, sendTestDM, deleteGameData,
-  playAudioFromUrl, playRandomConflictSound, speakInChannel, requestConsent
+  gameData, handleGearCommand, sendTestDM, deleteGameData, playAudioFromUrl, playRandomConflictSound,
+  speakInChannel, requestConsent, loadBlockUserList, saveBlockUserList, isWhitelisted,
+  isBlockedUser, loadChannelWhitelist, saveChannelWhitelist, userBlocklist, channelWhitelist
 } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
@@ -53,7 +54,8 @@ client.once('ready', async () => {
     return;
   }
 
-  loadBlocklist();
+  loadBlockUserList();
+  loadChannelWhitelist();
   loadGameData();
   printActiveGames();
 
@@ -105,193 +107,93 @@ client.once('ready', async () => {
   }
 });
 
-client.on('interactionCreate', async (interaction) => {
-  if (!interaction.isButton() && !interaction.isStringSelectMenu()) return;
-
-  if (interaction.message.embeds.length > 0 && interaction.message.embeds[0].title === 'Test Google Cloud TTS') {
-    // Handle testTTS interactions here
-    if (interaction.customId === 'preview_voice') {
-      // Handle preview_voice button click
-      return;
-    } else if (interaction.customId === 'language_select' || interaction.customId === 'voice_select') {
-      return;
-    }
-  }
-
-  const game = findGameByUserId(interaction.user.id);
-  if (!game) {
-    console.error("Game not found for interaction.", interaction);
-    return;
-  }
-
-  // Disable buttons after interaction
-  if (interaction.isButton()) {
-    const row = ActionRowBuilder.from(interaction.message.components[0]);
-    row.components.forEach(component => component.setDisabled(true));
-    await interaction.update({ components: [row] });
-  }
-
-  if (interaction.customId.startsWith('final_recording_')) {
-    // Handle final recording confirmation
-    if (interaction.customId === 'final_recording_yes') {
-      interaction.editReply({ content: 'Your final recording has been received.' });
-    } else if (interaction.customId === 'final_recording_no') {
-      interaction.editReply({ content: 'Your recording has been saved, but you can send another one if you wish.' });
-    }
-  } else if (interaction.customId.startsWith('tts_consent_')) {
-    // Handle TTS consent
-    if (interaction.customId === 'tts_consent_yes') {
-      interaction.editReply({ content: 'You have consented to use Text-to-Speech.' });
-    } else if (interaction.customId === 'tts_consent_no') {
-      interaction.editReply({ content: 'You have declined to use Text-to-Speech.' });
-    }
-  } else if (interaction.customId.startsWith('language_select') || interaction.customId.startsWith('voice_select') || interaction.customId.startsWith('preview_voice') || interaction.customId.startsWith('use_voice')) {
-    // Handle voice preference
-    await handleVoicePreferenceInteraction(interaction, game);
-  } else if (interaction.customId === 'sacrifice_yes' || interaction.customId === 'sacrifice_no') {
-    if (interaction.customId === 'sacrifice_yes') {
-      await interaction.editReply({ content: 'You have chosen to sacrifice your character for narration rights!' });
-    } else {
-      await interaction.editReply({ content: 'You chose not to sacrifice your character.' });
-    }
-  } else if (interaction.customId === 'brink_yes' || interaction.customId === 'brink_no') {
-    if (interaction.customId === 'brink_yes') {
-      await interaction.editReply({ content: 'You embraced your Brink!' });
-    } else {
-      await interaction.editReply({ content: 'You chose not to embrace your Brink, for now.' });
-    }
-  } else if (interaction.customId === 'cancel_game_yes' || interaction.customId === 'cancel_game_no') {
-    if (interaction.customId === 'cancel_game_yes') {
-      await interaction.editReply({ content: 'Game cancelled.' });
-    } else {
-      await interaction.editReply({ content: 'Game cancellation aborted.' });
-    }
-  } else if (interaction.customId === 'input_yes' || interaction.customId === 'input_no') {
-    return;
-  } else if (interaction.customId.startsWith('player_consent_') || interaction.customId.startsWith('gm_consent_')) {
-    if (interaction.customId === 'player_consent_yes') {
-      interaction.editReply({ content: 'You have consented to play.' });
-    } else if (interaction.customId === 'player_consent_no') {
-      interaction.editReply({ content: 'You have declined to play.' });
-    } else if (interaction.customId === 'gm_consent_yes') {
-      interaction.editReply({ content: 'You have consented to GM.' });
-    } else if (interaction.customId === 'gm_consent_no') {
-      interaction.editReply({ content: 'You have declined to GM.' });
-    }
-  } else if (interaction.customId === 'moment') {
-    return;
-  } else {
-    console.warn(`Unhandled interaction: ${interaction.customId}`);
-  }
-});
-
-export function findGameByUserId(userId) {
-  return Object.values(gameData).find(game =>
-    game.gmId === userId || (game.players && game.players[userId])
-  );
-}
-
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
-  const channelId = message.channel.id;
   const userId = message.author.id;
   const userName = message.author.username;
 
-  const args = message.content.slice(prefix.length).split(/ +/);
-  const command = args.shift().toLowerCase();
-
   if (message.channel.type === ChannelType.DM) {
     if (message.content.startsWith(prefix)) {
-      console.log('Command:', message.content, 'from', userName, 'in a Direct Message.');
-    }
-
-    if (isTesting && command.startsWith('test')) {
-      if (command === 'testrecording') {
-        await testRecordingCommand(message, args);
-      } else if (command === 'testdicesounds') {
-        await testDiceSounds(message, args);
-      } else if (command === 'testtts') {
-        await testTTS(message, args);
-      } else {
-        await message.author.send(`Test command: \`.${command}\` not implemented.`);
-      }
-    }
-
-    const game = findGameByUserId(userId);
-    if (!game) {
-      try {
-        await message.author.send(`You are not currently in a game in any channel.`);
-      } catch (error) {
-        console.error('Could not send DM to user:', error);
-      }
-      return;
-    }
-
-    if (message.content.toLowerCase() === '.x') {
-      const gameChannelId = Object.keys(gameData).find(key => gameData[key] === game);
-      if (gameChannelId) {
-        const gameChannel = client.channels.cache.get(gameChannelId);
-        if (gameChannel) {
-          gameChannel.send(`One or more players and/or the GM have asked the acting player or GM to please quickly move on from the current action or scene.`);
-        }
-      }
-    } else if (message.content.toLowerCase() === '.me') {
-      me(message);
-    } else if (message.content.toLowerCase().startsWith('.gear')) {
       const args = message.content.slice(prefix.length).split(/ +/);
       const command = args.shift().toLowerCase();
-      const player = game.players[userId];
-      if (game.characterGenStep === 7 || (game.characterGenStep > 7 && !game.inLastStand)) {
-        await handleGearCommand(message.author, game, userId, args);
-      } else {
-        await message.author.send(`The \`.gear\` command can only be used during Character Generation Step 7 or during a scene.`);
+
+      console.log('DM Command:', message.content, 'from', userName);
+
+      if (isTesting && command === 'testtts') {
+        await testTTS(message, args);
+      } else if (isTesting && command === 'testdice') {
+        await testDiceSounds(message, args);
+      } else if (isTesting && command === 'testfinalrec') {
+        await testRecordingCommand(message, args);
+      } else if (command === 'me') {
+        await me(message);
+      } else if (command === 'gear') {
+        const game = findGameByUserId(userId);
+        if (game) {
+          await handleGearCommand(message.author, game, userId, args);
+        } else {
+          await message.author.send('You are not currently in a game.');
+        }
+      } else if (command === 'x') {
+        const game = findGameByUserId(userId);
+        if (game) {
+          await message.author.send('You have anonymously signaled to wrap up the scene.');
+        } else {
+          await message.author.send('You are not currently in a game.');
+        }
       }
-    } else if (game.characterGenStep === 8) {
+    } else {
       await handleFinalRecording(message);
     }
-  }
-
-  if (message.channel.type !== ChannelType.DM) {
+    return;
+  } else if (message.channel.type !== ChannelType.DM) {
     if (message.content.startsWith(prefix)) {
       const args = message.content.slice(prefix.length).split(/ +/);
       const command = args.shift().toLowerCase();
-      console.log('Command:', message.content, 'from', userName, 'in ' + message.channel.name);
 
-      if (blocklist[userId] && command === 'startgame') {
-        await message.author.send(`Message removed. You are blocked from using the \`.startgame\` command.`);
+      console.log('Channel command:', message.content, 'from', userName, 'in ' + message.channel.name);
+
+      if (command === 'whitelist') {
         try {
-          await message.delete();
-        } catch (deleteError) {
-          console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
+          await whitelistChannel(message, args);
+        } catch (error) {
+          console.error(`Error handling ${command} command:`, error);
+          message.channel.send(`An error occurred while processing the ${command} command. Check the console for details.`);
         }
         return;
+      }
+
+      if (isBlockedUser(userId) && command === 'startgame') {
+        await respondViaDM(message, `You are blocked from using the \`.startgame\` command.`, 'startgame');
+        return;
+      }
+
+      if (command === 'startgame') {
+        if (!isWhitelisted(message.channel.id)) {
+          try {
+            await message.author.send(`The channel <#${message.channel.id}> is not whitelisted for \`.startgame\` commands. Please ask an administrator to use \`.whitelist ${message.channel.id}\` to enable games in this channel.`);
+            await message.delete();
+          } catch (error) {
+            console.error(`Error sending DM or deleting message:`, error);
+          }
+          return;
+        }
       }
 
       const game = gameData[channelId];
       const gameRequiredCommands = ['conflict', 'nextstep', 'gamestatus', 'removeplayer', 'leavegame', 'cancelgame', 'died', 'me', 'x', 'theme'];
       if (gameRequiredCommands.includes(command)) {
         if (!game) {
-          await message.author.send({ content: `Message removed. There is no **Ten Candles** game in progress in <#${channelId}>.` });
-          try {
-            await message.delete();
-          } catch (deleteError) {
-            console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
-          }
+          await respondViaDM(message, `There is no **Ten Candles** game in progress in <#${channelId}>.`, 'gameRequiredCommands');
           return;
         }
         if (!game.players[userId] && game.gmId !== userId) {
-          await message.author.send({ content: `Message removed. You are not a participant in the **Ten Candles** game in <#${channelId}>.` });
-          try {
-            await message.delete();
-          } catch (deleteError) {
-            console.error(`Failed to delete message in <#${channelId}>: ${deleteError.message}`);
-          }
+          await respondViaDM(message, `You are not a participant in the **Ten Candles** game in <#${channelId}>.`, 'gameRequiredCommands');
           return;
         }
       }
 
-      // Channel command handling
       if (command === 'help') {
         const isAdmin = message.member.permissions.has('Administrator');
         const helpEmbed = getHelpEmbed(isAdmin, message);
@@ -316,9 +218,9 @@ client.on('messageCreate', async (message) => {
         await cancelGame(message);
       } else if (command === 'died') {
         await died(message, args);
-      } else if (command === 'block') {
+      } else if (command === 'blockuser') {
         await blockUser(message, args);
-      } else if (command === 'unblock') {
+      } else if (command === 'unblockuser') {
         await unblockUser(message, args);
       }
     }
@@ -417,47 +319,112 @@ export async function startTruthsSystem(client, message, channelId) {
   saveGameData();
 }
 
-function blockUser(message, args) {
+export async function whitelistChannel(message, args) {
   if (!message.member.permissions.has('Administrator') && !message.member.permissions.has('KickMembers')) {
-    message.channel.send('Only administrators or users with the `Kick Members` permission can use this command.');
+    try {
+      await message.author.send('Only administrators or users with the `Kick Members` permission can use this command.');
+      await message.delete();
+    } catch (error) {
+      console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
+    }
     return;
   }
 
-  const userId = args[0];
-  const reason = args.slice(1).join(' ') || 'No reason provided.';
-  if (!blocklist[userId]) {
-    blocklist[userId] = sanitizeString(reason);
-    saveBlocklist();
-    if (message) {
-      message.channel.send(`${userId} has been added to the blocklist. Reason: ${reason}`);
+  const channelToWhitelistId = parseChannelId(args[0]);
+  if (!channelToWhitelistId) {
+    try {
+      await message.author.send('Invalid channel ID or mention.');
+      await message.delete();
+    } catch (error) {
+      console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
     }
-  } else {
-    if (message) {
-      message.channel.send(`${userId} is already on the blocklist. Reason: ${blocklist[userId]}`);
+    return;
+  }
+
+  let channel = client.channels.cache.get(channelToWhitelistId);
+  if (!channel) {
+    try {
+      channel = await client.channels.fetch(channelToWhitelistId);
+    } catch (error) {
+      console.error(`whitelistChannel: Error fetching channel ${channelToWhitelistId}:`, error);
+      try {
+        await message.author.send(`Could not find channel with ID ${channelToWhitelistId}.`);
+        await message.delete();
+      } catch (error) {
+        console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
+      }
+      return;
     }
   }
 
-  saveGameData();
+  const channelName = channel ? channel.name : 'Unknown Channel';
+  const guildName = channel ? channel.guild.name : 'Unknown Server';
+  const adminName = message.member.id;
+  const botName = client.user.id;
+  const channelType = channel.type === ChannelType.GuildVoice ? 'voice' : 'text';
+
+  let dmText;
+  let channelText;
+  if (args[1] && args[1].toLowerCase() === 'remove') {
+    if (channelWhitelist[channelToWhitelistId]) {
+      delete channelWhitelist[channelToWhitelistId];
+      dmText = `**<#${channelToWhitelistId}>** has been removed from the channel whitelist.`;
+      channelText = `This ${channelType} channel has been removed from the whitelist for <@${botName}> by <@${adminName}>.`;
+    } else {
+      dmText = `**<#${channelToWhitelistId}>** was not on the channel whitelist.`;
+    }
+  } else {
+    if (!channelWhitelist[channelToWhitelistId]) {
+      channelWhitelist[channelToWhitelistId] = true;
+      dmText = `**<#${channelToWhitelistId}>** has been added to the channel whitelist.`;
+      channelText = `This ${channelType} channel has been whitelisted for <@${botName}> by <@${adminName}>. Use the \`.startgame\` command to begin a session.`;
+    } else {
+      dmText = `**<#${channelToWhitelistId}>** is already on the channel whitelist.`;
+    }
+  }
+
+  try {
+    await message.author.send(dmText);
+  } catch (error) {
+    console.error('whitelistChannel: Failed to send DM:', error);
+  }
+  try {
+    await message.delete();
+  } catch (error) {
+    console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
+  }
+  if (channelWhitelist[channelToWhitelistId] || (args[1] && args[1].toLowerCase() === 'remove')) {
+    saveChannelWhitelist();
+  }
+  if (channelText) {
+    try {
+      await channel.send(channelText);
+    } catch (error) {
+      console.error(`whitelistChannel: Failed to send message to channel ${channelToWhitelistId}:`, error);
+    }
+  }
+  return;
 }
 
-function unblockUser(message, args) {
-  if (!message.member.permissions.has('Administrator') && !message.member.permissions.has('KickMembers')) {
-    message.channel.send('Only administrators or users with the `Kick Members` permission can use this command.');
-    return;
+export function parseChannelId(input) {
+  if (!input) return null;
+
+  const channelIdMatch = input.match(/<#(\d+)>/);
+
+  if (channelIdMatch) {
+    return channelIdMatch[1];
   }
 
-  const userId = args[0];
-  if (blocklist[userId]) {
-    delete blocklist[userId];
-    saveBlocklist();
-    if (message)
-      message.channel.send(`${userId} has been removed from the blocklist.`);
-  } else {
-    if (message)
-      message.channel.send(`${userId} is not on the blocklist.`);
+  if (/^\d+$/.test(input)) {
+    return input;
   }
 
-  saveGameData();
+  const channelName = input.startsWith('#') ? input.slice(1) : input;
+  const channel = client.channels.cache.find(c => c.name === channelName);
+  if (channel) {
+    return channel.id;
+  }
+  return null;
 }
 
 export async function setTheme(message, args) {

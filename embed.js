@@ -38,8 +38,9 @@ export function getHelpEmbed(isAdmin, message) {
   if (isAdmin) {
     baseEmbed.addFields({
       name: '\n\n**Moderation Commands:**',
-      value: '`.block <User ID> [Reason]`: Block a user *from using* `.startgame` *only*.\n' +
-        '`.unblock <User ID>`: Unblock a user.\n'
+      value: '`.blockuser <User ID> [Reason]`: Block a user *from using the* `.startgame` *command only*.\n' +
+        '`.unblockuser <User ID>`: Unblock a user.\n' +
+        '`.whitelist <Channel ID> [remove]`: Add or remove a channel from the whitelist.\n'
     });
   }
 

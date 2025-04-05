@@ -1,4 +1,5 @@
 export const CONSENT_TIMEOUT = 60000;
+export const TRAIT_TIMEOUT = 60000;
 export const SACRIFICE_TIMEOUT = 60000;
 export const BRINK_TIMEOUT = 60000;
 
@@ -131,6 +132,78 @@ export const defaultThreatBrinks = [
   " with a faint, metallic tang in the air, like blood but not quite.",
   " as the patterns on the walls seemed to writhe and shift.",
   "as a profound sense of dread washed over me."
+];
+
+export const randomNames = [
+  "Aria", "Jasper", "Luna", "Felix", "Nova", "Silas", "Iris", "Orion", "Hazel", "Leo",
+  "Willow", "River", "Skye", "Rowan", "Sage", "Asher", "Ivy", "Finn", "Jade", "Kai",
+  "Aurora", "Phoenix", "Indigo", "Zephyr", "Opal", "Cyrus", "Lyra", "Rhys", "Wren", "Echo"
+];
+
+export const randomLooks = [
+  "wears tattered clothes and has a haunted look in their eyes.",
+  "has a kind face and gentle eyes, but their hands are calloused and worn.",
+  "is always impeccably dressed, even in the most dire circumstances.",
+  "has a wild, untamed appearance, with tangled hair and a fierce gaze.",
+  "is small and wiry, with quick, darting movements.",
+  "has a strong, imposing presence, with broad shoulders and a steady gaze.",
+  "is pale and gaunt, with dark circles under their eyes.",
+  "has a warm smile and a comforting presence.",
+  "is covered in scars, each one telling a story of survival.",
+  "has a quiet, observant demeanor, always watching and listening.",
+  "is tall and lanky, with a nervous energy.",
+  "has a mischievous glint in their eyes and a quick wit.",
+  "is always fidgeting, unable to stay still for long.",
+  "has a calm, serene expression, even in the face of danger.",
+  "is covered in tattoos, each one a symbol of their past.",
+  "has a shaved head and a piercing gaze.",
+  "is always wearing a hat, pulled low over their eyes.",
+  "has a limp, a reminder of a past injury.",
+  "is missing a finger, a testament to a close call.",
+  "has a distinctive birthmark on their face.",
+  "is always wearing a pair of worn leather boots.",
+  "has a collection of trinkets and charms.",
+  "is always carrying a worn-out book.",
+  "has a habit of chewing on their lip.",
+  "is always humming a tuneless melody.",
+  "has a nervous tic, twitching their eye.",
+  "is always adjusting their glasses.",
+  "has a habit of cracking their knuckles.",
+  "is always tapping their foot.",
+  "has a habit of tugging at their earlobe."
+];
+
+export const randomConcepts = [
+  "a former soldier, haunted by their past.",
+  "a doctor, struggling to save lives in a dying world.",
+  "a teacher, trying to protect their students.",
+  "a mechanic, keeping the last vehicles running.",
+  "a farmer, trying to grow food in barren lands.",
+  "a librarian, preserving knowledge for the future.",
+  "a musician, trying to bring joy to the survivors.",
+  "an artist, capturing the beauty of a broken world.",
+  "a writer, documenting the end of days.",
+  "a priest, offering solace to the lost.",
+  "a thief, stealing to survive.",
+  "a scavenger, searching for anything of value.",
+  "a hunter, tracking down food for the group.",
+  "a builder, trying to create a safe haven.",
+  "a leader, trying to keep everyone together.",
+  "a spy, gathering information in the shadows.",
+  "a scientist, searching for answers.",
+  "a historian, trying to understand the past.",
+  "a storyteller, keeping hope alive with tales.",
+  "a wanderer, searching for a new home.",
+  "a survivor, hardened by the harsh realities.",
+  "a protector, guarding the weak.",
+  "a healer, mending both body and spirit.",
+  "a guide, leading others through the darkness.",
+  "a dreamer, clinging to the hope of a better tomorrow.",
+  "a rebel, fighting against the encroaching darkness.",
+  "a guardian, watching over the last vestiges of civilization.",
+  "a prophet, foretelling the future.",
+  "a martyr, willing to sacrifice everything.",
+  "a trickster, using wit and cunning to survive."
 ];
 
 export const newGameMessage = `**The World of Ten Candles**\nYour characters will face unimaginable terrors in the dying of the light.\n\n**Though you know your characters will die, you must have hope that they will survive.**\n\n**Ten Candles** focuses around shared narrative control.\nEveryone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\nLet\'s begin character generation. Check your DMs for instructions.\n\n`;

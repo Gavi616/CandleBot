@@ -1,14 +1,15 @@
 import { sendCharacterGenStep, swapTraits, swapBrinks } from './chargen.js';
-import { saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
+import {
+  saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
   askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM,
   handleTraitStacking, askForVoicePreference, startReminderTimers, clearReminderTimers
 } from './utils.js';
 import { client } from './index.js';
-import { gameStartMessage, startingMessageGM, startingMessagePlayer, stepOneMessage,
+import {
+  TRAIT_TIMEOUT, BRINK_TIMEOUT, gameStartMessage, startingMessageGM, startingMessagePlayer, stepOneMessage,
   stepTwoMessage, stepThreeMessage, stepFourMessage, stepFiveMessage, stepSixMessage,
   stepSevenMessage, stepSevenReminder, stepEightMessage
 } from './config.js';
-import { ChannelType } from 'discord.js';
 
 export async function prevStep(message) {
   const channelId = message.channel.id;
@@ -30,7 +31,7 @@ export async function prevStep(message) {
     saveGameData();
     return;
   }
-  
+
   if (game.characterGenStep <= 1) {
     message.channel.send('Cannot go back further than Step 1.');
     return;
@@ -114,22 +115,14 @@ export async function handleStepFive(gameChannel, game) {
     let prompt;
     let isThreat = false;
 
-    if (participantId === threatPlayerId) {
-      prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
-      isThreat = true;
-    } else if (participantId === game.gmId) {
+    if (participantId === threatPlayerId || participantId === game.gmId) {
       prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
       isThreat = true;
     } else {
       const nextParticipantId = brinkOrder[(brinkOrder.indexOf(participantId) + 1) % brinkOrder.length];
       const nextPlayer = game.players[nextParticipantId];
-      if (nextPlayer) {
-        const nextCharacterName = nextPlayer.name || nextPlayer.playerUsername || "Someone";
-        prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${nextCharacterName} do in a moment of desperation.`;
-      } else {
-        console.error(`No next player found after ${participantId}.`);
-        return;
-      }
+      const nextCharacterName = nextPlayer ? nextPlayer.name || nextPlayer.playerUsername || "Someone" : "Someone";
+      prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${nextCharacterName} do in a moment of desperation.`;
     }
     await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT, isThreat);
   });
@@ -169,14 +162,13 @@ export async function handleStepSix(gameChannel, game) {
   gameChannel.send(stepSixMessage);
   await new Promise(resolve => setTimeout(resolve, 5000));
   startReminderTimers(gameChannel, game);
-  const stackPromises = [];
-  for (const playerId of game.playerOrder) {
-    const player = await gameChannel.guild.members.fetch(playerId);
-    const user = player.user;
-    stackPromises.push(handleTraitStacking(user, game, playerId));
-  }
-  await Promise.all(stackPromises);
+
+  console.log(`handleStepSix: Calling handleTraitStacking`);
+  await handleTraitStacking(game)
+  clearReminderTimers(game);
+  game.characterGenStep++;
   saveGameData();
+  sendCharacterGenStep(gameChannel, game);
 }
 
 export async function handleStepSeven(gameChannel, game) {
@@ -245,13 +237,13 @@ export async function handleStepNine(gameChannel, game) {
   await new Promise(resolve => setTimeout(resolve, 5000));
   startReminderTimers(gameChannel, game);
   const commandUsagePromises = game.playerOrder.map(async (playerId) => {
-      try {
-        const player = await gameChannel.guild.members.fetch(playerId);
-        await player.user.send(startingMessagePlayer);
-      } catch (error) {
-        console.error(`Error DMing player ${playerId}:`, error);
-        gameChannel.send(`Could not DM player ${playerId} for command usage message.`);
-      }
+    try {
+      const player = await gameChannel.guild.members.fetch(playerId);
+      await player.user.send(startingMessagePlayer);
+    } catch (error) {
+      console.error(`Error DMing player ${playerId}:`, error);
+      gameChannel.send(`Could not DM player ${playerId} for command usage message.`);
+    }
   });
 
   try {

@@ -3,15 +3,18 @@ import { Readable } from 'stream';
 import ffmpeg from 'ffmpeg-static';
 import fs from 'fs';
 import ytdl from 'ytdl-core';
-import { joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection,
-  StreamType } from '@discordjs/voice';
+import {
+  joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection,
+  StreamType
+} from '@discordjs/voice';
 import { defaultVirtues, defaultVices, defaultMoments, languageOptions } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
-import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks, reminders } from './config.js';
+import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks, reminders, randomNames, randomLooks, randomConcepts } from './config.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { isTesting } from './index.js';
+import crypto from 'crypto';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
@@ -240,6 +243,72 @@ export async function respondViaDM(message, dmText) {
   }
 }
 
+export async function requestConsent(user, prompt, yesId, noId, time, title = 'Consent Required') {
+  console.log(`requestConsent: Called for user ${user.tag} with prompt: ${prompt}`);
+  try {
+    const dmChannel = await user.createDM();
+    const consentEmbed = new EmbedBuilder()
+      .setColor(0x0099FF)
+      .setTitle(title)
+      .setDescription(prompt);
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(yesId)
+          .setLabel('Yes')
+          .setStyle(ButtonStyle.Success), // Set button style to Success (green)
+        new ButtonBuilder()
+          .setCustomId(noId)
+          .setLabel('No')
+          .setStyle(ButtonStyle.Danger) // Set button style to Danger (red)
+      );
+
+    const consentMessage = await dmChannel.send({ embeds: [consentEmbed], components: [row] });
+    console.log(`requestConsent: Sent consent message with ID ${consentMessage.id} to user ${user.id}`);
+
+    const filter = (interaction) => interaction.user.id === user.id && interaction.message.id === consentMessage.id;
+    const collector = dmChannel.createMessageComponentCollector({ filter, time });
+
+    return new Promise((resolve, reject) => { // Use Promise with reject
+      collector.on('collect', async (interaction) => {
+        console.log(`requestConsent: Button collected: ${interaction.customId} from ${interaction.user.tag}`);
+        try {
+          await interaction.deferUpdate();
+          // Disable all buttons
+          const updatedRow = new ActionRowBuilder().addComponents(
+            row.components.map((button) => ButtonBuilder.from(button).setDisabled(true))
+          );
+          await interaction.editReply({ components: [updatedRow] });
+          if (interaction.customId === yesId) {
+            resolve(true);
+          } else if (interaction.customId === noId) {
+            resolve(false);
+          }
+        } catch (error) {
+          console.error(`requestConsent: Error deferring update or handling interaction:`, error);
+          reject(error); // Reject the promise if there's an error
+        }
+        collector.stop();
+      });
+
+      collector.on('end', async (collected, reason) => {
+        console.log(`requestConsent: Collector ended for ${user.tag}. Reason: ${reason}`);
+        if (reason === 'time') {
+          await user.send('Consent Request timed out.');
+        } else if (reason !== 'user') {
+          console.error(`requestConsent: Collector ended unexpectedly, reason: ${reason}`);
+          reject(new Error(`Collector ended unexpectedly: ${reason}`)); // Reject if unexpected end
+        }
+        resolve(false);
+      });
+    });
+  } catch (error) {
+    console.error(`requestConsent: Error requesting consent from ${user.tag}:`, error);
+    return Promise.reject(error); // Return a rejected promise
+  }
+}
+
 function assignRandomBrink(isThreat = false) {
   const brinks = isThreat ? defaultThreatBrinks : defaultPlayerGMBrinks;
   return brinks[Math.floor(Math.random() * brinks.length)];
@@ -270,7 +339,7 @@ export async function playRandomConflictSound(voiceChannel) {
       console.error(`Not connected to a voice channel.`);
       return;
     }
-    
+
     // Get the directory name of the current module
     const __filename = fileURLToPath(import.meta.url);
     const __dirname = path.dirname(__filename);
@@ -317,60 +386,6 @@ export async function playRandomConflictSound(voiceChannel) {
     });
   } catch (error) {
     console.error('Error in playRandomConflictSound:', error);
-  }
-}
-
-export async function requestConsent(user, prompt, yesId, noId, time, title = 'Consent Required') {
-  console.log(`requestConsent: Called for user ${user.tag} with prompt: ${prompt}`);
-  try {
-    const dmChannel = await user.createDM();
-    const consentEmbed = new EmbedBuilder()
-      .setColor(0x0099FF)
-      .setTitle(title)
-      .setDescription(prompt);
-
-    const row = new ActionRowBuilder()
-      .addComponents(
-        new ButtonBuilder()
-          .setCustomId(yesId)
-          .setLabel('Yes')
-          .setStyle(ButtonStyle.Success),
-        new ButtonBuilder()
-          .setCustomId(noId)
-          .setLabel('No')
-          .setStyle(ButtonStyle.Danger)
-      );
-
-    const consentMessage = await user.send({ embeds: [consentEmbed], components: [row] });
-
-    const filter = (interaction) =>
-      interaction.user.id === user.id && interaction.message.id === consentMessage.id;
-
-    const collector = dmChannel.createMessageComponentCollector({ filter, time });
-
-    return new Promise((resolve) => {
-      collector.on('collect', async (interaction) => {
-        console.log(`requestConsent: Button collected: ${interaction.customId} from ${interaction.user.tag}`);
-
-        if (interaction.customId === yesId) {
-          resolve(true);
-        } else if (interaction.customId === noId) {
-          resolve(false);
-        }
-        collector.stop();
-      });
-
-      collector.on('end', async (collected, reason) => {
-        console.log(`requestConsent: Collector ended for ${user.tag}. Reason: ${reason}`);
-        if (reason === 'time') {
-          await user.send('Consent Request timed out.');
-        }
-        resolve(false);
-      });
-    });
-  } catch (error) {
-    console.error(`Error requesting consent from ${user.tag}:`, error);
-    return false;
   }
 }
 
@@ -506,13 +521,13 @@ export async function askForTraits(message, gameChannel, game, playerId) {
     const response = await getDMResponse(user, 'Please send a Virtue and a Vice, separated by a comma (e.g., "courageous, greedy").\nEach should be a single vague but descriptive adjective. (e.g. Sharpshooter => Steady)\nVirtues solve more problems than they create.\nVices cause more problems than they solve.', TRAIT_TIMEOUT, m => m.author.id === playerId, "Request for Traits");
     if (response) {
       if (response.trim() === "?") {
-          virtue = getRandomVirtue();
-          vice = getRandomVice();
-          await user.send(`Random traits have been assigned:\nVirtue: ${virtue}\nVice: ${vice}`);
+        virtue = getRandomVirtue();
+        vice = getRandomVice();
+        await user.send(`Random traits have been assigned:\nVirtue: ${virtue}\nVice: ${vice}`);
       } else {
-          [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
-          virtue = normalizeVirtueVice(virtue);
-          vice = normalizeVirtueVice(vice);
+        [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
+        virtue = normalizeVirtueVice(virtue);
+        vice = normalizeVirtueVice(vice);
       }
 
       const confirmation = await confirmInput(user, `Are you happy with these Traits?\nVirtue: ${virtue}\nVice: ${vice}`, TRAIT_TIMEOUT, "Confirm these Traits");
@@ -539,10 +554,10 @@ export async function askForMoment(user, game, playerId, time) {
   while (true) {
     const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
     if (response) {
-        if (response.trim() === "?") {
-            assignRandomMoment(user, game.players[playerId]);
-            return;
-        }
+      if (response.trim() === "?") {
+        assignRandomMoment(user, game.players[playerId]);
+        return;
+      }
       input = response.trim();
 
       if (!input) {
@@ -572,24 +587,24 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
   while (true) {
     const response = await getDMResponse(user, prompt, time, m => m.author.id === playerId, "Request for Brink");
     if (response) {
-        if (response.trim() === "?") {
-            if (isThreat) {
-                input = assignRandomBrink(true);
-            } else {
-                input = assignRandomBrink(false);
-            }
-            
-            const characterName = game.players[playerId]?.name || user.username;
-            input = normalizeBrink(input, characterName, isThreat);
-            if (playerId === game.gmId) {
-              game.gm.brink = input;
-            } else {
-              game.players[playerId].brink = input;
-            }
-            await user.send(`A random Brink has been assigned: ${input}`);
-            saveGameData();
-            return input;
+      if (response.trim() === "?") {
+        if (isThreat) {
+          input = assignRandomBrink(true);
+        } else {
+          input = assignRandomBrink(false);
         }
+
+        const characterName = game.players[playerId]?.name || user.username;
+        input = normalizeBrink(input, characterName, isThreat);
+        if (playerId === game.gmId) {
+          game.gm.brink = input;
+        } else {
+          game.players[playerId].brink = input;
+        }
+        await user.send(`A random Brink has been assigned: ${input}`);
+        saveGameData();
+        return input;
+      }
       input = response;
       if (!input) {
         await user.send('Invalid Brink. Please provide a non-empty value.');
@@ -615,7 +630,7 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
         continue;
       }
     } else {
-      await user.send(`You timed out. Please provide your Brink again.`);
+      await user.send(`Response timed out. Please provide your Brink again.`);
       continue;
     }
   }
@@ -626,11 +641,32 @@ function assignRandomMoment(user, player) {
   user.send(`Request timed out. A random Moment has been assigned: "${player.moment}"`);
 }
 
-function getRandomVirtue() {
+export function getRandomName() {
+  return randomNames[Math.floor(Math.random() * randomNames.length)];
+}
+
+export function getRandomLook() {
+  return randomLooks[Math.floor(Math.random() * randomLooks.length)];
+}
+
+export function getRandomConcept() {
+  return randomConcepts[Math.floor(Math.random() * randomConcepts.length)];
+}
+
+export function getRandomBrink(isThreat = false) {
+  const brinks = isThreat ? defaultThreatBrinks : defaultPlayerGMBrinks;
+  return brinks[Math.floor(Math.random() * brinks.length)];
+}
+
+export function getRandomMoment() {
+  return defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
+}
+
+export function getRandomVirtue() {
   return defaultVirtues[Math.floor(Math.random() * defaultVirtues.length)];
 }
 
-function getRandomVice() {
+export function getRandomVice() {
   return defaultVices[Math.floor(Math.random() * defaultVices.length)];
 }
 
@@ -682,8 +718,13 @@ export function saveGameData() {
   try {
     const gameDataToSave = {};
     for (const channelId in gameData) {
-      if (validateGameData(gameData[channelId], gameDataSchema)) {
-        gameDataToSave[channelId] = gameData[channelId];
+      const game = gameData[channelId];
+      // Remove reminderTimers before saving
+      if (game.reminderTimers) {
+        delete game.reminderTimers;
+      }
+      if (validateGameData(game, gameDataSchema)) {
+        gameDataToSave[channelId] = game;
         gameDataToSave[channelId].lastSaved = new Date().toISOString();
       } else {
         console.error(`saveGameData: Game data validation failed for channel ${channelId}. Data not saved.`);
@@ -972,16 +1013,234 @@ async function editGear(user, game, playerId, item, retryCount = 0) {
   }
 }
 
-export async function handleTraitStacking(user, game, playerId) {
-  const player = game.players[playerId];
-  const dmChannel = await user.createDM();
-  let stackOrder = [];
-  let lotteryPlayers = [];
+export async function runMomentLottery(game, lotteryPlayers) {
+  console.log(`runMomentLottery: Lottery started with players: ${lotteryPlayers.join(', ')}`);
+  if (lotteryPlayers.length === 0) {
+    console.log(`runMomentLottery: No players chose 'Moment'. Skipping lottery.`);
+    return null; // Return null if no players chose 'Moment'
+  }
+  await new Promise(resolve => setTimeout(resolve, 5000)); // Simulate lottery time
+  const winnerId = lotteryPlayers[Math.floor(Math.random() * lotteryPlayers.length)];
+  console.log(`runMomentLottery: Winner is ${winnerId}`);
+
+  // Send DMs to all players in the lottery - only send once
+  const loserMessage = 'You did not win the Moment lottery. Please continue to build your stack.';
+  const winnerMessage = 'Congratulations! You won the Moment lottery. Your Moment will be on top of your stack.';
+
+  const sentMessages = new Set(); // Keep track of sent messages
+
+  for (const playerId of lotteryPlayers) {
+    if (!sentMessages.has(playerId)) { // Send message only once per player
+      const message = playerId === winnerId ? winnerMessage : loserMessage;
+      try {
+        const playerUser = await client.users.fetch(playerId);
+        if (playerUser) { // Check if playerUser is defined
+          await playerUser.send(message);
+          sentMessages.add(playerId); // Mark message as sent
+        } else {
+          console.error(`runMomentLottery: Error fetching user ${playerId}`);
+        }
+      } catch (error) {
+        console.error(`runMomentLottery: Error sending DM to ${playerId}:`, error);
+      }
+    }
+  }
+  console.log(`runMomentLottery: Lottery complete.`);
+  return winnerId;
+}
+
+export async function handleTraitStacking(game) {
+  const gameChannel = client.channels.cache.get(game.textChannelId);
+  const gm = await gameChannel.guild.members.fetch(game.gmId);
+  const gmUser = gm.user;
+
+  console.log(
+    `handleTraitStacking: Starting trait stacking process for game in channel ${game.textChannelId}`
+  );
+
+  // 1. Initial Setup:
+  const playerStates = {};
+  for (const playerId of game.playerOrder) {
+    playerStates[playerId] = {
+      availableTraits: ['Virtue', 'Vice', 'Moment'],
+      stackOrder: [],
+    };
+  }
+
+  // Helper function to send choices to players
+  async function sendChoice(user, choices, title, description, playerState) {
+    const choiceEmbed = new EmbedBuilder()
+      .setColor(0x0099FF)
+      .setTitle(title)
+      .setDescription(description);
+
+    const choiceRow = new ActionRowBuilder().addComponents(
+      choices.map((choice) =>
+        new ButtonBuilder()
+          .setCustomId(choice.toLowerCase())
+          .setLabel(choice)
+          .setStyle(ButtonStyle.Primary)
+      )
+    );
+
+    const choiceMessage = await user.send({
+      embeds: [choiceEmbed],
+      components: [choiceRow],
+    });
+
+    return new Promise((resolve) => {
+      const collector = choiceMessage.createMessageComponentCollector({
+        filter: (i) =>
+          i.user.id === user.id && i.message.id === choiceMessage.id,
+        time: 60000,
+        max: 1,
+      });
+
+      collector.on('collect', async (interaction) => {
+        await interaction.deferUpdate(); // Added this line
+        const chosenTrait = interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1);
+        await user.send(`You have chosen ${chosenTrait}.`); // Send a new message
+        playerState.availableTraits = playerState.availableTraits.filter(trait => trait !== chosenTrait);
+        // Update button styles
+        const updatedRow = new ActionRowBuilder().addComponents(
+          choiceRow.components.map((button) => {
+            if (button.data.custom_id === interaction.customId) {
+              return ButtonBuilder.from(button).setStyle(ButtonStyle.Success).setDisabled(true);
+            } else {
+              return ButtonBuilder.from(button).setStyle(ButtonStyle.Danger).setDisabled(true);
+            }
+          })
+        );
+        await interaction.editReply({ components: [updatedRow] });
+        collector.stop();
+        resolve(chosenTrait);
+      });
+
+      collector.on('end', (collected, reason) => {
+        if (reason === 'time') {
+          console.error(
+            `sendChoice: Player ${user.id} timed out during choice`
+          );
+          resolve(null); // Resolve to null on timeout
+        }
+      });
+    });
+  }
+
+  // 2. First Choice (Initial Trait Selection):
+  const initialChoicePromises = game.playerOrder.map(async (playerId) => {
+    const player = await gameChannel.guild.members.fetch(playerId);
+    const user = player.user;
+    return sendChoice(user, ['Virtue', 'Vice', 'Moment'], 'Arrange Your Trait Stack', 'Which Trait would you like on top of your stack?', playerStates[playerId]);
+  });
+
+  const initialChoices = await Promise.all(initialChoicePromises);
+
+  // Store the initial choices
+  game.playerOrder.forEach((playerId, index) => {
+    game.players[playerId].initialChoice = initialChoices[index];
+  });
+
+  // 3. Moment Lottery:
+  const lotteryPlayers = game.playerOrder.filter(
+    (playerId) => game.players[playerId].initialChoice === 'Moment'
+  );
+  const winnerId = await runMomentLottery(game, lotteryPlayers);
+
+  // 4. Loser's Choice:
+  const loserPromises = game.playerOrder.map(async (playerId) => {
+    const player = await gameChannel.guild.members.fetch(playerId);
+    const user = player.user;
+    if (playerId !== winnerId && game.players[playerId].initialChoice === 'Moment') {
+      const loserChoice = await getLoserInitialChoice(user, playerStates[playerId]);
+      playerStates[playerId].stackOrder.unshift(loserChoice);
+    }
+  });
+  await Promise.all(loserPromises);
+
+  // Handle Winner and Non-Moment Choices
+  game.playerOrder.forEach((playerId) => {
+    if (playerId === winnerId) {
+      playerStates[playerId].stackOrder.unshift('Moment');
+    } else if (game.players[playerId].initialChoice !== 'Moment') {
+      playerStates[playerId].stackOrder.unshift(game.players[playerId].initialChoice);
+    }
+  });
+
+  // Re-add "Moment" to availableTraits for losers before the second choice
+  game.playerOrder.forEach((playerId) => {
+    if (playerId !== winnerId && game.players[playerId].initialChoice === 'Moment') {
+      if (!playerStates[playerId].availableTraits.includes('Moment')) {
+        playerStates[playerId].availableTraits.push('Moment');
+      }
+    }
+  });
+
+  // 5. Subsequent Choices:
+  const secondChoicePromises = game.playerOrder.map(async (playerId) => {
+    const player = await gameChannel.guild.members.fetch(playerId);
+    const user = player.user;
+    const availableForSecond = playerStates[playerId].availableTraits;
+    const secondChoice = await sendChoice(user, availableForSecond, 'Choose Your Second Trait', 'Which Trait would you like next in your stack?', playerStates[playerId]);
+    if (secondChoice) {
+      playerStates[playerId].stackOrder.unshift(secondChoice);
+    }
+  });
+  await Promise.all(secondChoicePromises);
+
+  // Third Choice (only one option left)
+  game.playerOrder.forEach((playerId) => {
+    playerStates[playerId].stackOrder.unshift(playerStates[playerId].availableTraits[0]);
+  });
+
+  // 6. Finalization:
+  game.playerOrder.forEach((playerId) => {
+    playerStates[playerId].stackOrder.unshift('Brink');
+    game.players[playerId].stackOrder = playerStates[playerId].stackOrder.reverse();
+  });
+
+  const finalConfirmationPromises = game.playerOrder.map(async (playerId) => {
+    const player = await gameChannel.guild.members.fetch(playerId);
+    const user = player.user;
+    await sendFinalConfirmation(user, game, playerId);
+  });
+  await Promise.all(finalConfirmationPromises);
+
+  console.log(
+    `handleTraitStacking: Trait stacking process completed for game in channel ${game.textChannelId}`
+  );
+}
+
+async function sendFinalConfirmation(user, game, playerId) {
+  // Ensure stackOrder is defined before sending the DM
+  if (!game.players[playerId].stackOrder || game.players[playerId].stackOrder.length !== 4) {
+    console.error(`sendFinalConfirmation: Player ${playerId} has an invalid stack order.`);
+    game.players[playerId].stackOrder = ['Virtue', 'Vice', 'Moment', 'Brink'];
+    await user.send('An error occurred. Your stack has been set to the default: **Virtue, Vice, Moment, Brink**.');
+    return;
+  }
+
+  console.log(`sendFinalConfirmation: Player ${playerId} stack BEFORE confirmation:`, game.players[playerId].stackOrder); // Log before confirmation
+
+  await user.send(`Your final stack order is: **${game.players[playerId].stackOrder.join(', ')}**`);
+
+  const confirmation = await requestConsent(user, 'Are you happy with your Trait stack?\n(if "No", your Trait order will be set to: **Virtue, Vice, Moment, Brink**)', 'traitStackFinal_yes', 'traitStackFinal_no', 60000, 'Final Trait Stack Confirmation');
+
+  if (confirmation) {
+    console.log(`sendFinalConfirmation: Player ${playerId} confirmed stack:`, game.players[playerId].stackOrder); // Log after confirmation
+  } else {
+    game.players[playerId].stackOrder = ['Virtue', 'Vice', 'Moment', 'Brink'];
+    await user.send('Your stack has been set to: **Virtue, Vice, Moment, Brink**.');
+  }
+}
+
+async function getLoserInitialChoice(user, playerState) {
+  console.log(`getLoserInitialChoice: Starting for player ${user.id}`); // Entry log
 
   const initialChoiceEmbed = new EmbedBuilder()
     .setColor(0x0099FF)
-    .setTitle('Arrange Your Trait Stack')
-    .setDescription('Which Trait would you like on top of your stack?');
+    .setTitle('Moment Lottery Result')
+    .setDescription('You did not win the Moment lottery. Choose between Virtue or Vice for the top of your stack.');
 
   const initialChoiceRow = new ActionRowBuilder()
     .addComponents(
@@ -993,114 +1252,66 @@ export async function handleTraitStacking(user, game, playerId) {
         .setCustomId('vice')
         .setLabel('Vice')
         .setStyle(ButtonStyle.Primary),
-      new ButtonBuilder()
-        .setCustomId('moment')
-        .setLabel('Moment')
-        .setStyle(ButtonStyle.Primary)
     );
 
-  const initialChoiceMessage = await user.send({ embeds: [initialChoiceEmbed], components: [initialChoiceRow] });
+  // Remove Moment from available traits for Losers
+  playerState.availableTraits = playerState.availableTraits.filter(trait => trait !== 'Moment');
 
-  const filter = (interaction) =>
-    interaction.user.id === user.id && interaction.message.id === initialChoiceMessage.id;
+  const initialMessage = await user.send({ embeds: [initialChoiceEmbed], components: [initialChoiceRow] });
 
-  const collector = dmChannel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
+  return new Promise((resolve) => {
+    const collector = initialMessage.createMessageComponentCollector({
+      filter: (i) => i.user.id === user.id && i.message.id === initialMessage.id,
+      time: 60000,
+      max: 1,
+    });
 
-  collector.on('collect', async (interaction) => {
-    if (collector.ended) return;
-    await interaction.deferUpdate();
-    if (interaction.customId === 'moment') {
-      await user.send('Please wait for up to a minute for the lottery to complete.');
-      lotteryPlayers.push(playerId);
-      player.momentOnTop = false;
-    } else {
-      stackOrder.push(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1));
-      player.momentOnTop = false;
-    }
-    collector.stop();
-  });
+    collector.on('collect', async (interaction) => {
+      await interaction.deferUpdate(); // Added this line
+      console.log(`getLoserInitialChoice: Player ${user.id} pressed button: ${interaction.customId}`);
+      const chosenTrait = interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1);
+      await user.send(`You have chosen ${chosenTrait} as the top of your stack.`); // Send a new message
+      playerState.availableTraits = playerState.availableTraits.filter(trait => trait !== chosenTrait); // Update availableTraits here
+      // Update button styles
+      const updatedRow = new ActionRowBuilder().addComponents(
+        initialChoiceRow.components.map((button) => {
+          if (button.data.custom_id === interaction.customId) {
+            return ButtonBuilder.from(button).setStyle(ButtonStyle.Success).setDisabled(true);
+          } else {
+            return ButtonBuilder.from(button).setStyle(ButtonStyle.Danger).setDisabled(true);
+          }
+        })
+      );
+      await interaction.editReply({ components: [updatedRow] });
+      collector.stop();
+      resolve(chosenTrait);
+    });
 
-  collector.on('end', async (collected, reason) => {
-    if (reason === 'time') {
-      await user.send('You did not make a selection in time. Please try again.');
-      await handleTraitStacking(user, game, playerId);
-      return;
-    }
-
-    if (lotteryPlayers.length > 0) {
-      await runMomentLottery(user, game, lotteryPlayers);
-      if (player.momentOnTop) {
-        stackOrder = ['Moment'];
+    collector.on('end', async (collected, reason) => {
+      if (reason === 'time') {
+        console.error(`getLoserInitialChoice: Player ${user.id} timed out during initial choice`);
+        resolve('Virtue'); // Default to Virtue if timeout
       }
-    }
-
-    const remainingTraits = ['Virtue', 'Vice', 'Moment'].filter(trait => !stackOrder.includes(trait));
-    while (remainingTraits.length > 0) {
-      const nextChoiceEmbed = new EmbedBuilder()
-        .setColor(0x0099FF)
-        .setTitle('Arrange Your Trait Stack')
-        .setDescription('Which trait would you like next on your stack?');
-
-      const nextChoiceRow = new ActionRowBuilder();
-      for (const trait of remainingTraits) {
-        nextChoiceRow.addComponents(
-          new ButtonBuilder()
-            .setCustomId(trait.toLowerCase())
-            .setLabel(trait)
-            .setStyle(ButtonStyle.Primary)
-        );
-      }
-
-      const nextChoiceMessage = await user.send({ embeds: [nextChoiceEmbed], components: [nextChoiceRow] });
-
-      const nextChoiceCollector = dmChannel.createMessageComponentCollector({ filter, time: 60000, max: 1 });
-
-      await new Promise((resolve) => {
-        nextChoiceCollector.on('collect', async (interaction) => {
-          await interaction.deferUpdate();
-          stackOrder.push(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1));
-          remainingTraits.splice(remainingTraits.indexOf(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1)), 1);
-          nextChoiceCollector.stop();
-          resolve();
-        });
-        nextChoiceCollector.on('collect', async (interaction) => {
-          if (nextChoiceCollector.ended) return;
-          await interaction.deferUpdate();
-          stackOrder.push(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1));
-          remainingTraits.splice(remainingTraits.indexOf(interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1)), 1);
-          nextChoiceCollector.stop();
-          resolve();
-        });
-      });
-    }
-
-    stackOrder.push('Brink');
-    player.stackOrder = stackOrder;
-    player.stackConfirmed = true;
-    await user.send(`Your final stack order is: ${player.stackOrder.join(', ')}`);
-    saveGameData();
-    const allPlayersHaveConfirmed = Object.values(game.players).every(player => player.stackConfirmed);
-    if (allPlayersHaveConfirmed) {
-      const gameChannel = client.channels.cache.get(game.textChannelId);
-      game.characterGenStep++;
-      sendCharacterGenStep(gameChannel, game);
-    }
+    });
   });
 }
 
-async function runMomentLottery(user, game, lotteryPlayers) {
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  const winnerId = lotteryPlayers[Math.floor(Math.random() * lotteryPlayers.length)];
-  const winner = await client.users.fetch(winnerId);
-  const loser = user;
-  const player = game.players[winnerId];
-  if (winnerId === user.id) {
-    await winner.send('Congratulations! You won the Moment lottery. Your Moment will be on top of your stack.');
-    player.momentOnTop = true;
-  } else {
-    await loser.send('You did not win the Moment lottery. Please continue to build your stack.');
-    player.momentOnTop = false;
-  }
+function disableAllButtons(components) {
+  return components.map(row => {
+    if (row.components) {
+      return new ActionRowBuilder().addComponents(
+        row.components.map(component => {
+          if (component.data.type === ComponentType.Button) {
+            return ButtonBuilder.from(component).setDisabled(true);
+          } else {
+            return component;
+          }
+        })
+      );
+    } else {
+      return row;
+    }
+  });
 }
 
 export function loadBlockUserList() {

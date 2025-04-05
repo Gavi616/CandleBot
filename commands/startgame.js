@@ -60,6 +60,11 @@ export async function startGame(message, gameData) {
             viceBurned: false,
             momentBurned: false,
             isDead: false,
+            availableTraits: ['Virtue', 'Vice', 'Moment'],
+            stackOrder: [],
+            initialChoice: null,
+            group: "A",
+            stackConfirmed: false,
         };
     }
 

@@ -26,9 +26,12 @@ export const gameDataSchema = Joi.object({
       isDead: Joi.boolean().required(),
       recording: Joi.string().allow('').optional(),
       gear: Joi.array().items(Joi.string()).optional(),
-      stackOrder: Joi.array().items(Joi.string()).optional(),
-      stackConfirmed: Joi.boolean().optional(),
-      momentOnTop: Joi.boolean().optional()
+      stackOrder: Joi.array().items(Joi.string()).required(),
+      stackConfirmed: Joi.boolean().required(),
+      momentOnTop: Joi.boolean().optional(),
+      initialChoice: Joi.string().allow(null).required(),
+      group: Joi.string().valid('A', 'B', 'C', 'D').required(),
+      availableTraits: Joi.array().items(Joi.string()).required()
     }).required()
   ).required(),
   playerOrder: Joi.array().items(Joi.string().pattern(/^\d+$/)).required(),
@@ -44,7 +47,8 @@ export const gameDataSchema = Joi.object({
   channelId: Joi.string().pattern(/^\d+$/).required(),
   diceLost: Joi.number().integer().min(0).required(),
   lastSaved: Joi.string().isoDate().optional(),
-  endGame: Joi.boolean().optional()
+  endGame: Joi.boolean().optional(),
+  reminderTimers: Joi.array().items(Joi.any()).optional()
 });
 
 export function validateGameData(data, schema) {

@@ -6,13 +6,14 @@ import {
 } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
-import { TEST_USER_ID, finalRecordingsMessage, languageOptions } from './config.js';
+import { TEST_USER_ID, finalRecordingsMessage } from './config.js';
 import {
-  sanitizeString, loadGameData, saveGameData, getGameData, printActiveGames, getAudioDuration,
-  gameData, handleGearCommand, deleteGameData, playAudioFromUrl, playRandomConflictSound,
-  speakInChannel, requestConsent, loadBlockUserList, saveBlockUserList, isWhitelisted,
-  isBlockedUser, loadChannelWhitelist, saveChannelWhitelist, userBlocklist, channelWhitelist,
-  respondViaDM, findGameByUserId
+  loadGameData, saveGameData, printActiveGames, getAudioDuration,
+  gameData, handleGearCommand, playAudioFromUrl, playRandomConflictSound,
+  speakInChannel, requestConsent, loadBlockUserList, isWhitelisted,
+  isBlockedUser, loadChannelWhitelist, saveChannelWhitelist, channelWhitelist,
+  respondViaDM, findGameByUserId, handleTraitStacking, getRandomBrink, getRandomMoment,
+  getRandomVice, getRandomVirtue, getRandomName, getRandomLook, getRandomConcept
 } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
@@ -28,9 +29,9 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.940a';
+const version = '0.9.944a';
 const botName = 'Ten Candles Bot';
-export const isTesting = false;
+export const isTesting = true;
 let botRestarted = false;
 
 client.once('ready', async () => {
@@ -121,12 +122,16 @@ client.on('messageCreate', async (message) => {
 
       console.log('DM Command:', message.content, 'from', userName);
 
-      if (isTesting && command === 'testtts') {
+      if (isTesting && command === 'testchargenstep') {
+        await testCharGenStep(message, args);
+      } else if (isTesting && command === 'testtts') {
         await testTTS(message, args);
       } else if (isTesting && command === 'testdice') {
         await testDiceSounds(message, args);
       } else if (isTesting && command === 'testfinalrec') {
         await testRecordingCommand(message, args);
+      } else if (isTesting && command === 'testhts') {
+        await testHandleTraitStacking(message, args)
       } else if (command === 'me') {
         await me(message);
       } else if (command === 'gear') {
@@ -499,7 +504,6 @@ export async function playRecordings(message) {
   const players = game.players;
 
   message.channel.send(finalRecordingsMessage);
-  message.channel.send(finalRecordingsMessage);
 
   // Total of 13 second 'moment of silence'
   await new Promise(resolve => setTimeout(resolve, 10000));
@@ -586,6 +590,18 @@ export async function playRecordings(message) {
   saveGameData();
 }
 
+async function sendTestDM(client, message) {
+  if (isTesting) {
+    try {
+      const testUser = await client.users.fetch(TEST_USER_ID);
+      await testUser.send(message);
+      console.log(`Sent test DM to ${testUser.tag}`);
+    } catch (error) {
+      console.error(`Error sending test DM:`, error);
+    }
+  }
+}
+
 export async function testRecordingCommand(message, args) {
   const targetChannelId = args[0];
   const targetChannel = client.channels.cache.get(targetChannelId);
@@ -668,69 +684,321 @@ async function testDiceSounds(message, args) {
   }
 }
 
-export async function testTTS(message, args) {
-  const voiceChannelId = args[0];
-
-  if (!voiceChannelId) {
-    message.reply('Usage: .testtts <voiceChannelID>');
+async function testHandleTraitStacking(message, args) {
+  if (args.length < 4) {
+    await message.channel.send('Usage: .testhts <Game Channel ID> <GM ID> <Player1 ID> <Player2 ID> [<Player3 ID> ...]');
     return;
   }
 
-  const voiceChannel = client.channels.cache.get(voiceChannelId);
+  const gameChannelId = args.shift();
+  const gmId = args.shift();
+  const playerIds = args;
+  const channelId = message.channel.id;
 
-  if (!voiceChannel || voiceChannel.type !== ChannelType.GuildVoice) {
-    message.reply('Invalid voice channel ID.');
+  // Validate IDs
+  if (!/^\d+$/.test(gmId)) {
+    await message.channel.send(`Invalid GM ID: ${gmId}. Please use a numeric user ID.`);
+    return;
+  }
+  if (!/^\d+$/.test(gameChannelId)) {
+    await message.channel.send(`Invalid Game Channel ID: ${gameChannelId}. Please use a numeric channel ID.`);
+    return;
+  }
+  for (const playerId of playerIds) {
+    if (!/^\d+$/.test(playerId)) {
+      await message.channel.send(`Invalid Player ID: ${playerId}. Please use a numeric user ID.`);
+      return;
+    }
+  }
+
+  // Fetch the game channel
+  let gameChannel;
+  try {
+    gameChannel = await client.channels.fetch(gameChannelId);
+  } catch (error) {
+    console.error(`testHandleTraitStacking: Error fetching game channel ${gameChannelId}:`, error);
+    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
     return;
   }
 
-  buttonCollector.on('collect', async (interaction) => {
-    await interaction.deferUpdate();
+  if (!gameChannel) {
+    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
+    return;
+  }
 
-    if (interaction.customId === 'preview_voice') {
-      if (!selectedLanguage || !selectedVoice) {
-        await interaction.followUp({ content: 'Please select a language and voice first.', ephemeral: true });
-        return;
+  // Fetch the guild
+  const guild = gameChannel.guild;
+  if (!guild) {
+    await message.channel.send(`Could not find guild for channel ${gameChannelId}.`);
+    return;
+  }
+
+  // Send a non-ephemeral message to the game channel and store the message object
+  const testMessage = await gameChannel.send({ content: `A test of HandleTraitStacking() is being run by <@${message.author.id}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.` });
+
+  // Create a dummy game object
+  const game = {
+    gm: { consent: true, brink: '' },
+    players: {},
+    playerOrder: [], // Initialize as empty
+    characterGenStep: 6, // Set to step 6 for trait stacking
+    traitsRequested: true,
+    theme: 'Test Theme',
+    textChannelId: gameChannelId, // Use the provided gameChannelId
+    guildId: guild.id,
+    voiceChannelId: gameChannelId, // Use the provided gameChannelId
+    gameMode: 'text-only',
+    initiatorId: message.author.id,
+    gmId: gmId,
+    channelId: channelId,
+    diceLost: 0,
+  };
+
+  const fetchedPlayers = []; // Array to store fetched player objects
+
+  for (const playerId of playerIds) {
+    try {
+      const member = await guild.members.fetch(playerId);
+      const player = member;
+      if (player) {
+        game.players[playerId] = {
+          playerUsername: player.user.username,
+          consent: true,
+          brink: 'Test Brink',
+          moment: 'Test Moment',
+          virtue: 'Test Virtue',
+          vice: 'Test Vice',
+          name: 'Test Name',
+          look: 'Test Look',
+          concept: 'Test Concept',
+          recordings: '',
+          hopeDice: 0,
+          virtueBurned: false,
+          viceBurned: false,
+          momentBurned: false,
+          isDead: false,
+          availableTraits: ['Virtue', 'Vice', 'Moment'], // Initialize availableTraits here
+          stackOrder: [], // Initialize stackOrder here
+          initialChoice: null, // Initialize initialChoice here
+          group: "A", // Initialize group here
+          stackConfirmed: false, // Initialize stackConfirmed here
+        };
+        fetchedPlayers.push(player); // Add fetched player to the array
+        game.playerOrder.push(playerId); // Add playerId to playerOrder
+      } else {
+        console.error(`testHandleTraitStacking: Could not fetch member with ID ${playerId}`);
+        await message.channel.send(`Could not fetch member with ID ${playerId}. Skipping this player.`);
       }
-
-      const existingConnection = getVoiceConnection(voiceChannel.guild.id);
-      if (!existingConnection) {
-        joinVoiceChannel({
-          channelId: voiceChannelId,
-          guildId: voiceChannel.guild.id,
-          adapterCreator: voiceChannel.guild.voiceAdapterCreator,
-        });
-      }
-
-      const languageVerbiage = {
-        'en-US': `This is a voice preview for <@${message.author.username}> in ${languageOptions['en-US'].name} using Google Cloud Text-To-Speech.`,
-        'en-GB': `This is a voice preview for <@${message.author.username}> in ${languageOptions['en-GB'].name} using Google Cloud Text-To-Speech.`,
-        'es-ES': `Esta es una vista previa de voz para <@${message.author.username}> en ${languageOptions['es-ES'].name} usando Google Cloud Text-To-Speech.`,
-        'fr-FR': `Ceci est un aperçu vocal pour <@${message.author.username}> en ${languageOptions['fr-FR'].name} utilisant Google Cloud Text-To-Speech.`,
-        'de-DE': `Dies ist eine Sprachvorschau für <@${message.author.username}> in ${languageOptions['de-DE'].name} mit Google Cloud Text-To-Speech.`,
-      };
-
-      const verbiage = languageVerbiage[selectedLanguage];
-      await message.channel.send(`Previewing TTS voice ${selectedVoice} in <#${voiceChannelId}>.`);
-      await speakInChannel(verbiage, voiceChannel, selectedVoice);
+    } catch (error) {
+      console.error(`testHandleTraitStacking: Error fetching member with ID ${playerId}:`, error);
+      await message.channel.send(`Error fetching member with ID ${playerId}. Skipping this player.`);
     }
-  });
+  }
 
-  collector.on('end', async (collected, reason) => {
-    if (reason === 'time') {
-      await embedMessage.edit({ content: 'Test command timed out.', components: [] });
-    }
-  });
+  gameData[gameChannelId] = game; // Use the provided gameChannelId
+  saveGameData();
+
+  await handleTraitStacking(game); // Removed initialMessages
+  console.log(`testHandleTraitStacking: handleTraitStacking complete`);
+  await message.channel.send('Test for handleTraitStacking() complete.');
+
+  try {
+    await testMessage.delete();
+  } catch (error) {
+    console.error(`testHandleTraitStacking: Error deleting test message:`, error);
+  }
 }
 
-async function sendTestDM(client, message) {
-  if (isTesting) {
-    try {
-      const testUser = await client.users.fetch(TEST_USER_ID);
-      await testUser.send(message);
-      console.log(`Sent test DM to ${testUser.tag}`);
-    } catch (error) {
-      console.error(`Error sending test DM:`, error);
+async function testCharGenStep(message, args) {
+  if (args.length < 4) {
+    await message.channel.send('Usage: .testchargenstep <Step Number> <Game Channel ID> <GM ID> <Player1 ID> [<Player2 ID> ...]');
+    return;
+  }
+
+  const step = parseInt(args.shift());
+  const gameChannelId = args.shift();
+  const gmId = args.shift();
+  const playerIds = args;
+  const channelId = message.channel.id;
+
+  if (step < 1 || step > 10) { // Ensure step is between 2 and 9
+    await message.channel.send(`Invalid Step Number: ${step}. Please use a number between 2 and 9.`);
+    return;
+  }
+
+  // Validate IDs
+  if (!/^\d+$/.test(gmId)) {
+    await message.channel.send(`Invalid GM ID: ${gmId}. Please use a numeric user ID.`);
+    return;
+  }
+  if (!/^\d+$/.test(gameChannelId)) {
+    await message.channel.send(`Invalid Game Channel ID: ${gameChannelId}. Please use a numeric channel ID.`);
+    return;
+  }
+  for (const playerId of playerIds) {
+    if (!/^\d+$/.test(playerId)) {
+      await message.channel.send(`Invalid Player ID: ${playerId}. Please use a numeric user ID.`);
+      return;
     }
+  }
+
+  // Validate player count
+  if (playerIds.length < 2 || playerIds.length > 11) { // Allow 2 to 10 players (not including the GM)
+    await message.channel.send('Invalid number of players. Please provide between 2 and 10 player IDs.');
+    return;
+  }
+
+  // Fetch the game channel
+  let gameChannel;
+  try {
+    gameChannel = await client.channels.fetch(gameChannelId);
+  } catch (error) {
+    console.error(`testHandleTraitStacking: Error fetching game channel ${gameChannelId}:`, error);
+    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
+    return;
+  }
+
+  if (!gameChannel) {
+    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
+    return;
+  }
+
+  // Fetch the guild
+  const guild = gameChannel.guild;
+  if (!guild) {
+    await message.channel.send(`Could not find guild for channel ${gameChannelId}.`);
+    return;
+  }
+
+  // Send a non-ephemeral message to the game channel and store the message object
+  const testMessage = await gameChannel.send({ content: `A test of Character Generation Step ${step} is being run by <@${message.author.id}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.` });
+
+  // Determine gameMode based on channel type
+  const gameMode = gameChannel.type === ChannelType.GuildVoice ? 'voice-plus-text' : 'text-only';
+
+  // Create a dummy game object
+  const game = {
+    gm: { consent: true, brink: getRandomBrink(true) }, // Use a random threat brink for the GM in the test
+    players: {},
+    playerOrder: [], // Initialize as empty
+    characterGenStep: step, // Set to the specified step
+    traitsRequested: true,
+    theme: 'Test Theme',
+    textChannelId: gameChannelId, // Use the provided gameChannelId
+    guildId: guild.id,
+    voiceChannelId: gameChannelId, // Use the provided gameChannelId
+    gameMode: gameMode, // Set based on channel type
+    initiatorId: message.author.id,
+    gmId: gmId,
+    channelId: gameChannelId,
+    diceLost: 0,
+  };
+
+  // Fetch GM data
+  const gmMember = await guild.members.fetch(gmId);
+  if (!gmMember) {
+    console.error(`testCharGenStep: Could not fetch GM member with ID ${gmId}`);
+    await message.channel.send(`Could not fetch GM member with ID ${gmId}.`);
+    return;
+  }
+
+  // Add GM to players object
+  game.players[gmId] = {
+    playerUsername: gmMember.user.username,
+    consent: true,
+    brink: getRandomBrink(true),
+    moment: getRandomMoment(),
+    virtue: getRandomVirtue(),
+    vice: getRandomVice(),
+    name: getRandomName(),
+    look: getRandomLook(),
+    concept: getRandomConcept(),
+    recordings: '',
+    hopeDice: 0,
+    virtueBurned: false,
+    viceBurned: false,
+    momentBurned: false,
+    isDead: false,
+    availableTraits: ['Virtue', 'Vice', 'Moment'],
+    stackOrder: [],
+    initialChoice: null,
+    group: "A",
+    stackConfirmed: false,
+  };
+
+  const fetchedPlayers = []; // Array to store fetched player objects
+
+  for (const playerId of playerIds) {
+    try {
+      const member = await guild.members.fetch(playerId);
+      const player = member;
+      if (player) {
+        game.players[playerId] = {
+          playerUsername: player.user.username,
+          consent: true,
+          brink: getRandomBrink(),
+          moment: getRandomMoment(),
+          virtue: getRandomVirtue(),
+          vice: getRandomVice(),
+          name: getRandomName(),
+          look: getRandomLook(),
+          concept: getRandomConcept(),
+          recordings: '',
+          hopeDice: 0,
+          virtueBurned: false,
+          viceBurned: false,
+          momentBurned: false,
+          isDead: false,
+          availableTraits: ['Virtue', 'Vice', 'Moment'],
+          stackOrder: [],
+          initialChoice: null,
+          group: "A",
+          stackConfirmed: false,
+        };
+        fetchedPlayers.push(player); // Add fetched player to the array
+        game.playerOrder.push(playerId); // Add playerId to playerOrder
+      } else {
+        console.error(`testHandleTraitStacking: Could not fetch member with ID ${playerId}`);
+        await message.channel.send(`Could not fetch member with ID ${playerId}. Skipping this player.`);
+      }
+    } catch (error) {
+      console.error(`testHandleTraitStacking: Error fetching member with ID ${playerId}:`, error);
+      await message.channel.send(`Error fetching member with ID ${playerId}. Skipping this player.`);
+    }
+  }
+
+  // Clear data for steps after the test step
+  clearDataForLaterSteps(game, step);
+
+  gameData[gameChannelId] = game; // Use the provided gameChannelId
+  saveGameData();
+
+  await message.channel.send(`Starting character generation at step ${step} in <#${gameChannelId}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.`);
+  await sendCharacterGenStep(gameChannel, game);
+
+  try {
+    await testMessage.delete();
+  } catch (error) {
+    console.error(`testHandleTraitStacking: Error deleting test message:`, error);
+  }
+}
+
+function clearDataForLaterSteps(game, step) {
+  const propertiesToClear = {
+    6: ['stackOrder', 'initialChoice', 'stackConfirmed', 'availableTraits'],
+    7: ['gear', 'recording'],
+    8: ['recording'],
+  };
+
+  for (let i = step + 1; i <= 8; i++) {
+    clearPlayerProperties(game, propertiesToClear[i]);
+  }
+}
+
+function clearPlayerProperties(game, properties) {
+  if (!properties) return;
+  for (const playerId in game.players) {
+    properties.forEach(property => delete game.players[playerId][property]);
   }
 }
 

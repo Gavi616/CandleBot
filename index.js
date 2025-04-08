@@ -8,12 +8,14 @@ import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
 import { TEST_USER_ID, finalRecordingsMessage } from './config.js';
 import {
-  loadGameData, saveGameData, printActiveGames, getAudioDuration,
-  gameData, handleGearCommand, playAudioFromUrl, playRandomConflictSound,
-  speakInChannel, requestConsent, loadBlockUserList, isWhitelisted,
-  isBlockedUser, loadChannelWhitelist, saveChannelWhitelist, channelWhitelist,
-  respondViaDM, findGameByUserId, handleTraitStacking, getRandomBrink, getRandomMoment,
-  getRandomVice, getRandomVirtue, getRandomName, getRandomLook, getRandomConcept
+  loadGameData, saveGameData, printActiveGames, getAudioDuration, getGameData,
+  gameData, handleGearCommand, playAudioFromUrl, playRandomConflictSound, handleEditGearModal,
+  speakInChannel, requestConsent, loadBlockUserList, isWhitelisted, handleAddGearModal,
+  handleAddGearModalSubmit, isBlockedUser, loadChannelWhitelist, saveChannelWhitelist,
+  channelWhitelist, respondViaDM, findGameByUserId, handleTraitStacking, getRandomBrink,
+  getRandomMoment, getRandomVice, getRandomVirtue, getRandomName, getRandomLook,
+  getRandomConcept, handleDoneButton, handleGMEditButton, handleGMEditModalSubmit,
+  handleDeleteGearModal, handleDeleteGearModalSubmit, handleEditGearModalSubmit, displayInventory
 } from './utils.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
@@ -29,9 +31,9 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.944a';
+const version = '0.9.950a';
 const botName = 'Ten Candles Bot';
-export const isTesting = true;
+export const isTesting = false;
 let botRestarted = false;
 
 client.once('ready', async () => {
@@ -109,6 +111,131 @@ client.once('ready', async () => {
   }
 });
 
+client.on('interactionCreate', async interaction => {
+  if (interaction.isChatInputCommand()) return;
+
+  if (interaction.isButton() || interaction.isModalSubmit()) {
+    const playerId = interaction.user.id;
+    const game = getGameData(playerId);
+
+    if (!game) {
+      await interaction.reply({ content: 'You are not currently in a game.' });
+      return;
+    }
+
+    if (interaction.isButton()) {
+      if (interaction.customId.startsWith('donestep7')) {
+        await handleDoneButton(interaction, game);
+      } else if (interaction.customId.startsWith('edit')) {
+        const customIdParts = interaction.customId.split('_');
+        const itemId = customIdParts[3];
+        await handleEditGearModal(interaction, game, playerId, itemId);
+      } else if (interaction.customId.startsWith('delete')) {
+        const customIdParts = interaction.customId.split('_');
+        const itemId = customIdParts[3];
+        await handleDeleteGearModal(interaction, game, playerId, itemId);
+      } else if (interaction.customId.startsWith('addgear')) {
+        await handleAddGearModal(interaction, game);
+      } else if (interaction.customId.startsWith('approve')) {
+        // Handle GM "Approve" Inventory button click
+        const customIdParts = interaction.customId.split('_');
+        const targetPlayerId = customIdParts[1];
+        const textChannelId = customIdParts[2];
+        console.log(`approve button: textChannelId=${textChannelId}, targetPlayerId=${targetPlayerId}`);
+        const targetGame = getGameData(textChannelId); // Use textChannelId
+        if (!targetGame) {
+          await interaction.reply({ content: 'An error occurred. The game data is missing.' });
+          return;
+        }
+        const targetPlayer = targetGame.players[targetPlayerId];
+        const gearList = targetPlayer.gear.join(', ') || 'No gear added.';
+        const characterName = targetPlayer.name || targetPlayer.playerUsername;
+        await interaction.reply(`You have approved (<@${targetPlayerId}>) **${characterName}'s starting inventory**: ${gearList}.`); // Corrected
+        targetGame.players[targetPlayerId].inventoryConfirmed = true;
+        saveGameData();
+
+        // Check if all players are done AFTER approving
+        const allPlayersDone = targetGame.playerOrder.every(playerId => targetGame.players[playerId].inventoryConfirmed);
+        if (allPlayersDone) {
+          const gameChannel = client.channels.cache.get(targetGame.textChannelId);
+          clearReminderTimers(targetGame);
+          targetGame.characterGenStep++;
+          saveGameData();
+          sendCharacterGenStep(gameChannel, targetGame);
+        }
+      } else if (interaction.customId.startsWith('tryagain')) {
+        // Handle GM "Try Again" Inventory button click
+        const customIdParts = interaction.customId.split('_');
+        const targetPlayerId = customIdParts[1];
+        const textChannelId = customIdParts[2];
+        console.log(`tryagain button: textChannelId=${textChannelId}, targetPlayerId=${targetPlayerId}`);
+        const targetGame = getGameData(textChannelId); // Use textChannelId
+        if (!targetGame) {
+          await interaction.reply({ content: 'An error occurred. The game data is missing.' });
+          return;
+        }
+        const targetPlayer = await client.users.fetch(targetPlayerId);
+        const characterName = targetGame.players[targetPlayerId].name || targetGame.players[targetPlayerId].playerUsername;
+
+        targetGame.players[targetPlayerId].inventoryConfirmed = false;
+        saveGameData();
+
+        await interaction.reply(`You have sent (<@${targetPlayerId}>) **${characterName}'s starting inventory** back to them for editing.`); // Corrected
+        await displayInventory(targetPlayer, targetGame, targetPlayerId, true); // Pass true for isRejected
+      } else if (interaction.customId.startsWith('ok')) {
+        await interaction.reply({ content: 'Ok' });
+      } else if (interaction.customId.startsWith('edit')) {
+        await handleGMEditButton(interaction, game, playerId);
+      }
+    } else if (interaction.isModalSubmit()) {
+      if (interaction.customId === 'addgearmodal') {
+        await handleAddGearModalSubmit(interaction, game);
+      } else if (interaction.customId.startsWith('deletegearconfirm')) {
+        const itemId = interaction.customId.split('_')[1];
+        const playerId = interaction.user.id;
+        await handleDeleteGearModalSubmit(interaction, game, playerId, itemId);
+      } else if (interaction.customId.startsWith('gmedit')) {
+        await handleGMEditModalSubmit(interaction, game);
+      } else if (interaction.customId.startsWith('editgear')) {
+        const itemId = interaction.customId.split('_')[1];
+        const playerId = interaction.user.id;
+        await handleEditGearModalSubmit(interaction, game, playerId, itemId);
+      }
+    }
+  } else if (interaction.isStringSelectMenu()) {
+    if (interaction.customId.startsWith('gearselect')) {
+      const playerId = interaction.user.id;
+      const game = getGameData(playerId);
+      if (!game) {
+        await interaction.reply({ content: 'You are not currently in a game.' });
+        return;
+      }
+
+      const itemId = interaction.values[0];
+      const gear = game.players[playerId].gear;
+      const index = parseInt(itemId);
+      const item = gear[index];
+
+      const actionRow = new ActionRowBuilder()
+        .addComponents(
+          new ButtonBuilder()
+            .setCustomId(`edit_${playerId}_gear_${itemId}_${game.textChannelId}`)
+            .setLabel('Edit')
+            .setStyle(ButtonStyle.Secondary),
+          new ButtonBuilder()
+            .setCustomId(`delete_${playerId}_gear_${itemId}_${game.textChannelId}`)
+            .setLabel('Delete')
+            .setStyle(ButtonStyle.Danger),
+        );
+
+      await interaction.reply({
+        content: `What would you like to do with ${item}?`,
+        components: [actionRow]
+      });
+    }
+  }
+});
+
 client.on('messageCreate', async (message) => {
   if (message.author.bot) return;
 
@@ -135,11 +262,11 @@ client.on('messageCreate', async (message) => {
       } else if (command === 'me') {
         await me(message);
       } else if (command === 'gear') {
-        const game = findGameByUserId(userId);
-        if (game) {
+        const game = gameData[message.channel.id];
+        if (game && game.scene > 0) { // only accessible once scenes have started
           await handleGearCommand(message.author, game, userId, args);
         } else {
-          await message.author.send('You are not currently in a game.');
+          await message.author.send('You are not currently in a game, or this command is not available yet.');
         }
       } else if (command === 'x') {
         const game = findGameByUserId(userId);
@@ -733,7 +860,7 @@ async function testHandleTraitStacking(message, args) {
     return;
   }
 
-  // Send a non-ephemeral message to the game channel and store the message object
+  // Send a message to the game channel and store the message object
   const testMessage = await gameChannel.send({ content: `A test of HandleTraitStacking() is being run by <@${message.author.id}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.` });
 
   // Create a dummy game object
@@ -780,8 +907,8 @@ async function testHandleTraitStacking(message, args) {
           availableTraits: ['Virtue', 'Vice', 'Moment'], // Initialize availableTraits here
           stackOrder: [], // Initialize stackOrder here
           initialChoice: null, // Initialize initialChoice here
-          group: "A", // Initialize group here
-          stackConfirmed: false, // Initialize stackConfirmed here
+          inventoryConfirmed: false, // Initialize inventoryConfirmed here
+          gear: [], // Initialize gear here
         };
         fetchedPlayers.push(player); // Add fetched player to the array
         game.playerOrder.push(playerId); // Add playerId to playerOrder
@@ -821,8 +948,8 @@ async function testCharGenStep(message, args) {
   const playerIds = args;
   const channelId = message.channel.id;
 
-  if (step < 1 || step > 10) { // Ensure step is between 2 and 9
-    await message.channel.send(`Invalid Step Number: ${step}. Please use a number between 2 and 9.`);
+  if (step < 1 || step > 9) { // Ensure step is between 1 and 9
+    await message.channel.send(`Invalid Step Number: ${step}. Please use a number between 1 and 9.`);
     return;
   }
 
@@ -843,8 +970,8 @@ async function testCharGenStep(message, args) {
   }
 
   // Validate player count
-  if (playerIds.length < 2 || playerIds.length > 11) { // Allow 2 to 10 players (not including the GM)
-    await message.channel.send('Invalid number of players. Please provide between 2 and 10 player IDs.');
+  if (playerIds.length < 1 || playerIds.length > 9) {
+    await message.channel.send('Invalid number of players. Please provide between 1 and 9 player IDs.');
     return;
   }
 
@@ -870,7 +997,7 @@ async function testCharGenStep(message, args) {
     return;
   }
 
-  // Send a non-ephemeral message to the game channel and store the message object
+  // Send a message to the game channel and store the message object
   const testMessage = await gameChannel.send({ content: `A test of Character Generation Step ${step} is being run by <@${message.author.id}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.` });
 
   // Determine gameMode based on channel type
@@ -922,8 +1049,7 @@ async function testCharGenStep(message, args) {
     availableTraits: ['Virtue', 'Vice', 'Moment'],
     stackOrder: [],
     initialChoice: null,
-    group: "A",
-    stackConfirmed: false,
+    inventoryConfirmed: false,
   };
 
   const fetchedPlayers = []; // Array to store fetched player objects
@@ -952,8 +1078,8 @@ async function testCharGenStep(message, args) {
           availableTraits: ['Virtue', 'Vice', 'Moment'],
           stackOrder: [],
           initialChoice: null,
-          group: "A",
-          stackConfirmed: false,
+          gear: step > 7 ? ['House Keys', 'Cell Phone', 'Hair Clip'] : [], // Add gear for after step 7 only
+          inventoryConfirmed: false,
         };
         fetchedPlayers.push(player); // Add fetched player to the array
         game.playerOrder.push(playerId); // Add playerId to playerOrder
@@ -974,6 +1100,7 @@ async function testCharGenStep(message, args) {
   saveGameData();
 
   await message.channel.send(`Starting character generation at step ${step} in <#${gameChannelId}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.`);
+
   await sendCharacterGenStep(gameChannel, game);
 
   try {
@@ -985,7 +1112,7 @@ async function testCharGenStep(message, args) {
 
 function clearDataForLaterSteps(game, step) {
   const propertiesToClear = {
-    6: ['stackOrder', 'initialChoice', 'stackConfirmed', 'availableTraits'],
+    6: ['stackOrder', 'initialChoice', 'availableTraits'],
     7: ['gear', 'recording'],
     8: ['recording'],
   };

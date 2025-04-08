@@ -1,7 +1,7 @@
 import { sendCharacterGenStep, swapTraits, swapBrinks } from './chargen.js';
 import {
   saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
-  askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM,
+  askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM, displayInventory,
   handleTraitStacking, askForVoicePreference, startReminderTimers, clearReminderTimers
 } from './utils.js';
 import { client } from './index.js';
@@ -177,14 +177,20 @@ export async function handleStepSeven(gameChannel, game) {
   await new Promise(resolve => setTimeout(resolve, 5000));
   startReminderTimers(gameChannel, game);
   gameChannel.send(stepSevenReminder);
-  const gearPromises = [];
-  for (const playerId of game.playerOrder) {
+
+  // Send instructional DM and display inventory for each player (simultaneously)
+  const inventoryPromises = game.playerOrder.map(async (playerId) => {
     const player = await gameChannel.guild.members.fetch(playerId);
     const user = player.user;
-    gearPromises.push(user.send('Please use `.gear item1, item2, ...` to input your gear.'));
-  }
-  await Promise.all(gearPromises);
+    await displayInventory(user, game, playerId);
+  });
+
+  await Promise.all(inventoryPromises); // Wait for all DMs to be sent
+
   saveGameData();
+  // Note: Checking if all players are done and advancing to Step 8 is
+  // handled within the 'approve' button interaction handler in index.js
+  // after the GM confirms every player's starting inventory.
 }
 
 export async function handleStepEight(gameChannel, game) {

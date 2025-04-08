@@ -10,7 +10,7 @@ import {
 import { defaultVirtues, defaultVices, defaultMoments, languageOptions } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
-import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
+import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
 import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks, reminders, randomNames, randomLooks, randomConcepts } from './config.js';
 import { sendCharacterGenStep } from './chargen.js';
 import { isTesting } from './index.js';
@@ -114,7 +114,7 @@ export async function askForVoicePreference(user, game, playerId, time) {
       await interaction.deferUpdate();
       if (interaction.customId === 'use_voice') {
         if (!selectedLanguage || !selectedVoice) {
-          await interaction.followUp({ content: 'Please select a language and voice first.', ephemeral: true });
+          await interaction.followUp('Please select a language and voice first.');
           return;
         }
         game.players[playerId].language = selectedLanguage;
@@ -125,7 +125,7 @@ export async function askForVoicePreference(user, game, playerId, time) {
         resolve();
       } else if (interaction.customId === 'preview_voice') {
         if (!selectedLanguage || !selectedVoice) {
-          await interaction.followUp({ content: 'Please select a language and voice first.', ephemeral: true });
+          await interaction.followUp('Please select a language and voice first.');
           return;
         }
         const existingConnection = getVoiceConnection(interaction.guild.id);
@@ -139,7 +139,7 @@ export async function askForVoicePreference(user, game, playerId, time) {
               adapterCreator: interaction.guild.voiceAdapterCreator,
             });
           } else {
-            await interaction.followUp({ content: 'Voice channel not found.', ephemeral: true });
+            await interaction.followUp('Voice channel not found.');
             return;
           }
         }
@@ -151,7 +151,7 @@ export async function askForVoicePreference(user, game, playerId, time) {
           'de-DE': `Dies ist eine Sprachvorschau für <@${user.id}> in ${languageOptions['de-DE'].name} mit Google Cloud Text-To-Speech.`,
         };
         const verbiage = languageVerbiage[selectedLanguage];
-        await interaction.followUp({ content: `Previewing TTS voice ${selectedVoice} in <#${game.voiceChannelId}>.`, ephemeral: true });
+        await interaction.followUp(`Previewing TTS voice ${selectedVoice} in <#${game.voiceChannelId}>.`);
         const voiceChannel = client.channels.cache.get(game.voiceChannelId);
         await speakInChannel(verbiage, voiceChannel, selectedVoice);
       }
@@ -309,13 +309,22 @@ export async function requestConsent(user, prompt, yesId, noId, time, title = 'C
   }
 }
 
-function assignRandomBrink(isThreat = false) {
-  const brinks = isThreat ? defaultThreatBrinks : defaultPlayerGMBrinks;
-  return brinks[Math.floor(Math.random() * brinks.length)];
-}
+export function getGameData(identifier) {
+  console.log(`getGameData: Called with identifier: ${identifier}`); // Added logging
+  let game = gameData[identifier];
 
-export function getGameData(channelId) {
-  return gameData[channelId];
+  // If not found by channelId, try finding it by playerId
+  if (!game) {
+    game = Object.values(gameData).find(game => game.players && (game.players[identifier] || game.gmId === identifier));
+    if (game) {
+      console.log(`getGameData: Found game for playerId ${identifier}`);
+    } else {
+      console.warn(`getGameData: Game data not found for identifier: ${identifier}`);
+    }
+  } else {
+    console.log(`getGameData: Found game for channelId ${identifier}`);
+  }
+  return game;
 }
 
 export function setGameData(channelId, data) {
@@ -555,7 +564,8 @@ export async function askForMoment(user, game, playerId, time) {
     const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
     if (response) {
       if (response.trim() === "?") {
-        assignRandomMoment(user, game.players[playerId]);
+        game.players[playerId].moment =  getRandomMoment();
+        saveGameData();
         return;
       }
       input = response.trim();
@@ -576,8 +586,7 @@ export async function askForMoment(user, game, playerId, time) {
         continue;
       }
     } else {
-      assignRandomMoment(user, game.players[playerId]);
-      return;
+      return getRandomMoment();
     }
   }
 }
@@ -589,9 +598,9 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
     if (response) {
       if (response.trim() === "?") {
         if (isThreat) {
-          input = assignRandomBrink(true);
+          input = getRandomBrink(true);
         } else {
-          input = assignRandomBrink(false);
+          input = getRandomBrink(false);
         }
 
         const characterName = game.players[playerId]?.name || user.username;
@@ -636,11 +645,6 @@ export async function askForBrink(user, game, playerId, prompt, time, isThreat =
   }
 }
 
-function assignRandomMoment(user, player) {
-  player.moment = defaultMoments[Math.floor(Math.random() * defaultMoments.length)];
-  user.send(`Request timed out. A random Moment has been assigned: "${player.moment}"`);
-}
-
 export function getRandomName() {
   return randomNames[Math.floor(Math.random() * randomNames.length)];
 }
@@ -675,11 +679,16 @@ export function sanitizeString(str) {
     return '';
   }
 
-  str = str.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\uFFFF]/g, '');
-  str = str.replace(/"/g, '\\"');
-  str = str.replace(/\\(?!"|\\)/g, '\\\\');
+  // Remove control characters, extended Unicode characters, and potentially harmful symbols
+  str = str.replace(/[\x00-\x1F\x7F-\x9F]/g, ''); // Control characters
+  str = str.replace(/[\u2000-\u206F]/g, ''); // Unicode punctuation
+  str = str.replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, ''); // Remove surrogate pairs
+  str = str.replace(/[\u2600-\u26FF]/g, ''); // Misc symbols
+  str = str.replace(/[<>{}[\]]/g, ''); // Remove brackets and angle brackets
+  str = str.replace(/["'`]/g, ''); // Remove quotes and backticks
+  str = str.replace(/\\/g, ''); // Remove backslashes
 
-  return str;
+  return str.trim(); // Trim whitespace
 }
 
 const numberWords = [
@@ -866,8 +875,7 @@ export function normalizeSentence(str) {
 
 export function normalizeBrink(brink, name, isThreat = false) {
   if (brink === undefined) {
-    brink = assignRandomBrink(isThreat);
-    brink = assignRandomBrink(isThreat);
+    brink = getRandomBrink(isThreat);
   }
   if (isThreat) {
     if (!name) {
@@ -885,132 +893,358 @@ export function normalizeBrink(brink, name, isThreat = false) {
 }
 
 export async function handleGearCommand(user, game, playerId, args) {
-  const command = args[0];
-  const item = args.slice(1).join(' ');
-
   try {
-    switch (command) {
-      case 'add':
-        await addGear(user, game, playerId, item);
-        break;
-      case 'remove':
-        await removeGear(user, game, playerId, item);
-        break;
-      case 'edit':
-        await editGear(user, game, playerId, item);
-        break;
-      default:
-        await askForGear(user, game, playerId, args);
-        break;
+    if (!game.players[playerId].gear) {
+      game.players[playerId].gear = [];
     }
+
+    // Show the instructions if this is Step 7
+    if (game.characterGenStep === 7) {
+      await user.send(
+        'Use the buttons in the embed below to manage your character\'s gear.  You can add, edit, or delete items. Click "Done with Step 7" when you are finished.'
+      );
+    }
+
+    await displayInventory(user, game, playerId);
   } catch (error) {
     console.error(`Error handling gear command for ${user.tag}:`, error);
     await user.send('An error occurred while processing your gear command.');
   }
 }
 
-async function askForGear(user, game, playerId, args, retryCount = 0) {
-  let gearList = [];
-  if (args[0] === 'gear') {
-    gearList = args.slice(1).join(' ').split(',').map(item => sanitizeString(item.trim()));
+export async function displayInventory(user, game, playerId, isRejected = false) {
+  const player = game.players[playerId];
+  const characterName = player.name || user.username;
+  let inventoryTitle;
+
+  // Check if the user viewing the inventory is the same as the player whose inventory it is
+  if (user.id === playerId) {
+    inventoryTitle = `${characterName.endsWith('s') ? characterName + '\'' : characterName + '\'s'} Inventory`;
   } else {
-    await user.send('Invalid command. Please use `.gear item1, item2, ...`');
-    return;
+    inventoryTitle = `(<@${playerId}>) ${characterName.endsWith('s') ? characterName + '\'' : characterName + '\'s'} Inventory`;
   }
 
-  if (gearList.length === 0) {
-    await user.send('Please provide at least one item.');
-    return;
+  const gear = player.gear || [];
+
+  let inventoryText = '';
+  let components = []; // Initialize components array
+
+  if (gear.length > 0) {
+    const selectMenuOptions = gear.map((item, index) => {
+      const truncatedItem = item.length > 100 ? item.substring(0, 97) + '...' : item; // Truncate item
+      return {
+        label: truncatedItem.substring(0, 25), // Truncate label to 25 characters
+        value: `${index}`,
+      };
+    });
+
+    const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`gearselect_${playerId}`)
+      .setPlaceholder('Select an item to edit or delete')
+      .addOptions(selectMenuOptions);
+
+    const actionRow = new ActionRowBuilder().addComponents(selectMenu);
+    components.push(actionRow); // Add actionRow to components
+    inventoryText = gear.join(', ')
+  } else {
+    inventoryText = 'Your inventory is empty.';
   }
 
-  await user.send(`Your inventory:\n${gearList.map((item, index) => `${index + 1}. ${item}`).join('\n')}`);
+  const addGearButton = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`addgear_${game.textChannelId}`)
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('➕')
+  );
+  components.push(addGearButton); // Add addGearButton to components
 
-  const confirmation = await confirmInput(user, 'Is this inventory correct?', 60000);
+  const doneButtonLabel = game.characterGenStep === 7 ? 'Done with Step 7' : 'Close';
+  const doneButton = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`donestep7_${playerId}_${game.textChannelId}`)
+      .setLabel(doneButtonLabel)
+      .setStyle(ButtonStyle.Success)
+  );
+  components.push(doneButton); // Add doneButton to components
 
-  if (confirmation) {
-    game.players[playerId].gear = gearList;
-    saveGameData();
-    await user.send('Your inventory has been saved.');
-    const allPlayersHaveGear = Object.values(game.players).every(player => player.gear);
-    if (allPlayersHaveGear) {
-      const gameChannel = client.channels.cache.get(game.textChannelId);
-      game.characterGenStep++;
-      sendCharacterGenStep(gameChannel, game);
-    }
+  const embed = new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle(inventoryTitle)
+    .setDescription(inventoryText || 'Your inventory is empty.');
+
+  let messageContent;
+  if (isRejected) {
+    messageContent = 'Your GM has rejected your inventory, please ask them for guidance before clicking "Done with Step 7" again.';
   } else {
-    if (retryCount < 3) {
-      await user.send('Please try again.');
-      await askForGear(user, game, playerId, args, retryCount + 1);
-    } else {
-      await user.send('Too many retries. Please contact the developer.');
-    }
+    messageContent = 'Use the buttons in the embed below to manage your character\'s gear.  You can add, edit, or delete items. Click "Done with Step 7" when you are finished.';
+  }
+
+  try {
+    await user.send({
+      content: messageContent,
+      embeds: [embed],
+      components: components,
+    });
+  } catch (error) {
+    console.error('Error sending inventory message:', error);
   }
 }
 
-async function addGear(user, game, playerId, item) {
-  if (!item) {
-    await user.send('Please provide an item to add.');
+export async function handleDoneButton(interaction, game) {
+  const customIdParts = interaction.customId.split('_');
+  const playerId = customIdParts[1];
+  const textChannelId = customIdParts[2];
+
+  if (!game) {
+    await interaction.reply('An error occurred in handleDoneButton. The game data is missing.');
     return;
   }
-  if (!game.players[playerId].gear) {
-    game.players[playerId].gear = [];
-  }
-  game.players[playerId].gear.push(sanitizeString(item));
+  const player = game.players[playerId];
+  const gearList = player.gear.join(', ') || 'No gear added.';
+
   saveGameData();
-  await user.send(`Added "${item}" to your inventory.`);
+
+  await interaction.reply({ content: 'Your inventory has been recorded and sent to your GM for approval. Please wait for the other players to complete Step 7.' });
+
+  const gm = await client.users.fetch(game.gmId);
+  const embed = new EmbedBuilder()
+    .setColor(0x0099FF)
+    .setTitle(`<@${playerId}> Inventory`)
+    .setDescription(gearList);
+
+  const row = new ActionRowBuilder().addComponents(
+    new ButtonBuilder()
+      .setCustomId(`approve_${playerId}_${textChannelId}`)
+      .setLabel('Approve')
+      .setStyle(ButtonStyle.Success),
+    new ButtonBuilder()
+      .setCustomId(`tryagain_${playerId}_${textChannelId}`)
+      .setLabel('Reject')
+      .setStyle(ButtonStyle.Secondary)
+  );
+
+  // Send a new message to the GM instead of replying
+  await gm.send({ embeds: [embed], components: [row] });
 }
 
-async function removeGear(user, game, playerId, item) {
-  if (!item) {
-    await user.send('Please provide an item to remove from your inventory.');
+export async function handleGMEditButton(interaction) {
+  const textChannelId = interaction.component.data.textChannelId;
+  const game = getGameData(textChannelId); // Use getGameData here
+  if (!game) {
+    await interaction.reply('An error occurred. The game data is missing.');
     return;
   }
-  if (!game.players[playerId].gear) {
-    await user.send(`You have no "${item}" to remove from your inventory.`);
+  console.log('handleGMEditButton: game:', game);
+
+  const modal = new ModalBuilder()
+    .setCustomId(`gm_edit_${playerId}`)
+    .setTitle('Edit Player Gear');
+
+  const gearInput = new TextInputBuilder()
+    .setCustomId('gear_list')
+    .setLabel('Gear List (comma-separated)')
+    .setStyle(TextInputStyle.Paragraph)
+    .setValue(gearList);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(gearInput);
+  modal.addComponents(firstActionRow);
+
+  await interaction.showModal(modal);
+}
+
+export async function handleGMEditModalSubmit(interaction) {
+  const textChannelId = interaction.component.data.textChannelId;
+  const game = getGameData(textChannelId); // Use getGameData here
+  if (!game) {
+    await interaction.reply('An error occurred. The game data is missing.');
     return;
   }
-  const index = game.players[playerId].gear.indexOf(item);
-  if (index > -1) {
-    game.players[playerId].gear.splice(index, 1);
-    saveGameData();
-    await user.send(`Removed "${item}" from your inventory.`);
-  } else {
-    await user.send(`"${item}" is not in your inventory.`);
+  console.log('handleGMEditModalSubmit: game:', game);
+  const gearList = interaction.fields.getTextInputValue('gear_list');
+  const gearArray = gearList.split(',').map(item => item.trim());
+
+  game.players[playerId].gear = gearArray;
+  saveGameData();
+  await interaction.reply('Gear list updated!');
+
+  const player = await client.users.fetch(playerId);
+  await displayInventory(player, game, playerId);
+}
+
+export async function handleGearModal(interaction) {
+  const customId = interaction.customId;
+  const playerId = interaction.user.id;
+  const game = findGameByUserId(playerId);
+
+  if (!game) {
+    await interaction.reply('You are not currently in a game.');
+    return;
+  }
+
+  if (customId.startsWith('edit_')) {
+    await handleEditGearModal(interaction, game, playerId);
+  } else if (customId.startsWith('delete_')) {
+    await handleDeleteGearModal(interaction, game, playerId);
+  } else if (customId === 'addgear') {
+    await handleAddGearModal(interaction, game, playerId);
   }
 }
 
-async function editGear(user, game, playerId, item, retryCount = 0) {
-  if (!item) {
-    await user.send('Please provide an item to edit.');
+export async function handleEditGearModal(interaction, game, playerId, itemId) {
+  const gear = game.players[playerId].gear;
+  const index = parseInt(itemId);
+  const item = gear[index] || '';
+
+  const modal = new ModalBuilder()
+    .setCustomId(`editgear_${itemId}`)
+    .setTitle('Edit Gear Item');
+
+  const nameInput = new TextInputBuilder()
+    .setCustomId('gearname')
+    .setLabel('Item Name')
+    .setStyle(TextInputStyle.Short)
+    .setValue(item);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(nameInput);
+
+  modal.addComponents(firstActionRow);
+
+  await interaction.showModal(modal);
+}
+
+export async function handleEditGearModalSubmit(interaction, game, playerId, itemId) {
+  if (!game) {
+    await interaction.reply({ content: 'An error occurred. The game data is missing.' });
     return;
   }
-  if (!game.players[playerId].gear) {
-    await user.send('You have no gear to edit.');
-    return;
-  }
-  const index = game.players[playerId].gear.indexOf(item);
-  if (index > -1) {
-    const newItem = await getDMResponse(user, `What would you like to change "${item}" to?`, 60000, m => m.author.id === playerId);
-    if (newItem) {
-      const confirmation = await confirmInput(user, `Change "${item}" to "${newItem}"?`, 60000);
-      if (confirmation) {
-        game.players[playerId].gear[index] = sanitizeString(newItem);
-        saveGameData();
-        await user.send(`Changed "${item}" to "${newItem}" in your inventory.`);
-      } else {
-        if (retryCount < 3) {
-          await user.send('Please try again.');
-          await editGear(user, game, playerId, item, retryCount + 1);
-        } else {
-          await user.send('Too many retries. Please contact the developer.');
-        }
-      }
+  const gear = game.players[playerId].gear;
+  const index = parseInt(itemId);
+  const name = interaction.fields.getTextInputValue('gearname');
+
+  gear[index] = name;
+  saveGameData();
+  await interaction.reply({ content: 'Gear item updated!' });
+
+  const player = await client.users.fetch(playerId);
+  await displayInventory(player, game, playerId);
+}
+
+export async function handleDeleteGearModal(interaction, game, playerId, itemId) {
+  const gear = game.players[playerId].gear;
+  const index = parseInt(itemId);
+  const item = gear[index];
+
+  const modal = new ModalBuilder()
+    .setCustomId(`deletegearconfirm_${itemId}`)
+    .setTitle(`Delete Gear: ${item}`);
+
+  const confirmationInput = new TextInputBuilder()
+    .setCustomId('deleteconfirmation')
+    .setLabel('Type "d" to confirm')
+    .setStyle(TextInputStyle.Short)
+    .setMinLength(1)
+    .setMaxLength(1)
+    .setRequired(true);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(confirmationInput);
+
+  modal.addComponents(firstActionRow);
+
+  await interaction.showModal(modal);
+}
+
+export async function handleDeleteGearModalSubmit(interaction, game, playerId, itemId) {
+  if (interaction.customId.startsWith('deletegearconfirm')) {
+    const gear = game.players[playerId].gear;
+    const index = parseInt(itemId);
+    const confirmation = interaction.fields.getTextInputValue('deleteconfirmation');
+
+    if (confirmation.toLowerCase() === 'd') {
+      gear.splice(index, 1);
+      saveGameData();
+      await interaction.reply({ content: 'Gear item deleted!' });
+
+      const player = await client.users.fetch(playerId);
+      await displayInventory(player, game, playerId);
     } else {
-      await user.send(`No new item provided.`);
+      await interaction.reply({ content: 'Gear item not deleted. Please type "d" to confirm.' });
     }
-  } else {
-    await user.send(`"${item}" is not in your inventory.`);
   }
+}
+
+export async function handleAddGearModal(interaction) {
+  console.log('handleAddGearModal: interaction object:', interaction);
+  console.log('handleAddGearModal: interaction.customId:', interaction.customId);
+
+  const customIdParts = interaction.customId.split('_');
+  const textChannelId = customIdParts[customIdParts.length - 1];
+
+  console.log('handleAddGearModal: textChannelId:', textChannelId);
+
+  if (!textChannelId) {
+    await interaction.reply({ content: 'An error occurred. Channel ID is missing.' });
+    return;
+  }
+
+  const game = getGameData(textChannelId);
+  console.log('handleAddGearModal: game:', game);
+  if (!game) {
+    await interaction.reply({ content: 'An error occurred. The game data is missing.' });
+    return;
+  }
+
+  const playerId = interaction.user.id;
+  console.log('handleAddGearModal: playerId:', playerId);
+
+  // Check if the player exists in the game
+  if (!game.players || !game.players[playerId]) {
+    console.error('handleAddGearModal: Player not found in game data!');
+    await interaction.reply({ content: 'You are not currently in this game.' });
+    return;
+  }
+
+  // Initialize the player's gear array if it doesn't exist
+  game.players[playerId].gear = game.players[playerId].gear || [];
+
+  const modal = new ModalBuilder()
+    .setCustomId('addgearmodal')
+    .setTitle('Add Gear Item');
+
+  const nameInput = new TextInputBuilder()
+    .setCustomId('gearname')
+    .setLabel('Item Name')
+    .setStyle(TextInputStyle.Short);
+
+  const firstActionRow = new ActionRowBuilder().addComponents(nameInput);
+
+  modal.addComponents(firstActionRow);
+
+  await interaction.showModal(modal);
+}
+
+export async function handleAddGearModalSubmit(interaction, game) {
+  if (!game) {
+    await interaction.reply({ content: 'An error occurred. The game data is missing.' });
+    return;
+  }
+  const playerId = interaction.user.id;
+  const gearInput = interaction.fields.getTextInputValue('gearname');
+  const gearItems = gearInput.split(',').map(item => sanitizeString(item.trim()));
+
+  // Robust error handling: Check if game and player exist
+  if (!game || !game.players || !game.players[playerId]) {
+    await interaction.reply('An error occurred. The game or player data is missing.');
+    return;
+  }
+
+  // Ensure gear array exists before pushing
+  game.players[playerId].gear = game.players[playerId].gear || [];
+  game.players[playerId].gear.push(...gearItems); // Push multiple items
+  saveGameData();
+  await interaction.reply({ content: 'Gear item(s) added!' });
+
+  const user = await client.users.fetch(playerId); // Fetch the user object
+  await displayInventory(user, game, playerId); // Update inventory
 }
 
 export async function runMomentLottery(game, lotteryPlayers) {
@@ -1019,7 +1253,7 @@ export async function runMomentLottery(game, lotteryPlayers) {
     console.log(`runMomentLottery: No players chose 'Moment'. Skipping lottery.`);
     return null; // Return null if no players chose 'Moment'
   }
-  await new Promise(resolve => setTimeout(resolve, 5000)); // Simulate lottery time
+  await new Promise(resolve => setTimeout(resolve, 2000 + Math.floor(Math.random() * 5000))); // Simulate lottery time
   const winnerId = lotteryPlayers[Math.floor(Math.random() * lotteryPlayers.length)];
   console.log(`runMomentLottery: Winner is ${winnerId}`);
 

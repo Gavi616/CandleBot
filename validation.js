@@ -27,11 +27,9 @@ export const gameDataSchema = Joi.object({
       recording: Joi.string().allow('').optional(),
       gear: Joi.array().items(Joi.string()).optional(),
       stackOrder: Joi.array().items(Joi.string()).required(),
-      stackConfirmed: Joi.boolean().required(),
-      momentOnTop: Joi.boolean().optional(),
       initialChoice: Joi.string().allow(null).required(),
-      group: Joi.string().valid('A', 'B', 'C', 'D').required(),
-      availableTraits: Joi.array().items(Joi.string()).required()
+      availableTraits: Joi.array().items(Joi.string()).required(),
+      inventoryConfirmed: Joi.boolean().optional(),
     }).required()
   ).required(),
   playerOrder: Joi.array().items(Joi.string().pattern(/^\d+$/)).required(),
@@ -81,6 +79,10 @@ export function validateGameSetup(message) {
   for (const playerId of playerIds) {
     if (!/^\d+$/.test(playerId)) {
       return { valid: false, reason: 'Invalid Player ID. Please mention a valid user.' };
+    }
+    const existingGame = Object.values(gameData).find(game => game.players && game.players[playerId]);
+    if (existingGame) {
+      return { valid: false, reason: `<@${playerId}> is already in a game.  Players can only participate in one game at a time. They can Use \`.leavegame [reason]\` to exit their current game.` };
     }
   }
 

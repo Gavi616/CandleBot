@@ -564,7 +564,7 @@ export async function askForMoment(user, game, playerId, time) {
     const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
     if (response) {
       if (response.trim() === "?") {
-        game.players[playerId].moment =  getRandomMoment();
+        game.players[playerId].moment = getRandomMoment();
         saveGameData();
         return;
       }
@@ -767,30 +767,30 @@ export function printActiveGames() {
 
 export async function sendCandleStatus(channel, litCandles) {
   if (litCandles === 10) {
-    channel.send('***Ten Candles are lit.***');
+    channel.send('***Ten Candles are lit.*** ' + ':candle:'.repeat(litCandles));
   } else if (litCandles >= 1 && litCandles <= 9) {
     const words = numberToWords(litCandles);
     if (litCandles === 1) {
-      channel.send(`***There is ${words} lit candle.***`);
+      channel.send(`***There is ${words} lit candle.*** ` + ':candle:'.repeat(litCandles));
     } else {
-      channel.send(`***There are ${words} lit candles.***`);
+      channel.send(`***There are ${words} lit candles.*** ` + ':candle:'.repeat(litCandles));
     }
   } else {
-    channel.send('***All candles have been extinguished.***');
+    channel.send('***All candles have been extinguished.*** ' + ':wavy_dash:');
   }
 }
 
-export async function sendConsentConfirmation(user, game, type, serverName, channelName, guildId, channelId) {
+export async function sendConsentConfirmation(user, userType, channelId) {
   try {
     const dmChannel = await user.createDM();
     let message;
 
-    if (type === 'gm') {
+    if (userType === 'gm') {
       message = `Thank you for consenting to GM **Ten Candles** in <#${channelId}>.`;
-    } else if (type === 'player') {
+    } else if (userType === 'player') {
       message = `Thank you for consenting to play **Ten Candles** in <#${channelId}>.`;
     } else {
-      console.error(`sendConsentConfirmation: Invalid consent type: ${type}`);
+      console.error(`sendConsentConfirmation: Invalid consent type: ${userType}`);
       return;
     }
     await dmChannel.send(message);
@@ -943,29 +943,33 @@ export async function displayInventory(user, game, playerId, isRejected = false)
       .setPlaceholder('Select an item to edit or delete')
       .addOptions(selectMenuOptions);
 
-    const actionRow = new ActionRowBuilder().addComponents(selectMenu);
-    components.push(actionRow); // Add actionRow to components
+    const selectActionRow = new ActionRowBuilder().addComponents(selectMenu);
+    components.push(selectActionRow); // Add actionRow to components
     inventoryText = gear.join(', ')
   } else {
     inventoryText = 'Your inventory is empty.';
   }
 
-  const addGearButton = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`addgear_${game.textChannelId}`)
-      .setStyle(ButtonStyle.Primary)
-      .setEmoji('➕')
-  );
-  components.push(addGearButton); // Add addGearButton to components
+  // Create a single ActionRow for both buttons
+  const buttonRow = new ActionRowBuilder();
 
-  const doneButtonLabel = game.characterGenStep === 7 ? 'Done with Step 7' : 'Close';
-  const doneButton = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`donestep7_${playerId}_${game.textChannelId}`)
-      .setLabel(doneButtonLabel)
-      .setStyle(ButtonStyle.Success)
-  );
-  components.push(doneButton); // Add doneButton to components
+  // Create and add the Add Gear button
+  const addGearButton = new ButtonBuilder()
+    .setCustomId(`addgear_${game.textChannelId}`)
+    .setStyle(ButtonStyle.Primary)
+    .setEmoji('➕');
+  buttonRow.addComponents(addGearButton);
+
+  // Create and add the Done button
+  const doneButtonLabel = game.characterGenStep === 7 ? 'Send to GM' : 'Save';
+  const doneButton = new ButtonBuilder()
+    .setCustomId(`donestep7_${playerId}_${game.textChannelId}`)
+    .setLabel(doneButtonLabel)
+    .setStyle(ButtonStyle.Success);
+  buttonRow.addComponents(doneButton);
+
+  // Add the combined button row to the components array
+  components.push(buttonRow);
 
   const embed = new EmbedBuilder()
     .setColor(0x0099FF)
@@ -974,9 +978,9 @@ export async function displayInventory(user, game, playerId, isRejected = false)
 
   let messageContent;
   if (isRejected) {
-    messageContent = 'Your GM has rejected your inventory, please ask them for guidance before clicking "Done with Step 7" again.';
+    messageContent = 'Your GM has rejected your inventory submission, please ask them for guidance and edit your inventory before clicking "Send to GM" again.';
   } else {
-    messageContent = 'Use the buttons in the embed below to manage your character\'s gear.  You can add, edit, or delete items. Click "Done with Step 7" when you are finished.';
+    messageContent = 'Use the buttons in the embed below to manage your character\'s gear.  You can add, edit, or delete items. Click "Send to GM" when you are finished.';
   }
 
   try {
@@ -993,38 +997,82 @@ export async function displayInventory(user, game, playerId, isRejected = false)
 export async function handleDoneButton(interaction, game) {
   const customIdParts = interaction.customId.split('_');
   const playerId = customIdParts[1];
-  const textChannelId = customIdParts[2];
+  const textChannelId = customIdParts[2]; // Get channelId from button
 
-  if (!game) {
-    await interaction.reply('An error occurred in handleDoneButton. The game data is missing.');
+  // Double check game context, though index.js should have verified
+  if (!game || game.textChannelId !== textChannelId) {
+    console.error(`handleDoneButton: Game context mismatch for interaction ${interaction.id}`);
+    // Avoid replying here if interaction might be invalid, let index.js handle deletion attempt
     return;
   }
+
   const player = game.players[playerId];
-  const gearList = player.gear.join(', ') || 'No gear added.';
+  if (!player) {
+      console.error(`handleDoneButton: Player ${playerId} not found in game ${textChannelId}`);
+      // Avoid replying here
+      return;
+  }
 
-  saveGameData();
+  const gearList = player.gear && player.gear.length > 0 ? player.gear.join(', ') : 'No gear added.';
+  const characterName = player.name || player.playerUsername; // Use username as fallback
 
-  await interaction.reply({ content: 'Your inventory has been recorded and sent to your GM for approval. Please wait for the other players to complete Step 7.' });
+  try {
+    if (game.characterGenStep === 7) {
+      // Reply to the player
+      await interaction.reply({ content: 'Your inventory has been recorded and sent to your GM for approval. Please wait for confirmation or rejection.' });
 
-  const gm = await client.users.fetch(game.gmId);
-  const embed = new EmbedBuilder()
-    .setColor(0x0099FF)
-    .setTitle(`<@${playerId}> Inventory`)
-    .setDescription(gearList);
+      // Send approval request to GM
+      const gm = await client.users.fetch(game.gmId);
+      const embed = new EmbedBuilder()
+        .setColor(0x0099FF)
+        // Mention player in title for clarity in GM's DMs
+        .setTitle(`Inventory Approval: ${characterName} (<@${playerId}>)`)
+        .setDescription(gearList)
+        .setFooter({ text: `Game Channel: #${client.channels.cache.get(textChannelId)?.name ?? textChannelId}` }); // Add context
 
-  const row = new ActionRowBuilder().addComponents(
-    new ButtonBuilder()
-      .setCustomId(`approve_${playerId}_${textChannelId}`)
-      .setLabel('Approve')
-      .setStyle(ButtonStyle.Success),
-    new ButtonBuilder()
-      .setCustomId(`tryagain_${playerId}_${textChannelId}`)
-      .setLabel('Reject')
-      .setStyle(ButtonStyle.Secondary)
-  );
+      const row = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(`approve_${playerId}_${textChannelId}`) // Ensure channelId is included
+          .setLabel('Approve')
+          .setStyle(ButtonStyle.Success),
+        new ButtonBuilder()
+          .setCustomId(`tryagain_${playerId}_${textChannelId}`) // Ensure channelId is included
+          .setLabel('Reject')
+          .setStyle(ButtonStyle.Danger) // Changed to Danger for Reject
+      );
 
-  // Send a new message to the GM instead of replying
-  await gm.send({ embeds: [embed], components: [row] });
+      await gm.send({ embeds: [embed], components: [row] });
+
+    } else {
+      // Handle "Save" button outside of Step 7 (if applicable)
+      await interaction.reply({ content: 'Your inventory changes have been recorded. Use `.gear` or the inventory display buttons to edit again.' });
+
+      // Notify GM of the change (optional, but can be helpful)
+      const gm = await client.users.fetch(game.gmId);
+      const notificationMessage = `Player ${characterName} (<@${playerId}>) updated their inventory outside of Step 7.\n**Current Inventory:** ${gearList}`;
+      await gm.send(notificationMessage).catch(console.error); // Send notification, catch errors
+    }
+
+    // Save game data after processing
+    saveGameData();
+
+  } catch (error) {
+      console.error(`Error in handleDoneButton for interaction ${interaction.id}:`, error);
+      // Attempt to inform the user if the initial reply failed
+      if (!interaction.replied && !interaction.deferred) {
+          try {
+              await interaction.reply({ content: 'An error occurred while processing your request.' });
+          } catch (replyError) {
+              console.error(`Failed to send error reply for interaction ${interaction.id}:`, replyError);
+          }
+      } else if (interaction.replied || interaction.deferred) {
+           try {
+              await interaction.followUp({ content: 'An error occurred after the initial response.' });
+           } catch (followUpError) {
+               console.error(`Failed to send error follow-up for interaction ${interaction.id}:`, followUpError);
+           }
+      }
+  }
 }
 
 export async function handleGMEditButton(interaction) {
@@ -1167,7 +1215,7 @@ export async function handleDeleteGearModalSubmit(interaction, game, playerId, i
       const player = await client.users.fetch(playerId);
       await displayInventory(player, game, playerId);
     } else {
-      await interaction.reply({ content: 'Gear item not deleted. Please type "d" to confirm.' });
+      await interaction.reply({ content: 'Gear item not deleted.' });
     }
   }
 }

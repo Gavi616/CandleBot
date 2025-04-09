@@ -31,7 +31,7 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
 const prefix = '.';
-const version = '0.9.950a';
+const version = '0.9.951a';
 const botName = 'Ten Candles Bot';
 export const isTesting = false;
 let botRestarted = false;
@@ -112,126 +112,346 @@ client.once('ready', async () => {
 });
 
 client.on('interactionCreate', async interaction => {
+  // --- Skip Chat Input Commands ---
   if (interaction.isChatInputCommand()) return;
 
-  if (interaction.isButton() || interaction.isModalSubmit()) {
-    const playerId = interaction.user.id;
-    const game = getGameData(playerId);
+  // --- Button, Modal, Select Menu Handling (Primarily in DMs for Step 7) ---
+  if (interaction.isButton() || interaction.isModalSubmit() || interaction.isStringSelectMenu()) {
+    const interactorId = interaction.user.id;
+    let game = null; // Initialize game to null
 
+    // --- Game Finding Logic ---
+    // For most player actions in DMs, find by user ID
+    if (!interaction.customId.startsWith('approve_') && !interaction.customId.startsWith('tryagain_')) {
+      game = findGameByUserId(interactorId);
+    }
+
+    // For GM approval/rejection, the game context comes from the button ID
+    if (interaction.isButton() && (interaction.customId.startsWith('approve_') || interaction.customId.startsWith('tryagain_'))) {
+      const customIdParts = interaction.customId.split('_');
+      const textChannelId = customIdParts[2]; // Expecting format like 'approve_playerId_channelId'
+      if (textChannelId) {
+        game = getGameData(textChannelId); // Find game using the channel ID
+      }
+    }
+    // For player inventory actions, also verify using channel ID from button if possible
+    else if (interaction.isButton() || interaction.isStringSelectMenu()) {
+      const customIdParts = interaction.customId.split('_');
+      // Find the channel ID, often the last part for player buttons
+      const potentialChannelId = customIdParts[customIdParts.length - 1];
+      if (/^\d+$/.test(potentialChannelId)) {
+        const gameFromChannel = getGameData(potentialChannelId);
+        // If we found a game via user ID, ensure it matches the channel context
+        if (game && gameFromChannel && game.textChannelId !== gameFromChannel.textChannelId) {
+          console.warn(`Interaction ${interaction.id}: Game mismatch between user ID and button channel ID.`);
+          // Potentially prioritize game from channel ID if user ID one seems wrong context
+          game = gameFromChannel;
+        } else if (!game && gameFromChannel) {
+          // If no game found via user ID, use the one from channel ID
+          game = gameFromChannel;
+        }
+      }
+    }
+
+    // --- Initial Game Check ---
     if (!game) {
-      await interaction.reply({ content: 'You are not currently in a game.' });
+      // Avoid replying if the interaction is part of an already finished process (e.g., clicking old buttons)
+      if (!interaction.deferred && !interaction.replied) {
+        try {
+          await interaction.reply({ content: 'Could not find an active game associated with this action or you are not part of it.' });
+        } catch (error) {
+          console.warn(`Interaction ${interaction.id}: Failed to send 'no game found' reply, likely interaction expired.`);
+        }
+      }
       return;
     }
 
+    // --- Button Interactions ---
     if (interaction.isButton()) {
+      const customIdParts = interaction.customId.split('_');
+
+      // --- Player "Save" / "Send to GM" Button ---
       if (interaction.customId.startsWith('donestep7')) {
-        await handleDoneButton(interaction, game);
-      } else if (interaction.customId.startsWith('edit')) {
-        const customIdParts = interaction.customId.split('_');
-        const itemId = customIdParts[3];
-        await handleEditGearModal(interaction, game, playerId, itemId);
-      } else if (interaction.customId.startsWith('delete')) {
-        const customIdParts = interaction.customId.split('_');
-        const itemId = customIdParts[3];
-        await handleDeleteGearModal(interaction, game, playerId, itemId);
-      } else if (interaction.customId.startsWith('addgear')) {
-        await handleAddGearModal(interaction, game);
-      } else if (interaction.customId.startsWith('approve')) {
-        // Handle GM "Approve" Inventory button click
-        const customIdParts = interaction.customId.split('_');
         const targetPlayerId = customIdParts[1];
-        const textChannelId = customIdParts[2];
-        console.log(`approve button: textChannelId=${textChannelId}, targetPlayerId=${targetPlayerId}`);
-        const targetGame = getGameData(textChannelId); // Use textChannelId
-        if (!targetGame) {
-          await interaction.reply({ content: 'An error occurred. The game data is missing.' });
+        const textChannelIdFromButton = customIdParts[2];
+
+        // Permission Check: Ensure the interactor is the correct player
+        if (interactorId !== targetPlayerId) {
+          await interaction.reply({ content: 'You cannot perform this action for another player.' });
           return;
         }
-        const targetPlayer = targetGame.players[targetPlayerId];
-        const gearList = targetPlayer.gear.join(', ') || 'No gear added.';
+        // Context Check: Ensure the game context matches the button
+        if (!game || game.textChannelId !== textChannelIdFromButton) {
+          await interaction.reply({ content: 'Game context mismatch. Cannot perform this action.' });
+          return;
+        }
+
+        // Handle the logic (sending to GM, saving state)
+        await handleDoneButton(interaction, game); // handleDoneButton now only replies/sends DMs
+
+        // Delete the player's inventory message AFTER handleDoneButton completes
+        try {
+          // Check if the message still exists before attempting deletion
+          if (interaction.message) {
+            await interaction.message.delete();
+            console.log(`Deleted inventory message ${interaction.message.id} for player ${targetPlayerId}`);
+          }
+        } catch (error) {
+          // Ignore error if message was already deleted (10008)
+          if (error.code !== 10008) {
+            console.error(`Error deleting inventory message ${interaction.message.id}:`, error);
+          }
+        }
+        return; // Stop further processing for this interaction
+
+        // --- Player "+ Add Gear" Button ---
+      } else if (interaction.customId.startsWith('addgear')) {
+        const textChannelIdFromButton = customIdParts[customIdParts.length - 1]; // Usually last part
+
+        // Permission/Context Check (Optional but good practice)
+        if (!game || game.textChannelId !== textChannelIdFromButton || !game.players[interactorId]) {
+          await interaction.reply({ content: 'Cannot perform this action due to game context mismatch or you are not in this game.' });
+          return;
+        }
+        // This button just opens a modal, no message deletion or disabling needed here
+        await handleAddGearModal(interaction); // Pass game if needed by modal handler
+
+        // --- Player "Edit Gear" Button (Opens Modal) ---
+      } else if (interaction.customId.startsWith('edit_') && interaction.customId.includes('_gear_')) {
+        const targetPlayerId = customIdParts[1];
+        const textChannelIdFromButton = customIdParts[customIdParts.length - 1]; // Usually last part
+
+        // Permission/Context Check
+        if (interactorId !== targetPlayerId) {
+          await interaction.reply({ content: 'You cannot edit gear for another player.' });
+          return;
+        }
+        if (!game || game.textChannelId !== textChannelIdFromButton) {
+          await interaction.reply({ content: 'Game context mismatch. Cannot perform this action.' });
+          return;
+        }
+
+        const itemId = customIdParts[3];
+        await handleEditGearModal(interaction, game, targetPlayerId, itemId);
+
+        // --- Player "Delete Gear" Button (Opens Modal) ---
+      } else if (interaction.customId.startsWith('delete_') && interaction.customId.includes('_gear_')) {
+        const targetPlayerId = customIdParts[1];
+        const textChannelIdFromButton = customIdParts[customIdParts.length - 1]; // Usually last part
+
+        // Permission/Context Check
+        if (interactorId !== targetPlayerId) {
+          await interaction.reply({ content: 'You cannot delete gear for another player.' });
+          return;
+        }
+        if (!game || game.textChannelId !== textChannelIdFromButton) {
+          await interaction.reply({ content: 'Game context mismatch. Cannot perform this action.' });
+          return;
+        }
+
+        const itemId = customIdParts[3];
+        await handleDeleteGearModal(interaction, game, targetPlayerId, itemId);
+
+        // --- GM "Approve" Inventory Button ---
+      } else if (interaction.customId.startsWith('approve_')) {
+        const targetPlayerId = customIdParts[1];
+        const textChannelId = customIdParts[2];
+
+        // Permission Check: Ensure the interactor is the GM
+        if (interactorId !== game.gmId) {
+          await interaction.reply({ content: 'Only the GM can approve inventories.' });
+          return;
+        }
+        // Context Check: Ensure the game context matches the button
+        if (!game || game.textChannelId !== textChannelId) {
+          await interaction.reply({ content: 'Game context mismatch. Cannot perform this action.' });
+          return;
+        }
+
+        const targetPlayer = game.players[targetPlayerId];
+        if (!targetPlayer) {
+          await interaction.reply({ content: `Error: Could not find player ${targetPlayerId} in game data.` });
+          return;
+        }
+
+        const gearList = targetPlayer.gear && targetPlayer.gear.length > 0 ? targetPlayer.gear.join(', ') : 'No gear added.';
         const characterName = targetPlayer.name || targetPlayer.playerUsername;
-        await interaction.reply(`You have approved (<@${targetPlayerId}>) **${characterName}'s starting inventory**: ${gearList}.`); // Corrected
-        targetGame.players[targetPlayerId].inventoryConfirmed = true;
+
+        // Reply to the GM first
+        await interaction.reply({ content: `You have approved (<@${targetPlayerId}>) **${characterName}'s starting inventory**: ${gearList}.` });
+
+        // Disable buttons on the original GM message
+        try {
+          const originalMessage = interaction.message;
+          if (originalMessage && originalMessage.components.length > 0) {
+            const disabledRows = originalMessage.components.map(row => {
+              const newRow = ActionRowBuilder.from(row);
+              newRow.components.forEach(component => {
+                if (component.data.type === ComponentType.Button) {
+                  component.setDisabled(true);
+                }
+              });
+              return newRow;
+            });
+            await originalMessage.edit({ components: disabledRows });
+          }
+        } catch (error) {
+          if (error.code !== 10008) { // Ignore "Unknown Message"
+            console.error(`Error disabling buttons on GM message ${interaction.message?.id}:`, error);
+          }
+        }
+
+        // Update game state
+        game.players[targetPlayerId].inventoryConfirmed = true;
         saveGameData();
 
         // Check if all players are done AFTER approving
-        const allPlayersDone = targetGame.playerOrder.every(playerId => targetGame.players[playerId].inventoryConfirmed);
-        if (allPlayersDone) {
-          const gameChannel = client.channels.cache.get(targetGame.textChannelId);
-          clearReminderTimers(targetGame);
-          targetGame.characterGenStep++;
-          saveGameData();
-          sendCharacterGenStep(gameChannel, targetGame);
+        const allPlayersDone = game.playerOrder.every(pId => game.players[pId]?.inventoryConfirmed);
+        if (allPlayersDone && game.characterGenStep === 7) { // Ensure we are still in step 7
+          const gameChannel = client.channels.cache.get(game.textChannelId);
+          if (gameChannel) {
+            await gameChannel.send('All player inventories approved by the GM. Proceeding to the next step.');
+            clearReminderTimers(game); // Make sure to import this
+            game.characterGenStep++;
+            saveGameData();
+            sendCharacterGenStep(gameChannel, game);
+          } else {
+            console.error(`Could not find game channel ${game.textChannelId} to advance step.`);
+            const gmUser = await client.users.fetch(game.gmId).catch(console.error);
+            if (gmUser) {
+              await gmUser.send(`All inventories approved, but I couldn't find the game channel <#${game.textChannelId}> to announce the next step. Please check the channel and potentially use \`.nextstep\` manually.`).catch(console.error);
+            }
+          }
         }
-      } else if (interaction.customId.startsWith('tryagain')) {
-        // Handle GM "Try Again" Inventory button click
-        const customIdParts = interaction.customId.split('_');
+
+        // --- GM "Reject" Inventory Button ---
+      } else if (interaction.customId.startsWith('tryagain_')) {
         const targetPlayerId = customIdParts[1];
         const textChannelId = customIdParts[2];
-        console.log(`tryagain button: textChannelId=${textChannelId}, targetPlayerId=${targetPlayerId}`);
-        const targetGame = getGameData(textChannelId); // Use textChannelId
-        if (!targetGame) {
-          await interaction.reply({ content: 'An error occurred. The game data is missing.' });
+
+        // Permission Check: Ensure the interactor is the GM
+        if (interactorId !== game.gmId) {
+          await interaction.reply({ content: 'Only the GM can reject inventories.' });
           return;
         }
-        const targetPlayer = await client.users.fetch(targetPlayerId);
-        const characterName = targetGame.players[targetPlayerId].name || targetGame.players[targetPlayerId].playerUsername;
+        // Context Check: Ensure the game context matches the button
+        if (!game || game.textChannelId !== textChannelId) {
+          await interaction.reply({ content: 'Game context mismatch. Cannot perform this action.' });
+          return;
+        }
 
-        targetGame.players[targetPlayerId].inventoryConfirmed = false;
+        const targetPlayerUser = await client.users.fetch(targetPlayerId).catch(console.error);
+        if (!targetPlayerUser) {
+          await interaction.reply({ content: `Error: Could not fetch user data for player ${targetPlayerId}.` });
+          return;
+        }
+        if (!game.players[targetPlayerId]) {
+          await interaction.reply({ content: `Error: Could not find player ${targetPlayerId} in game data.` });
+          return;
+        }
+
+        const characterName = game.players[targetPlayerId].name || game.players[targetPlayerId].playerUsername;
+
+        // Reply to the GM first
+        await interaction.reply({ content: `You have sent (<@${targetPlayerId}>) **${characterName}'s starting inventory** back to them for editing.` });
+
+        // Disable buttons on the original GM message
+        try {
+          const originalMessage = interaction.message;
+          if (originalMessage && originalMessage.components.length > 0) {
+            const disabledRows = originalMessage.components.map(row => {
+              const newRow = ActionRowBuilder.from(row);
+              newRow.components.forEach(component => {
+                if (component.data.type === ComponentType.Button) {
+                  component.setDisabled(true);
+                }
+              });
+              return newRow;
+            });
+            await originalMessage.edit({ components: disabledRows });
+          }
+        } catch (error) {
+          if (error.code !== 10008) { // Ignore "Unknown Message"
+            console.error(`Error disabling buttons on GM message ${interaction.message?.id}:`, error);
+          }
+        }
+
+        // Update game state
+        game.players[targetPlayerId].inventoryConfirmed = false; // Mark as not confirmed
         saveGameData();
 
-        await interaction.reply(`You have sent (<@${targetPlayerId}>) **${characterName}'s starting inventory** back to them for editing.`); // Corrected
-        await displayInventory(targetPlayer, targetGame, targetPlayerId, true); // Pass true for isRejected
-      } else if (interaction.customId.startsWith('ok')) {
-        await interaction.reply({ content: 'Ok' });
-      } else if (interaction.customId.startsWith('edit')) {
-        await handleGMEditButton(interaction, game, playerId);
+        // Send the updated inventory display back to the player
+        await displayInventory(targetPlayerUser, game, targetPlayerId, true); // Pass true for isRejected
       }
-    } else if (interaction.isModalSubmit()) {
-      if (interaction.customId === 'addgearmodal') {
-        await handleAddGearModalSubmit(interaction, game);
-      } else if (interaction.customId.startsWith('deletegearconfirm')) {
-        const itemId = interaction.customId.split('_')[1];
-        const playerId = interaction.user.id;
-        await handleDeleteGearModalSubmit(interaction, game, playerId, itemId);
-      } else if (interaction.customId.startsWith('gmedit')) {
-        await handleGMEditModalSubmit(interaction, game);
-      } else if (interaction.customId.startsWith('editgear')) {
-        const itemId = interaction.customId.split('_')[1];
-        const playerId = interaction.user.id;
-        await handleEditGearModalSubmit(interaction, game, playerId, itemId);
-      }
+      // --- Other buttons can be handled here ---
     }
-  } else if (interaction.isStringSelectMenu()) {
-    if (interaction.customId.startsWith('gearselect')) {
-      const playerId = interaction.user.id;
-      const game = getGameData(playerId);
-      if (!game) {
-        await interaction.reply({ content: 'You are not currently in a game.' });
+    // --- Modal Submissions ---
+    else if (interaction.isModalSubmit()) {
+      // Ensure game context is still valid for modal submitter
+      if (!game || (!game.players[interactorId] && game.gmId !== interactorId)) {
+        await interaction.reply({ content: 'Cannot process modal submission due to missing game context or permissions.' });
         return;
       }
 
-      const itemId = interaction.values[0];
-      const gear = game.players[playerId].gear;
-      const index = parseInt(itemId);
-      const item = gear[index];
+      if (interaction.customId === 'addgearmodal') {
+        await handleAddGearModalSubmit(interaction, game);
+      } else if (interaction.customId.startsWith('deletegearconfirm_')) {
+        const itemId = interaction.customId.split('_')[1];
+        await handleDeleteGearModalSubmit(interaction, game, interactorId, itemId);
+      } else if (interaction.customId.startsWith('editgear_')) {
+        const itemId = interaction.customId.split('_')[1];
+        await handleEditGearModalSubmit(interaction, game, interactorId, itemId);
+      }
+      // --- Other modal submissions ---
+    }
+    // --- Select Menu Interactions ---
+    else if (interaction.isStringSelectMenu()) {
+      if (interaction.customId.startsWith('gearselect_')) {
+        const playerIdFromCustomId = interaction.customId.split('_')[1];
 
-      const actionRow = new ActionRowBuilder()
-        .addComponents(
-          new ButtonBuilder()
-            .setCustomId(`edit_${playerId}_gear_${itemId}_${game.textChannelId}`)
-            .setLabel('Edit')
-            .setStyle(ButtonStyle.Secondary),
-          new ButtonBuilder()
-            .setCustomId(`delete_${playerId}_gear_${itemId}_${game.textChannelId}`)
-            .setLabel('Delete')
-            .setStyle(ButtonStyle.Danger),
-        );
+        // Permission Check
+        if (interactorId !== playerIdFromCustomId) {
+          await interaction.reply({ content: 'You cannot interact with another player\'s gear menu.' });
+          return;
+        }
+        // Context Check
+        if (!game || !game.players[playerIdFromCustomId]) {
+          await interaction.reply({ content: 'Cannot perform this action due to missing game context.' });
+          return;
+        }
 
-      await interaction.reply({
-        content: `What would you like to do with ${item}?`,
-        components: [actionRow]
-      });
+        const itemId = interaction.values[0]; // This is the index
+        const gear = game.players[playerIdFromCustomId].gear;
+        const index = parseInt(itemId);
+
+        // Ensure index is valid
+        if (isNaN(index) || index < 0 || index >= gear.length) {
+          await interaction.reply({ content: 'Invalid item selected.' });
+          return;
+        }
+        const item = gear[index];
+
+        // Generate Edit/Delete buttons
+        const actionRow = new ActionRowBuilder()
+          .addComponents(
+            new ButtonBuilder()
+              // Include player ID, 'gear', item ID (index), and channel ID
+              .setCustomId(`edit_${playerIdFromCustomId}_gear_${itemId}_${game.textChannelId}`)
+              .setLabel('Edit')
+              .setStyle(ButtonStyle.Secondary),
+            new ButtonBuilder()
+              // Include player ID, 'gear', item ID (index), and channel ID
+              .setCustomId(`delete_${playerIdFromCustomId}_gear_${itemId}_${game.textChannelId}`)
+              .setLabel('Delete')
+              .setStyle(ButtonStyle.Danger),
+          );
+
+        // Reply with the Edit/Delete options (NOT ephemeral)
+        await interaction.reply({
+          content: `What would you like to do with **${item}**?`,
+          components: [actionRow]
+        });
+      }
     }
   }
 });

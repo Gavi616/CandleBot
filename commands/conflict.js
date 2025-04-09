@@ -326,10 +326,30 @@ export async function conflict(message, args, gameData) {
     messageContent += `<@${message.author.id}>, the acting player, wins narration rights for this conflict.`;
   }
   await preRollMessage.edit(`**Conflict Initiated**\nCommunal Dice: ${dicePool}\nHope Dice: ${hopeDiceCount}\nGM Dice: ${gmDiceCount}\n\nThinking Complete!`);
+  
   const voiceChannelId = game.voiceChannelId;
   const voiceChannel = client.channels.cache.get(voiceChannelId);
-  if (voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
-    await playRandomConflictSound(voiceChannel);
+  
+  if (game.gameMode === 'voice-plus-text' && voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
+      const existingConnection = getVoiceConnection(message.guild.id);
+      if (!existingConnection) {
+          try {
+              console.log(`Conflict: Attempting to join voice channel ${voiceChannel.name} (${voiceChannelId})`);
+              joinVoiceChannel({
+                  channelId: voiceChannelId,
+                  guildId: message.guild.id,
+                  adapterCreator: message.guild.voiceAdapterCreator,
+              });
+              // Add a small delay to allow connection to establish, maybe not needed but can help
+              await new Promise(resolve => setTimeout(resolve, 500));
+          } catch (error) {
+              console.error(`Conflict: Failed to join voice channel ${voiceChannelId}:`, error);
+              // Optionally inform the channel, or just log it
+              // message.channel.send('⚠️ Error joining voice channel for conflict sound.').catch(console.error);
+          }
+      }
+      // Now attempt to play the sound (it will check connection again internally)
+      await playRandomConflictSound(voiceChannel);
   }
   message.channel.send({ content: messageContent, allowedMentions: { repliedUser: false } });
   saveGameData();

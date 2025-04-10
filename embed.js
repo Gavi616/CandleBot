@@ -28,19 +28,20 @@ export function getHelpEmbed(isAdmin, message) {
   if (isGM) {
     baseEmbed.addFields({
       name: '\n\n**GM Only Commands:**',
-      value: `\`${BOT_PREFIX}theme [description]\`: Saves the theme description and advances character generation to Step Two.\n` +
+      value: `\`${BOT_PREFIX}theme [description]\`: Saves the theme description and advances Character Generation to Step Three.\n` +
         `\`${BOT_PREFIX}prevstep\`: Goes back one character generation step.\n` +
+        `\`${BOT_PREFIX}gamestatus\`: (DM Only) View game status and player details privately.\n`
         `\`${BOT_PREFIX}cancelgame\`: Cancel the game.\n` +
         `\`${BOT_PREFIX}removeplayer <Player ID> [Reason]\`: Removes a player.\n` +
-        `\`${BOT_PREFIX}died <Player ID> [-martyr] [Cause]\`: Marks a PC as dead. Martyr modifier allows gifting of Hope die.\n`
+        `\`${BOT_PREFIX}died <Player ID> [-martyr] [Cause]\`: Marks a PC as dead. Martyrs may gift their Hope die.\n`
     });
   }
 
   if (isAdmin) {
     baseEmbed.addFields({
       name: '\n\n**Moderation Commands:**',
-      value: `\`${BOT_PREFIX}blockuser <User ID> [Reason]\`: Block a user *from using the* \`${BOT_PREFIX}startgame\` *command only*.\n` +
-        `\`${BOT_PREFIX}unblockuser <User ID>\`: Unblock a user.\n` +
+      value: `\`${BOT_PREFIX}block <User ID> [Reason]\`: Block a user *from using the* \`${BOT_PREFIX}startgame\` *command only*.\n` +
+        `\`${BOT_PREFIX}unblock <User ID>\`: Unblock a user.\n` +
         `\`${BOT_PREFIX}whitelist <Channel ID> [remove]\`: Add or remove a channel from the whitelist.\n`
     });
   }

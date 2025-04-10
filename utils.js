@@ -23,6 +23,173 @@ export const channelWhitelist = {};
 
 const ttsClient = new textToSpeech.TextToSpeechClient();
 
+// --- Helper Function to Mark Player Dead ---
+// Moved here to be accessible by both died.js and conflict.js (via index.js interactions)
+export async function markPlayerDead(game, playerIdToKill, reason, channel) {
+  if (!game || !game.players || !game.players[playerIdToKill]) {
+      console.error(`markPlayerDead: Invalid game or player data for ${playerIdToKill} in channel ${channel?.id}`);
+      if (channel) {
+          await channel.send(`Error marking player <@${playerIdToKill}> as dead. Game data might be corrupted.`).catch(console.error);
+      }
+      return; // Prevent further errors
+  }
+
+  // Ensure the player isn't already marked dead to avoid duplicate messages/logic
+  if (game.players[playerIdToKill].isDead) {
+      console.log(`markPlayerDead: Player ${playerIdToKill} is already marked as dead.`);
+      return;
+  }
+
+  const playerToKillData = game.players[playerIdToKill];
+  const characterName = playerToKillData.name || playerToKillData.playerUsername;
+
+  playerToKillData.isDead = true;
+  console.log(`markPlayerDead: Marked player ${playerIdToKill} (${characterName}) as dead in game ${game.textChannelId}. Reason: ${reason}`);
+
+  // Announce death
+  if (channel) {
+      await channel.send(`**${characterName}** (<@${playerIdToKill}>) has died. ${reason ? `Cause: ${reason}` : ''}`).catch(err => {
+          console.error(`markPlayerDead: Failed to send death announcement to channel ${channel.id}:`, err);
+      });
+  } else {
+      console.error(`markPlayerDead: Cannot announce death for ${playerIdToKill}, channel object not provided.`);
+  }
+
+  // Check if all players are dead AFTER marking this one
+  const allPlayersDead = Object.values(game.players).every(player => player.isDead);
+
+  if (allPlayersDead && !game.endGame && !game.playingRecordings) {
+      console.log(`markPlayerDead: All players dead in game ${game.textChannelId}. Starting recordings.`);
+      if (channel) {
+          await playRecordings(channel); // Pass the channel object
+      } else {
+          console.error(`markPlayerDead: Cannot start recordings, channel object not provided.`);
+          // Attempt to notify GM?
+          try {
+              const gmUser = await client.users.fetch(game.gmId);
+              await sendDM(gmUser, `Error: All players are dead in game ${game.textChannelId}, but the channel object was missing. Cannot start final recordings automatically.`);
+          } catch (gmError) {
+              console.error(`markPlayerDead: Failed to notify GM about missing channel for recordings:`, gmError);
+          }
+      }
+  } else {
+      console.log(`markPlayerDead: Not all players dead yet or recordings already playing/game ended in game ${game.textChannelId}.`);
+  }
+  saveGameData(); // Save changes
+}
+
+// --- NEW FUNCTION for Martyrdom Hope Gifting ---
+export async function askPlayerToGiftHope(dyingPlayerUser, game, dyingPlayerId) {
+  const channelId = game.textChannelId;
+  const dyingPlayer = game.players[dyingPlayerId];
+  const characterName = dyingPlayer?.name || dyingPlayer?.playerUsername || `<@${dyingPlayerId}>`;
+  const reason = game.pendingMartyrdom?.reason || 'Unknown causes (Martyrdom)'; // Get reason if available
+
+  // Find living players EXCLUDING the dying player
+  const livingPlayers = game.playerOrder
+      .map(id => game.players[id] ? { id: id, ...game.players[id] } : null) // Get player data with ID
+      .filter(p => p && p.id !== dyingPlayerId && !p.isDead); // Filter out null, self, and dead
+
+  if (livingPlayers.length === 0) {
+      console.log(`askPlayerToGiftHope: No living players for ${dyingPlayerId} to gift hope to in game ${channelId}.`);
+      await sendDM(dyingPlayerUser, `Sadly, there are no other living players to receive your Hope Die.`);
+      // Since there's no one to give it to, proceed with normal death logic immediately
+      delete game.pendingMartyrdom; // Clean up
+      const gameChannel = client.channels.cache.get(channelId);
+      if (gameChannel) {
+          markPlayerDead(game, dyingPlayerId, reason, gameChannel); // Use helper
+      } else {
+          console.error(`askPlayerToGiftHope: Could not find game channel ${channelId} for final death announcement.`);
+          saveGameData(); // Still save the cleanup
+      }
+      return; // Exit early
+  }
+
+  const options = livingPlayers.map(player => {
+      const name = player.name || player.playerUsername;
+      return new StringSelectMenuOptionBuilder()
+          .setLabel(name.substring(0, 100)) // Max label length is 100
+          .setValue(player.id)
+          .setDescription(`Current Hope: ${player.hopeDice}`); // Optional description
+  });
+
+  const selectMenu = new StringSelectMenuBuilder()
+      .setCustomId(`gift_hope_select_${dyingPlayerId}_${channelId}`)
+      .setPlaceholder('Choose a player to receive your Hope Die')
+      .addOptions(options);
+
+  const row = new ActionRowBuilder().addComponents(selectMenu);
+
+  const embed = new EmbedBuilder()
+      .setColor(0x00FF00) // Green for hope
+      .setTitle('Martyrdom: Gift Your Hope')
+      .setDescription(`Your death was deemed a martyrdom! You have ${dyingPlayer.hopeDice} Hope ${dyingPlayer.hopeDice === 1 ? 'Die' : 'Dice'}. Choose one living player to receive **one** Hope Die.`)
+      .setFooter({ text: `You have ${formatDuration(MARTYRDOM_TIMEOUT)} to decide.` });
+
+  let dmMessage;
+  try {
+      dmMessage = await sendDM(dyingPlayerUser, { embeds: [embed], components: [row] });
+      if (!dmMessage) throw new Error("DM message failed to send or returned null."); // Handle sendDM returning null on failure
+
+      // Add a timeout for the player's choice
+      const timeoutId = setTimeout(async () => {
+          // Check if the interaction handler already processed this
+          const currentGame = getGameData(channelId); // Re-fetch game data
+          if (currentGame && currentGame.pendingMartyrdom && currentGame.pendingMartyrdom.dyingPlayerId === dyingPlayerId) {
+              console.log(`askPlayerToGiftHope: Player ${dyingPlayerId} timed out selecting recipient in game ${channelId}.`);
+
+              // Disable the select menu in the DM
+              try {
+                  // Fetch the message again to ensure it exists
+                  const originalDm = await dyingPlayerUser.dmChannel.messages.fetch(dmMessage.id);
+                  const disabledRow = new ActionRowBuilder().addComponents(
+                      StringSelectMenuBuilder.from(selectMenu).setDisabled(true).setPlaceholder('Selection timed out.')
+                  );
+                  await originalDm.edit({ content: '*You did not choose a recipient in time. Your Hope Die is lost.*', components: [disabledRow] });
+              } catch (editError) {
+                  // Ignore if message was deleted or interaction already handled
+                  if (editError.code !== 10008 && editError.code !== 10062) {
+                      console.error("askPlayerToGiftHope: Error disabling select menu on timeout:", editError);
+                  }
+              }
+
+              // Proceed with normal death, no transfer
+              const timeoutReason = currentGame.pendingMartyrdom.reason || 'Unknown causes (Martyrdom Timeout)';
+              delete currentGame.pendingMartyrdom; // Clean up
+              const gameChannel = client.channels.cache.get(channelId);
+              if (gameChannel) {
+                  markPlayerDead(currentGame, dyingPlayerId, timeoutReason, gameChannel); // Use helper
+              } else {
+                  console.error(`askPlayerToGiftHope: Could not find game channel ${channelId} for final death announcement on timeout.`);
+                  saveGameData(); // Still save the cleanup
+              }
+          } else {
+               console.log(`askPlayerToGiftHope: Timeout for ${dyingPlayerId} triggered, but pendingMartyrdom state was already cleared or changed.`);
+          }
+      }, MARTYRDOM_TIMEOUT); // Use the specific martyr timeout
+
+      // Store timeout ID if needed for cancellation later (e.g., in interaction handler)
+      if (game.pendingMartyrdom) {
+          game.pendingMartyrdom.playerTimeoutId = timeoutId;
+          saveGameData(); // Save the timeout ID
+      }
+
+  } catch (error) {
+      console.error(`askPlayerToGiftHope: Failed to send Hope Gifting DM to ${dyingPlayerUser.tag} for game ${channelId}:`, error);
+      // If DM fails, GM needs to be informed, and we proceed with normal death
+      const gameChannel = client.channels.cache.get(channelId);
+      const dmFailReason = game.pendingMartyrdom?.reason || 'Unknown causes (Martyrdom DM Failed)';
+      delete game.pendingMartyrdom; // Clean up
+      if (gameChannel) {
+          await gameChannel.send(`⚠️ Could not DM <@${dyingPlayerId}> to gift their Hope Die. Proceeding as normal death.`).catch(console.error);
+          markPlayerDead(game, dyingPlayerId, dmFailReason, gameChannel); // Use helper
+      } else {
+           console.error(`askPlayerToGiftHope: Could not find game channel ${channelId} after DM failure.`);
+           saveGameData(); // Still save the cleanup
+      }
+  }
+}
+
 export async function askForVoicePreference(user, game, playerId, time) {
   const dmChannel = await user.createDM();
   const languageSelectMenu = new StringSelectMenuBuilder()
@@ -1670,10 +1837,11 @@ export function clearReminderTimers(game) {
   }
 }
 
-function formatDuration(milliseconds) {
-  const totalSeconds = Math.round(milliseconds / 1000);
+export function formatDuration(milliseconds) {
+  if (milliseconds < 0) return "0:00";
+  const totalSeconds = Math.floor(milliseconds / 1000);
   const minutes = Math.floor(totalSeconds / 60);
-  const seconds = Math.round(totalSeconds % 60 / 5) * 5; // round to nearest 5 seconds
+  const seconds = totalSeconds % 60;
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
@@ -1686,6 +1854,12 @@ async function sendReminder(gameChannel, game, reminderIndex, step) {
   if (reminderIndex === 2) {
     clearReminderTimers(game);
   }
+}
+
+// --- NEW HELPER: Check if other players are alive ---
+export function areOtherPlayersAlive(game, currentPlayerId) {
+  if (!game || !game.players) return false;
+  return Object.entries(game.players).some(([id, player]) => id !== currentPlayerId && !player.isDead);
 }
 
 export async function findGameByUserId(userId) {

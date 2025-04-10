@@ -1,7 +1,8 @@
 import { validateGameSetup, gameDataSchema } from '../validation.js';
-import { sendCharacterGenStep } from '../chargen.js';
-import { saveGameData, requestConsent, sendDM, sendConsentConfirmation, setGameData, getGameData, deleteGameData } from '../utils.js'; // Added getGameData, deleteGameData, setGameData
-import { client } from '../index.js';
+import { saveGameData, requestConsent, sendDM, sendConsentConfirmation, setGameData, getGameData, deleteGameData } from '../utils.js';
+import { client, isTesting } from '../index.js';
+import { BOT_PREFIX } from '../config.js';
+import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 import { ChannelType } from 'discord.js';
 import { CONSENT_TIMEOUT, newGameMessage } from '../config.js';
 
@@ -138,7 +139,6 @@ export async function startGame(message, gameData) { // Keep gameData param for 
       gameMode: gameChannel.type === ChannelType.GuildVoice ? 'voice-plus-text' : 'text-only',
       initiatorId: message.author.id,
       gmId: gmId,
-      channelId: channelId, // Redundant? textChannelId is usually sufficient
       diceLost: 0,
     };
 
@@ -186,9 +186,42 @@ export async function startGame(message, gameData) { // Keep gameData param for 
 
     // Start the game in the channel
     await message.channel.send(newGameMessage);
+
+    // --- Step 6: Join Voice Channel (if applicable) ---
+    if (game.gameMode === 'voice-plus-text' && game.voiceChannelId) {
+      const voiceChannel = client.channels.cache.get(game.voiceChannelId);
+      if (voiceChannel && voiceChannel.type === ChannelType.GuildVoice) {
+        try {
+          const existingConnection = getVoiceConnection(game.guildId);
+          if (!existingConnection) {
+            console.log(`startGame: Attempting to join voice channel ${voiceChannel.name} (${game.voiceChannelId})`);
+            joinVoiceChannel({
+              channelId: game.voiceChannelId,
+              guildId: game.guildId,
+              adapterCreator: message.guild.voiceAdapterCreator,
+              selfDeaf: false,
+              selfMute: false
+            });
+            await message.channel.send(`Joined voice channel <#${game.voiceChannelId}>.`);
+            await new Promise(resolve => setTimeout(resolve, 500)); // Small delay
+          } else {
+            console.log(`startGame: Bot already has a voice connection in guild ${game.guildId}.`);
+          }
+        } catch (error) {
+          console.error(`startGame: Failed to join voice channel ${game.voiceChannelId}:`, error);
+          message.channel.send(`⚠️ Error joining voice channel <#${game.voiceChannelId}>. Voice features may be unavailable. Please check my permissions.`).catch(console.error);
+        }
+      } else {
+        console.warn(`startGame: Could not find voice channel ${game.voiceChannelId} or it's not a voice channel.`);
+        message.channel.send(`⚠️ Could not find the designated voice channel <#${game.voiceChannelId}>. Voice features will be unavailable.`).catch(console.error);
+      }
+    } // End of voice channel joining logic
+
+    // --- Step 7: Start Character Generation ---
     // Fetch the game data *after* setting and saving it
     const newlyCreatedGame = getGameData(channelId);
     if (newlyCreatedGame) {
+      // Now call sendCharacterGenStep, regardless of voice success/failure
       sendCharacterGenStep(gameChannel, newlyCreatedGame);
     } else {
       console.error(`startGame: Failed to retrieve game data immediately after saving for channel ${channelId}.`);

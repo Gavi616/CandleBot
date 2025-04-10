@@ -11,8 +11,7 @@ import { defaultVirtues, defaultVices, defaultMoments, languageOptions } from '.
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
 import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
-import { TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks, reminders, randomNames, randomLooks, randomConcepts } from './config.js';
-import { sendCharacterGenStep } from './chargen.js';
+import { BOT_PREFIX, TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks, GM_REMINDER_TIMES, randomNames, randomLooks, randomConcepts } from './config.js';
 import { isTesting } from './index.js';
 import crypto from 'crypto';
 import path from 'path';
@@ -506,7 +505,7 @@ export async function askForCharacterInfo(user, game, playerId, field, question,
       } else {
         input = normalizeSentence(input);
       }
-      const confirmation = await confirmInput(user, `Is this correct?\n${input}`, time);
+      const confirmation = await confirmInput(user, `Is this ${field} correct?\n${input}`, time);
       if (confirmation) {
         game.players[playerId][field] = input;
         await user.send(`Your character's ${field} has been recorded.`);
@@ -564,8 +563,12 @@ export async function askForMoment(user, game, playerId, time) {
     const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
     if (response) {
       if (response.trim() === "?") {
-        game.players[playerId].moment = getRandomMoment();
-        saveGameData();
+        let randomMoment = getRandomMoment();
+        randomMoment = sanitizeString(randomMoment);
+        randomMoment = normalizeSentence(randomMoment);
+        game.players[playerId].moment = randomMoment; // Save the processed string
+        await user.send(`A random Moment has been assigned:\n${randomMoment}`); // Show the processed string 
+        saveGameData(); // write the data to the file
         return;
       }
       input = response.trim();
@@ -586,63 +589,63 @@ export async function askForMoment(user, game, playerId, time) {
         continue;
       }
     } else {
-      return getRandomMoment();
+      let randomMoment = getRandomMoment();
+      randomMoment = sanitizeString(randomMoment);
+      randomMoment = normalizeSentence(randomMoment);
+      game.players[playerId].moment = randomMoment; // Save processed random moment
+      await user.send(`Request timed out. A random Moment has been assigned:\n${randomMoment}`);
+      saveGameData();
+      return;
     }
   }
 }
 
-export async function askForBrink(user, game, playerId, prompt, time, isThreat = false) {
-  let input;
+export async function askForBrink(user, game, participantId, prompt, time, isThreat = false) {
+  let coreInput;
   while (true) {
-    const response = await getDMResponse(user, prompt, time, m => m.author.id === playerId, "Request for Brink");
-    if (response) {
-      if (response.trim() === "?") {
-        if (isThreat) {
-          input = getRandomBrink(true);
-        } else {
-          input = getRandomBrink(false);
-        }
+      const response = await getDMResponse(user, prompt, time, m => m.author.id === participantId, "Request for Brink");
+      if (response) {
+          if (response.trim() === "?") {
+              // Get raw random brink
+              coreInput = getRandomBrink(isThreat);
+              coreInput = sanitizeString(coreInput); // Sanitize it
+              // NO normalization here
+              await user.send(`A random Brink core has been assigned: ${coreInput}\n(This will be formatted for the recipient later)`);
+              break; // Exit loop, save below
+          }
+          coreInput = response.trim();
+          if (!coreInput) {
+              await user.send('Invalid Brink. Please provide a non-empty value.');
+              continue;
+          }
+          coreInput = sanitizeString(coreInput); // Sanitize
+          // NO normalization here
 
-        const characterName = game.players[playerId]?.name || user.username;
-        input = normalizeBrink(input, characterName, isThreat);
-        if (playerId === game.gmId) {
-          game.gm.brink = input;
-        } else {
-          game.players[playerId].brink = input;
-        }
-        await user.send(`A random Brink has been assigned: ${input}`);
-        saveGameData();
-        return input;
-      }
-      input = response;
-      if (!input) {
-        await user.send('Invalid Brink. Please provide a non-empty value.');
-        continue;
-      }
-      input = sanitizeString(input);
-      const characterName = game.players[playerId]?.name || user.username;
-      if (isThreat) {
-        input = normalizeBrink(input, characterName, true);
+          // Confirm the sanitized core text
+          const confirmation = await confirmInput(user, `Are you happy with this Brink core text?\n"${coreInput}"\n(This will be formatted like "[Your Name] saw you/them ${coreInput}" for the recipient)`, time, "Confirm Your Brink Core");
+          if (confirmation) {
+              break; // Exit loop, save below
+          } else {
+              continue; // Ask again
+          }
       } else {
-        input = normalizeBrink(input, characterName);
+          // Timeout: Assign random sanitized core
+          coreInput = getRandomBrink(isThreat);
+          coreInput = sanitizeString(coreInput);
+          await user.send(`Response timed out. A random Brink core has been assigned: ${coreInput}\n(This will be formatted for the recipient later)`);
+          break; // Exit loop, save below
       }
-      const confirmation = await confirmInput(user, `Are you happy with your Brink?\n${input}`, time, "Confirm Your Brink");
-      if (confirmation) {
-        if (playerId === game.gmId) {
-          game.gm.brink = input;
-        } else {
-          game.players[playerId].brink = input;
-        }
-        saveGameData();
-        return input;
-      } else {
-        continue;
-      }
-    } else {
-      await user.send(`Response timed out. Please provide your Brink again.`);
-      continue;
-    }
   }
+
+  // Save the SANITIZED CORE text to givenBrink
+  if (participantId === game.gmId) {
+      game.gm.givenBrink = coreInput;
+  } else {
+      if (!game.players[participantId]) game.players[participantId] = {}; // Ensure player object exists
+      game.players[participantId].givenBrink = coreInput;
+  }
+  saveGameData();
+  return coreInput; // Return the core text just saved
 }
 
 export function getRandomName() {
@@ -712,9 +715,10 @@ export function loadGameData() {
     Object.keys(gameData).forEach(key => delete gameData[key]);
 
     Object.assign(gameData, loadedGameData);
-    for (const channelId in gameData) {
-      if (!gameData[channelId].channelId) {
-        gameData[channelId].channelId = channelId;
+    for (const channelIdKey in gameData) {
+      if (!gameData[channelIdKey].textChannelId) {
+        console.warn(`loadGameData: Game data for key ${channelIdKey} is missing textChannelId. Setting it to key value.`);
+        gameData[channelIdKey].textChannelId = channelIdKey;
       }
     }
   } catch (err) {
@@ -767,13 +771,13 @@ export function printActiveGames() {
 
 export async function sendCandleStatus(channel, litCandles) {
   if (litCandles === 10) {
-    channel.send('***Ten Candles are lit.*** ' + ':candle:'.repeat(litCandles));
+    channel.send('***Ten Candles are lit.***\n' + ':candle:'.repeat(litCandles));
   } else if (litCandles >= 1 && litCandles <= 9) {
     const words = numberToWords(litCandles);
     if (litCandles === 1) {
-      channel.send(`***There is ${words} lit candle.*** ` + ':candle:'.repeat(litCandles));
+      channel.send(`***There is only ${words} lit candle.***\n` + ':candle:'.repeat(litCandles));
     } else {
-      channel.send(`***There are ${words} lit candles.*** ` + ':candle:'.repeat(litCandles));
+      channel.send(`***There are ${words} lit candles.***\n` + ':candle:'.repeat(litCandles));
     }
   } else {
     channel.send('***All candles have been extinguished.*** ' + ':wavy_dash:');
@@ -874,42 +878,52 @@ export function normalizeSentence(str) {
 }
 
 export function normalizeBrink(brink, name, isThreat = false) {
-  if (brink === undefined) {
-    brink = getRandomBrink(isThreat);
-  }
-  if (isThreat) {
-    if (!name) {
-      return `Someone has seen *them* ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
-    } else {
-      return `${name} has seen *them* ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
-    }
+  if (brink === undefined || typeof brink !== 'string') {
+    brink = getRandomBrink(isThreat); // Get a random one if input is bad
   } else {
-    if (!name) {
-      return `Someone saw you ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
-    } else {
-      return `${name} saw you ${brink.replace(/['"]+/g, '').replace(/\.+$/, '')}.`;
-    }
+    brink = brink.trim(); // Trim whitespace first
   }
-}
 
-export async function handleGearCommand(user, game, playerId, args) {
-  try {
-    if (!game.players[playerId].gear) {
-      game.players[playerId].gear = [];
-    }
+  // Regular expressions to detect existing prefixes (case-insensitive)
+  // Matches variations like "I saw you", "Someone saw you", "Bob saw you", "I have seen them", etc.
+  const playerPrefixRegex = /^(?:i|someone|\w+)\s+saw\s+you\s*/i;
+  const threatPrefixRegex = /^(?:i|someone|\w+)\s+ha(?:ve|s)\s+seen\s+(?:them|\*them\*)\s*/i;
 
-    // Show the instructions if this is Step 7
-    if (game.characterGenStep === 7) {
-      await user.send(
-        'Use the buttons in the embed below to manage your character\'s gear.  You can add, edit, or delete items. Click "Done with Step 7" when you are finished.'
-      );
-    }
+  let coreBrink = brink; // The part after the prefix
+  let prefixFound = false;
 
-    await displayInventory(user, game, playerId);
-  } catch (error) {
-    console.error(`Error handling gear command for ${user.tag}:`, error);
-    await user.send('An error occurred while processing your gear command.');
+  if (playerPrefixRegex.test(brink)) {
+    coreBrink = brink.replace(playerPrefixRegex, '');
+    prefixFound = true;
+    isThreat = false; // Correct the type if user input implies player brink
+  } else if (threatPrefixRegex.test(brink)) {
+    coreBrink = brink.replace(threatPrefixRegex, '');
+    prefixFound = true;
+    isThreat = true; // Correct the type if user input implies threat brink
   }
+
+  // Clean up the core part: remove leading/trailing quotes and periods
+  coreBrink = coreBrink.replace(/^['"]+|['"]+$/g, '').replace(/\.+$/, '').trim();
+
+  // Construct the final, correct prefix
+  let finalPrefix = '';
+  const characterName = name || (isThreat ? "Someone" : "Someone"); // Use "Someone" as fallback
+
+  if (isThreat) {
+    finalPrefix = `${characterName} has seen *them* `;
+  } else {
+    finalPrefix = `${characterName} saw you `;
+  }
+
+  // Combine the correct prefix and the cleaned core brink
+  let normalized = finalPrefix + coreBrink;
+
+  // Ensure it ends with a period
+  if (!normalized.endsWith('.')) {
+    normalized += '.';
+  }
+
+  return normalized;
 }
 
 export async function displayInventory(user, game, playerId, isRejected = false) {
@@ -936,7 +950,7 @@ export async function displayInventory(user, game, playerId, isRejected = false)
         label: truncatedItem.substring(0, 25), // Truncate label to 25 characters
         value: `${index}`,
       };
-    });
+    }).slice(0, 25); // Limit to 25 edit / delete options
 
     const selectMenu = new StringSelectMenuBuilder()
       .setCustomId(`gearselect_${playerId}`)
@@ -980,7 +994,7 @@ export async function displayInventory(user, game, playerId, isRejected = false)
   if (isRejected) {
     messageContent = 'Your GM has rejected your inventory submission, please ask them for guidance and edit your inventory before clicking "Send to GM" again.';
   } else {
-    messageContent = 'Use the buttons in the embed below to manage your character\'s gear.  You can add, edit, or delete items. Click "Send to GM" when you are finished.';
+    messageContent = `Use the buttons in the embed below to manage your character's inventory. You can add, edit, or delete items. Click "Send to GM" when you are finished.`;
   }
 
   try {
@@ -1002,18 +1016,16 @@ export async function handleDoneButton(interaction, game) {
   // Double check game context, though index.js should have verified
   if (!game || game.textChannelId !== textChannelId) {
     console.error(`handleDoneButton: Game context mismatch for interaction ${interaction.id}`);
-    // Avoid replying here if interaction might be invalid, let index.js handle deletion attempt
     return;
   }
 
   const player = game.players[playerId];
   if (!player) {
       console.error(`handleDoneButton: Player ${playerId} not found in game ${textChannelId}`);
-      // Avoid replying here
       return;
   }
 
-  const gearList = player.gear && player.gear.length > 0 ? player.gear.join(', ') : 'No gear added.';
+  const gearList = player.gear && player.gear.length > 0 ? player.gear.join(', ') : 'No item added.';
   const characterName = player.name || player.playerUsername; // Use username as fallback
 
   try {
@@ -1032,24 +1044,24 @@ export async function handleDoneButton(interaction, game) {
 
       const row = new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(`approve_${playerId}_${textChannelId}`) // Ensure channelId is included
+          .setCustomId(`approve_${playerId}_${textChannelId}`)
           .setLabel('Approve')
           .setStyle(ButtonStyle.Success),
         new ButtonBuilder()
-          .setCustomId(`tryagain_${playerId}_${textChannelId}`) // Ensure channelId is included
+          .setCustomId(`tryagain_${playerId}_${textChannelId}`)
           .setLabel('Reject')
-          .setStyle(ButtonStyle.Danger) // Changed to Danger for Reject
+          .setStyle(ButtonStyle.Danger)
       );
 
       await gm.send({ embeds: [embed], components: [row] });
 
     } else {
       // Handle "Save" button outside of Step 7 (if applicable)
-      await interaction.reply({ content: 'Your inventory changes have been recorded. Use `.gear` or the inventory display buttons to edit again.' });
+      await interaction.reply({ content: 'Your inventory changes have been recorded.' });
 
       // Notify GM of the change (optional, but can be helpful)
       const gm = await client.users.fetch(game.gmId);
-      const notificationMessage = `Player ${characterName} (<@${playerId}>) updated their inventory outside of Step 7.\n**Current Inventory:** ${gearList}`;
+      const notificationMessage = `Player ${characterName} (<@${playerId}>) updated their inventory.\n**Current Inventory:** ${gearList}`;
       await gm.send(notificationMessage).catch(console.error); // Send notification, catch errors
     }
 
@@ -1086,11 +1098,11 @@ export async function handleGMEditButton(interaction) {
 
   const modal = new ModalBuilder()
     .setCustomId(`gm_edit_${playerId}`)
-    .setTitle('Edit Player Gear');
+    .setTitle('Edit Inventory');
 
   const gearInput = new TextInputBuilder()
     .setCustomId('gear_list')
-    .setLabel('Gear List (comma-separated)')
+    .setLabel('Inventory (comma-separated)')
     .setStyle(TextInputStyle.Paragraph)
     .setValue(gearList);
 
@@ -1113,7 +1125,7 @@ export async function handleGMEditModalSubmit(interaction) {
 
   game.players[playerId].gear = gearArray;
   saveGameData();
-  await interaction.reply('Gear list updated!');
+  await interaction.reply('Inventory updated!');
 
   const player = await client.users.fetch(playerId);
   await displayInventory(player, game, playerId);
@@ -1145,7 +1157,7 @@ export async function handleEditGearModal(interaction, game, playerId, itemId) {
 
   const modal = new ModalBuilder()
     .setCustomId(`editgear_${itemId}`)
-    .setTitle('Edit Gear Item');
+    .setTitle('Edit Item');
 
   const nameInput = new TextInputBuilder()
     .setCustomId('gearname')
@@ -1171,7 +1183,7 @@ export async function handleEditGearModalSubmit(interaction, game, playerId, ite
 
   gear[index] = name;
   saveGameData();
-  await interaction.reply({ content: 'Gear item updated!' });
+  await interaction.reply({ content: 'Inventory updated!' });
 
   const player = await client.users.fetch(playerId);
   await displayInventory(player, game, playerId);
@@ -1184,7 +1196,7 @@ export async function handleDeleteGearModal(interaction, game, playerId, itemId)
 
   const modal = new ModalBuilder()
     .setCustomId(`deletegearconfirm_${itemId}`)
-    .setTitle(`Delete Gear: ${item}`);
+    .setTitle(`Delete Item: ${item}`);
 
   const confirmationInput = new TextInputBuilder()
     .setCustomId('deleteconfirmation')
@@ -1210,24 +1222,19 @@ export async function handleDeleteGearModalSubmit(interaction, game, playerId, i
     if (confirmation.toLowerCase() === 'd') {
       gear.splice(index, 1);
       saveGameData();
-      await interaction.reply({ content: 'Gear item deleted!' });
+      await interaction.reply({ content: 'Item deleted!' });
 
       const player = await client.users.fetch(playerId);
       await displayInventory(player, game, playerId);
     } else {
-      await interaction.reply({ content: 'Gear item not deleted.' });
+      await interaction.reply({ content: 'Item not deleted due to an error.' });
     }
   }
 }
 
 export async function handleAddGearModal(interaction) {
-  console.log('handleAddGearModal: interaction object:', interaction);
-  console.log('handleAddGearModal: interaction.customId:', interaction.customId);
-
   const customIdParts = interaction.customId.split('_');
   const textChannelId = customIdParts[customIdParts.length - 1];
-
-  console.log('handleAddGearModal: textChannelId:', textChannelId);
 
   if (!textChannelId) {
     await interaction.reply({ content: 'An error occurred. Channel ID is missing.' });
@@ -1235,14 +1242,12 @@ export async function handleAddGearModal(interaction) {
   }
 
   const game = getGameData(textChannelId);
-  console.log('handleAddGearModal: game:', game);
   if (!game) {
     await interaction.reply({ content: 'An error occurred. The game data is missing.' });
     return;
   }
 
   const playerId = interaction.user.id;
-  console.log('handleAddGearModal: playerId:', playerId);
 
   // Check if the player exists in the game
   if (!game.players || !game.players[playerId]) {
@@ -1256,7 +1261,7 @@ export async function handleAddGearModal(interaction) {
 
   const modal = new ModalBuilder()
     .setCustomId('addgearmodal')
-    .setTitle('Add Gear Item');
+    .setTitle('Add Item to Inventory');
 
   const nameInput = new TextInputBuilder()
     .setCustomId('gearname')
@@ -1289,7 +1294,7 @@ export async function handleAddGearModalSubmit(interaction, game) {
   game.players[playerId].gear = game.players[playerId].gear || [];
   game.players[playerId].gear.push(...gearItems); // Push multiple items
   saveGameData();
-  await interaction.reply({ content: 'Gear item(s) added!' });
+  await interaction.reply({ content: 'Inventory updated successfully!'});
 
   const user = await client.users.fetch(playerId); // Fetch the user object
   await displayInventory(user, game, playerId); // Update inventory
@@ -1336,9 +1341,7 @@ export async function handleTraitStacking(game) {
   const gm = await gameChannel.guild.members.fetch(game.gmId);
   const gmUser = gm.user;
 
-  console.log(
-    `handleTraitStacking: Starting trait stacking process for game in channel ${game.textChannelId}`
-  );
+  console.log(`handleTraitStacking: Starting trait stacking process for game in channel ${game.textChannelId}`);
 
   // 1. Initial Setup:
   const playerStates = {};
@@ -1655,9 +1658,9 @@ export function isWhitelisted(channelId) {
 
 export function startReminderTimers(gameChannel, game) {
   game.reminderTimers = [];
-  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 0), reminders[0]));
-  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 1), reminders[1]));
-  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 2), reminders[2]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 0), GM_REMINDER_TIMES[0]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 1), GM_REMINDER_TIMES[1]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 2), GM_REMINDER_TIMES[2]));
 }
 
 export function clearReminderTimers(game) {
@@ -1677,7 +1680,7 @@ function formatDuration(milliseconds) {
 async function sendReminder(gameChannel, game, reminderIndex, step) {
   const gm = await gameChannel.guild.members.fetch(game.gmId);
   const user = gm.user;
-  const reminderTimes = reminders.map(time => formatDuration(time));
+  const reminderTimes = GM_REMINDER_TIMES.map(time => formatDuration(time));
   const reminderMessage = `**${reminderTimes[reminderIndex]} Reminder**: Character Creation **Step ${step}** is taking longer than expected. Please check with your players to ensure they are responding to their DMs.`;
   await user.send(reminderMessage);
   if (reminderIndex === 2) {

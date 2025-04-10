@@ -1,10 +1,11 @@
 import Joi from 'joi';
-import { client } from './index.js';
+import { BOT_PREFIX } from './config.js';
 
 export const gameDataSchema = Joi.object({
   gm: Joi.object({
     consent: Joi.boolean().required(),
-    brink: Joi.string().allow('').required()
+    brink: Joi.string().allow('').required(),
+    givenBrink: Joi.string().allow('').required(),
   }).required(),
   players: Joi.object().pattern(
     Joi.string().pattern(/^\d+$/),
@@ -12,6 +13,7 @@ export const gameDataSchema = Joi.object({
       playerUsername: Joi.string().required(),
       consent: Joi.boolean().allow(null).required(),
       brink: Joi.string().allow('').required(),
+      givenBrink: Joi.string().allow('').required(),
       moment: Joi.string().allow('').required(),
       virtue: Joi.string().allow('').required(),
       vice: Joi.string().allow('').required(),
@@ -42,7 +44,6 @@ export const gameDataSchema = Joi.object({
   gameMode: Joi.string().valid('text-only', 'voice-plus-text').required(),
   initiatorId: Joi.string().pattern(/^\d+$/).required(),
   gmId: Joi.string().pattern(/^\d+$/).required(),
-  channelId: Joi.string().pattern(/^\d+$/).required(),
   diceLost: Joi.number().integer().min(0).required(),
   lastSaved: Joi.string().isoDate().optional(),
   endGame: Joi.boolean().optional(),
@@ -65,7 +66,7 @@ export function validateGameSetup(message) {
   const playerIds = args.map(arg => arg.replace(/<@!?(\d+)>/, '$1'));
 
   if (command !== 'startgame') {
-    return { valid: false, reason: 'Invalid command. Please use .startgame' };
+    return { valid: false, reason: `Invalid command. Please use ${BOT_PREFIX}startgame` };
   }
 
   if (!/^\d+$/.test(gmId)) {
@@ -82,7 +83,7 @@ export function validateGameSetup(message) {
     }
     const existingGame = Object.values(gameData).find(game => game.players && game.players[playerId]);
     if (existingGame) {
-      return { valid: false, reason: `<@${playerId}> is already in a game.  Players can only participate in one game at a time. They can Use \`.leavegame [reason]\` to exit their current game.` };
+      return { valid: false, reason: `<@${playerId}> is already in a game. Players can only participate in one game at a time. They can use \`${BOT_PREFIX}leavegame [reason]\` to exit their current game.` };
     }
   }
 

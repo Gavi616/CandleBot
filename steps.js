@@ -1,4 +1,3 @@
-import { sendCharacterGenStep, swapTraits, swapBrinks } from './chargen.js';
 import {
   saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
   askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM, displayInventory,
@@ -41,6 +40,44 @@ export async function prevStep(message) {
   saveGameData();
   const gameChannel = message.guild.channels.cache.get(game.textChannelId);
   sendCharacterGenStep(gameChannel, game);
+}
+
+export async function sendCharacterGenStep(gameChannel, game) {
+  console.log(`sendCharacterGenStep has been called with step: ${game.characterGenStep}`);
+  const step = game.characterGenStep;
+
+  switch (step) {
+    case 1:
+      await handleStepOne(gameChannel, game);
+      break;
+    case 2:
+      await handleStepTwo(gameChannel, game);
+      break;
+    case 3:
+      await handleStepThree(gameChannel, game);
+      break;
+    case 4:
+      await handleStepFour(gameChannel, game);
+      break;
+    case 5:
+      await handleStepFive(gameChannel, game);
+      break;
+    case 6:
+      await handleStepSix(gameChannel, game);
+      break;
+    case 7:
+      await handleStepSeven(gameChannel, game);
+      break;
+    case 8:
+      await handleStepEight(gameChannel, game);
+      break;
+    case 9:
+      await handleStepNine(gameChannel, game);
+      break;
+    default:
+      console.warn(`Requested an unknown character generation step: ${step}`);
+      break;
+  }
 }
 
 export async function handleStepOne(gameChannel, game) {
@@ -101,61 +138,129 @@ export async function handleStepFive(gameChannel, game) {
   gameChannel.send(stepFiveMessage);
   sendCandleStatus(gameChannel, 9);
   await new Promise(resolve => setTimeout(resolve, 5000));
-  startReminderTimers(gameChannel, game);
-  let brinkOrder = getVirtualTableOrder(game, true);
+  startReminderTimers(gameChannel, game); // Pass gameChannel and game
+
+  let brinkOrder = getVirtualTableOrder(game, true); // Get order including GM
+  // Ensure all participants exist in game data or are the GM
   brinkOrder = brinkOrder.filter(participantId => game.players[participantId] || participantId === game.gmId);
-  const threatPlayerId = brinkOrder[(brinkOrder.indexOf(game.gmId) + 1) % brinkOrder.length];
 
-  await gameChannel.guild.members.fetch();
+  await gameChannel.guild.members.fetch(); // Cache members
 
-  const brinkPromises = brinkOrder.map(async (participantId) => {
-    const member = gameChannel.guild.members.cache.get(participantId);
-    const participant = member.user;
+  // --- 1. Collect all givenBrinks (Core Text) ---
+  const brinkPromises = brinkOrder.map(async (writerId) => {
+      const member = gameChannel.guild.members.cache.get(writerId);
+      if (!member) {
+          console.error(`handleStepFive: Could not find member ${writerId}`);
+          return;
+      }
+      const writerUser = member.user;
 
-    let prompt;
-    let isThreat = false;
+      let prompt;
+      let isThreatBrink = false; // Is the brink being written *about* the threat?
 
-    if (participantId === threatPlayerId || participantId === game.gmId) {
-      prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
-      isThreat = true;
-    } else {
-      const nextParticipantId = brinkOrder[(brinkOrder.indexOf(participantId) + 1) % brinkOrder.length];
-      const nextPlayer = game.players[nextParticipantId];
-      const nextCharacterName = nextPlayer ? nextPlayer.name || nextPlayer.playerUsername || "Someone" : "Someone";
-      prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${nextCharacterName} do in a moment of desperation.`;
-    }
-    await askForBrink(participant, game, participantId, prompt, BRINK_TIMEOUT, isThreat);
+      // Determine the recipient and prompt
+      const writerIndex = brinkOrder.indexOf(writerId);
+      const recipientId = brinkOrder[(writerIndex + 1) % brinkOrder.length];
+
+      if (recipientId === game.gmId) {
+          // This writer is writing the Threat Brink for the GM
+          prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
+          isThreatBrink = true;
+      } else {
+          // This writer is writing a Player Brink for the next player
+          const recipientPlayer = game.players[recipientId];
+          const recipientName = recipientPlayer?.name || recipientPlayer?.playerUsername || "Someone";
+          prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${recipientName} do in a moment of desperation.`;
+          isThreatBrink = false;
+      }
+      // askForBrink now saves the sanitized core to game.players[writerId].givenBrink or game.gm.givenBrink
+      await askForBrink(writerUser, game, writerId, prompt, BRINK_TIMEOUT, isThreatBrink);
   });
 
   await Promise.all(brinkPromises);
+  console.log("handleStepFive: All givenBrinks collected.");
 
-  const swappedBrinks = swapBrinks(game.players, game.playerOrder, game.gmId);
-  game.players = swappedBrinks;
-  const brinkSwapPromises = game.playerOrder.map(async (playerId) => {
-    try {
-      const player = await gameChannel.guild.members.fetch(playerId);
-      const user = player.user;
-      await sendDM(user, `Your Brink is: ${swappedBrinks[playerId].brink}.`);
-    } catch (error) {
-      console.error(`Error DMing player ${playerId} for swapped brink:`, error);
-      gameChannel.send(`Could not DM player ${playerId} for swapped brink.`);
-    }
-  });
+  // --- 2. Assign and Normalize Brinks (Replaces swapBrinks) ---
+  const assignmentPromises = [];
+  // Use a standard for loop to ensure sequential fetching if needed, though Promise.all handles concurrency well.
+  for (let i = 0; i < brinkOrder.length; i++) {
+      const writerId = brinkOrder[i];
+      const recipientId = brinkOrder[(i + 1) % brinkOrder.length];
 
-  await Promise.all(brinkSwapPromises);
+      const writerData = (writerId === game.gmId) ? game.gm : game.players[writerId];
+      // Get writer's character name or username, fallback to "The GM"
+      const writerName = game.players[writerId]?.name || game.players[writerId]?.playerUsername || "The GM";
+      const givenBrinkCore = writerData?.givenBrink; // This is the RAW sanitized core saved in Loop 1
 
-  try {
-    const gm = await gameChannel.guild.members.fetch(game.gmId);
-    const user = gm.user;
-    await user.send(`Your Brink is: ${swappedBrinks[game.gmId].brink}.`);
-  } catch (error) {
-    console.error(`Error DMing GM ${game.gmId} for swapped brink:`, error);
-    gameChannel.send(`Could not DM the GM for swapped brink.`);
-  }
+      if (givenBrinkCore === undefined || givenBrinkCore === null) {
+          console.error(`handleStepFive: Missing givenBrink for writer ${writerId}. Skipping assignment to ${recipientId}.`);
+          continue; // Skip this iteration if the core is missing
+      }
+
+      let finalNormalizedBrink; // This will be the recipient's brink
+      let writerFormattedGivenBrink; // This will be the writer's "You saw..." sentence
+      let recipientUser;
+      let recipientNameForSentence; // Name used in the writer's sentence
+
+      try {
+           const recipientMember = await gameChannel.guild.members.fetch(recipientId);
+           recipientUser = recipientMember.user;
+      } catch (error) {
+           console.error(`handleStepFive: Error fetching recipient ${recipientId}:`, error);
+           continue; // Skip if recipient can't be fetched
+      }
+
+      // Determine if the recipient is the GM
+      const isRecipientGM = (recipientId === game.gmId);
+
+      // --- A. Create and Save the Recipient's Brink ---
+      // Use normalizeBrink to create the sentence the recipient sees
+      finalNormalizedBrink = normalizeBrink(givenBrinkCore, writerName, isRecipientGM);
+
+      if (isRecipientGM) {
+          // Assigning the Threat Brink TO the GM
+          game.gm.brink = finalNormalizedBrink;
+          recipientNameForSentence = "*them*"; // For the writer's sentence later
+          assignmentPromises.push(sendDM(recipientUser, `Your Brink (from ${writerName}) is: ${finalNormalizedBrink}`));
+      } else {
+          // Assigning a Player Brink TO a player
+          if (!game.players[recipientId]) game.players[recipientId] = {}; // Ensure recipient player object exists
+          game.players[recipientId].brink = finalNormalizedBrink;
+          // Get recipient's name for the writer's sentence
+          const recipientPlayerData = game.players[recipientId];
+          recipientNameForSentence = recipientPlayerData?.name || recipientPlayerData?.playerUsername || "Someone";
+          assignmentPromises.push(sendDM(recipientUser, `Your Brink (from ${writerName}) is: ${finalNormalizedBrink}`));
+      }
+      console.log(`handleStepFive: Assigned Recipient Brink from ${writerId} to ${recipientId}: "${finalNormalizedBrink}"`);
+
+      // --- B. Create and Overwrite the Writer's givenBrink ---
+      // Now that the raw core has been used, format the sentence for the WRITER
+      writerFormattedGivenBrink = `You saw ${recipientNameForSentence} ${givenBrinkCore}`;
+      // Ensure it ends with a period
+      if (!writerFormattedGivenBrink.endsWith('.')) {
+          writerFormattedGivenBrink += '.';
+      }
+
+      // Overwrite the writer's givenBrink with the formatted sentence
+      if (writerId === game.gmId) {
+          game.gm.givenBrink = writerFormattedGivenBrink;
+      } else {
+          // Ensure writer player object exists (should, but safety check)
+          if (!game.players[writerId]) game.players[writerId] = {};
+          game.players[writerId].givenBrink = writerFormattedGivenBrink;
+      }
+      console.log(`handleStepFive: Overwrote Writer ${writerId}'s givenBrink with: "${writerFormattedGivenBrink}"`);
+
+  } // End of for loop
+
+  await Promise.all(assignmentPromises);
+  console.log("handleStepFive: All received Brinks assigned, writer givenBrinks overwritten, and DMs sent.");
+
+  // --- 3. Finalize Step ---
   clearReminderTimers(game);
   game.characterGenStep++;
-  saveGameData();
-  sendCharacterGenStep(gameChannel, game);
+  saveGameData(); // Save after all assignments and overwrites are done
+  sendCharacterGenStep(gameChannel, game); // Proceed to next step
 }
 
 export async function handleStepSix(gameChannel, game) {
@@ -261,6 +366,78 @@ export async function handleStepNine(gameChannel, game) {
   }
   await Promise.all(commandUsagePromises);
   clearReminderTimers(game);
+}
+
+export async function swapTraits(client, players, game, guildId) {
+  if (typeof guildId !== 'string' || !/^\d{18}$/.test(guildId)) {
+    console.error("swapTraits: Invalid guildId format. Check the guildId.");
+    return players;
+  }
+  const playerOrder = getVirtualTableOrder(game, false);
+
+  const swappedPlayers = {};
+
+  for (let i = 0; i < playerOrder.length; i++) {
+    const currentPlayerId = playerOrder[i];
+    const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
+
+    swappedPlayers[nextPlayerId] = {
+      ...players[nextPlayerId],
+      virtue: players[currentPlayerId].virtue,
+      vice: players[currentPlayerId].vice,
+    };
+    if (!swappedPlayers[currentPlayerId]) {
+      swappedPlayers[currentPlayerId] = {
+        ...players[currentPlayerId],
+      };
+    }
+  }
+
+  const swapTraitPromises = playerOrder.map(async (recipientId, i) => {
+    if (typeof recipientId !== 'string' || recipientId.length < 15) {
+      console.error("swapTraits: Invalid userId format. Check the recipientId.");
+    }
+    const senderId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length];
+
+    try {
+      let guild;
+      try {
+        guild = client.guilds.cache.get(guildId);
+      } catch (error) {
+        console.error(`swapTraits: client.guilds.cache.get(guildId) Error:`, error);
+      }
+      if (!guild) {
+        console.error("swapTraits: No guild found with that guildId. Check the guildId.");
+        return;
+      }
+
+      let member;
+      try {
+        member = await guild.members.fetch(recipientId);
+      } catch (error) {
+        console.error(`swapTraits: guild.members.fetch(recipientId) Error:`, error);
+      }
+
+      if (!member) {
+        console.error(`swapTraits: No member found with id ${recipientId} in guild ${guildId}`);
+        return;
+      }
+      const recipientUser = member.user;
+
+      if (!recipientUser) {
+        console.error("swapTraits: No user found with that recipientId. Check the recipientId.");
+        return;
+      }
+      const senderName = players[senderId].playerUsername;
+      const recipientName = players[recipientId].playerUsername;
+      await recipientUser.send(`Your Virtue (from ${senderName}): ${swappedPlayers[recipientId].virtue}\nYour Vice (from ${senderName}): ${swappedPlayers[recipientId].vice}`);
+    } catch (error) {
+      console.error(`Error sending trait swap DMs to player ${recipientId}:`, error);
+    }
+  });
+
+  await Promise.all(swapTraitPromises);
+  return swappedPlayers;
 }
 
 async function getCharacterInfo(gameChannel, channelId) {

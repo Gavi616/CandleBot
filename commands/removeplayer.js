@@ -21,7 +21,7 @@ export async function removePlayer(message, args) {
   }
 
   if (args.length < 1) {
-    message.channel.send('Usage: .removeplayer <Player ID> [Reason]');
+    message.channel.send(`Usage: \`${prefix}removeplayer <Player ID> [Reason]\``);
     return;
   }
 

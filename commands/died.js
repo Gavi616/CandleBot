@@ -26,7 +26,7 @@ export async function died(message, args) {
   }
 
   if (args.length < 1) {
-    message.reply('Usage: .died <Player ID> [Reason]');
+    message.reply(`Usage: \`${prefix}died <Player ID> [Reason]\``);
     return;
   }
 

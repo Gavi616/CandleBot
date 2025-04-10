@@ -3,7 +3,8 @@ export const TRAIT_TIMEOUT = 60000;
 export const SACRIFICE_TIMEOUT = 60000;
 export const BRINK_TIMEOUT = 60000;
 
-export const reminders = [120000, 300000, 600000];
+export const GM_REMINDER_TIMES = [120000, 300000, 600000];
+export const BOT_PREFIX = '.';
 
 export const TEST_USER_ID = '583340515869589522';
 
@@ -84,16 +85,27 @@ export const defaultVices = [
 ];
 
 export const defaultMoments = [
-  "find a way to signal for help.",
-  "locate a safe place to rest.",
-  "protect a vulnerable person.",
-  "discover the source of the strange noises.",
-  "retrieve a lost item of importance.",
-  "find a way to communicate with the outside world.",
-  "repair a broken piece of equipment.",
-  "find a hidden cache of supplies.",
-  "escape from a dangerous location.",
-  "provide light in the darkness to help a friend."
+  // Original 10
+  "Find a way to signal for help.",
+  "Locate a safe place to rest.",
+  "Protect a vulnerable person.",
+  "Discover the source of the strange noises.",
+  "Retrieve a lost item of importance.",
+  "Find a way to communicate with the outside world.",
+  "Repair a broken piece of equipment.",
+  "Find a hidden cache of supplies.",
+  "Escape from a dangerous location.",
+  "Provide light in the darkness to help a friend.",
+  "Find clean water.",
+  "Find edible food.",
+  "Discover a weakness in *them*.",
+  "Locate another group of survivors.",
+  "Comfort someone losing hope.",
+  "Create a diversion to save someone.",
+  "Share limited resources fairly.",
+  "Tend to an injured companion.",
+  "Navigate a treacherous path to safety.",
+  "Create a temporary safe zone."
 ];
 
 export const defaultPlayerGMBrinks = [
@@ -106,7 +118,17 @@ export const defaultPlayerGMBrinks = [
   "clutching a makeshift weapon, their knuckles white with tension.",
   "staring into the abyss, their expression a mask of terror.",
   "crying out for help, their voice hoarse and desperate.",
-  "scrambling away from something unseen, their eyes darting wildly."
+  "scrambling away from something unseen, their eyes darting wildly.",
+  "frozen in place, paralyzed by fear.",
+  "hyperventilating, struggling to catch their breath.",
+  "muttering nonsense under their breath, eyes unfocused.",
+  "scratching symbols into the dirt, seemingly unaware.",
+  "trying to hide behind inadequate cover, making themselves small.",
+  "attempting a dangerous leap across a dark chasm.",
+  "fumbling with matches, trying desperately to start a fire.",
+  "sharing their last ration of food, their own stomach rumbling.",
+  "smashing something valuable in a moment of pure frustration.",
+  "arguing intensely over the dwindling map or supplies."
 ];
 
 export const defaultThreatBrinks = [
@@ -137,7 +159,10 @@ export const defaultThreatBrinks = [
 export const randomNames = [
   "Aria", "Jasper", "Luna", "Felix", "Nova", "Silas", "Iris", "Orion", "Hazel", "Leo",
   "Willow", "River", "Skye", "Rowan", "Sage", "Asher", "Ivy", "Finn", "Jade", "Kai",
-  "Aurora", "Phoenix", "Indigo", "Zephyr", "Opal", "Cyrus", "Lyra", "Rhys", "Wren", "Echo"
+  "Aurora", "Phoenix", "Indigo", "Zephyr", "Opal", "Cyrus", "Lyra", "Rhys", "Wren", "Echo",
+  "Remy", "Quinn", "Blair", "Ellis", "Soren", "Kael", "Emerson", "Hollis", "Arden", "Briar",
+  "Cove", "Lark", "Sterling", "Marlowe", "Sasha", "Nico", "Jules", "Cassian", "Rory", "Lane",
+  "Reese", "Sawyer", "Tatum", "Bellamy", "Darcy", "Flynn", "Greer", "Juno", "Kit", "Vale"
 ];
 
 export const randomLooks = [
@@ -210,7 +235,7 @@ export const newGameMessage = `**The World of Ten Candles**\nYour characters wil
 
 export const stepOneMessage = `**Step One: Players Write Traits**\nPlayers, check your DMs and reply with a Virtue and a Vice.`;
 
-export const stepTwoMessage = '**Step Two: GM Introduces this session\'s Module / Theme**\nThe GM will now introduce the module/theme and then use `.theme [description]` to advance to Step Three';
+export const stepTwoMessage = `**Step Two: GM Introduces this session's Module / Theme**\nThe GM will now introduce the module/theme and then use \`${BOT_PREFIX}theme [description]\` to advance to Step Three`;
 
 export const stepThreeMessage = `**Step Three: Players Create Concepts**\nPlayers, expect a DM and respond with your character\'s Name, Look and Concept, in that order as three separate messages.`;
 
@@ -226,42 +251,10 @@ export const stepSevenReminder = '**It begins.**\n\n*For the remainder of the se
 
 export const stepEightMessage = '**Final Recordings**\nPlayers, please check your DMs for instructions on sending your final recordings.';
 
-export const gameStartMessage = '**Game Start**\nCharacter generation is complete! Ten candles are lit, and the game begins.\n\n**How to Use `.conflict`:**\nUse the `.conflict` command to perform actions. Use modifiers such as `-burnvirtue`, `-burnvice` and `-burnmoment` as needed.\nBuring a Virtue or Vice from the top of your stack allows your `.conflict` to reroll all ones.\nBuring your Moment from the top of your stack will give you a valuable Hope die if the `.conflict` succeeds!\nExample(s): `.conflict` or `.conflict -burnvice`\n\nCandles will be extinguished as the scenes progress.';
+export const gameStartMessage = `**Game Start**\nCharacter generation is complete! Ten candles are lit, and the game begins.\n\n**How to Use \`${BOT_PREFIX}conflict\`:**\nUse the \`${BOT_PREFIX}conflict\` command to perform actions. Use modifiers such as \`-burnvirtue\`, \`-burnvice\` and \`-burnmoment\` as needed.\nBuring a Virtue or Vice from the top of your stack allows your \`${BOT_PREFIX}conflict\` to reroll all ones.\nBuring your Moment from the top of your stack will give you a valuable Hope die if the \`${BOT_PREFIX}conflict\` succeeds!\nExample(s): \`${BOT_PREFIX}conflict\` or \`${BOT_PREFIX}conflict -burnvice\`\n\nCandles will be extinguished as the scenes progress.`;
 
-export const startingMessageGM = `**Ten Candles Game Mechanics**
-Resolving a Conflict: Players use \`.conflict\` to roll a communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).
-Burning Traits: A player may burn a Trait to reroll all dice which come up 1 in a conflict.
-Moment: If a player lives their Moment successfully, they gain a Hope Die to add to their conflict rolls.
-Hope Die: A Hope Die succeeds on a 5 or a 6.
-Brink: After all else has burned away, whenever a player embraces their Brink, they reroll all dice. If the conflict roll still fails, they lose their Hope die (if they had one).
-Dire Conflicts: You may decide that a particular conflict roll will be dire. The player may either withdraw their action or press onward. If they press onward a success is handled normally, but a failure may result in permanent damage to the character (mental or physical).
-Narration Rights: If the player rolled more 6’s than you (the GM), that player may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren’t playing to win, but to tell a good story. If you (the GM) tied the player's roll or rolled more 6’s than the player, you (the GM) may describe what happens as a result of the conflict. A player who fails a conflict roll may take over narration at any time, the cost is their character's life.
-Darkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.
-Changing Scenes: Any time a candle darkens and a new scene begins, three events occur.
-Transition: You (the GM) transition the players out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.
-Establishing Truths:
-These things are true. The world is dark.
-Establish # truths equal to lit candles.
-Truths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped"; "Our flashlights illuminated the water, but there were no waves."; or "We filled the pickup’s tank by mouth-siphoning gas from cars on the highway").
-After the last truth everyone left alive speaks, “and we are alive.”
-Dice Pools Refresh: The Players’ pool of dice refills to the number of lit candles. The GM’s pool equals the number of unlit candles.`;;
+export const startingMessageGM = `**Ten Candles Game Mechanics**\nResolving a Conflict: Players use \`${BOT_PREFIX}conflict\` to roll a communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).\nBurning Traits: A player may burn a Trait to reroll all dice which come up 1 in a conflict.\nMoment: If a player lives their Moment successfully, they gain a Hope Die to add to their conflict rolls.\nHope Die: A Hope Die succeeds on a 5 or a 6.\nBrink: After all else has burned away, whenever a player embraces their Brink, they reroll all dice. If the conflict roll still fails, they lose their Hope die (if they had one).\nDire Conflicts: You may decide that a particular conflict roll will be dire. The player may either withdraw their action or press onward. If they press onward a success is handled normally, but a failure may result in permanent damage to the character (mental or physical).\nNarration Rights: If the player rolled more 6s than you (the GM), that player may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren't playing to win, but to tell a good story. If you (the GM) tied the player's roll or rolled more 6s than the player, you (the GM) may describe what happens as a result of the conflict. A player who fails a conflict roll may take over narration at any time, the cost is their character's life.\nDarkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.\nChanging Scenes: Any time a candle darkens and a new scene begins, three events occur.\nTransition: You (the GM) transition the players out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.\nEstablishing Truths:\nThese things are true. The world is dark.\nEstablish # truths equal to lit candles.\nTruths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped"; "Our flashlights illuminated the water, but there were no waves."; or "We filled the pickup's tank by mouth-siphoning gas from cars on the highway").\nAfter the last truth everyone left alive speaks, “and we are alive.”\nDice Pools Refresh: The Players' pool of dice refills to the number of lit candles. The GM's pool equals the number of unlit candles.`;
 
-export const startingMessagePlayer = `**Ten Candles Game Mechanics**
-Resolving a Conflict: Use \`.conflict\` after you have declared the action you'd like to take to roll the communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).
-Burning Traits: A trait can be burned in order to reroll all dice which come up 1 in a conflict.
-Moment: If you live your Moment successfully, gain a Hope Die to add to your conflict rolls.
-Hope Die: A Hope Die succeeds on a 5 or a 6.
-Brink: After all else has burned away, whenever you embrace your Brink, reroll all dice. If the conflict roll still fails, you lose your Hope die (if you had one).
-Dire Conflicts: The GM may decide that a particular conflict roll will be dire. If they do so, you may either withdraw their action or press onward. If you press onward a success is handled normally, but a failure may result in permanent damage to your character (mental or physical).
-Narration Rights: If you rolled more 6’s than the GM, you may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren’t playing to win, but to tell a good story. If the GM tied your roll or rolled more 6’s, the GM may describe what happens as a result of the conflict. If you fail a conflict roll, you may take over narration at any time, but the cost is your character's life.
-Darkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.
-Changing Scenes: Any time a candle darkens and a new scene begins, three events occur.
-Transition: The GM transitions out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.
-Establishing Truths:
-These things are true. The world is dark.
-Establish # truths equal to lit candles.
-Truths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped.", "Our flashlights illuminated the water, but there were no waves." or "We filled the pickup’s tank by mouth-siphoning gas from cars on the highway".
-After the last truth everyone left alive speaks, “and we are alive.”
-Dice Pools Refresh: The Players’ pool of dice refills to the number of lit candles. The Players’ pool of dice refills to the number of lit candles. The GM’s pool equals the number of unlit candles.`;
+export const startingMessagePlayer = `**Ten Candles Game Mechanics**\nResolving a Conflict: Use \`${BOT_PREFIX}conflict\` after you have declared the action you'd like to take to roll the communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).\nBurning Traits: A trait can be burned in order to reroll all dice which come up 1 in a conflict.\nMoment: If you live your Moment successfully, gain a Hope Die to add to your conflict rolls.\nHope Die: A Hope Die succeeds on a 5 or a 6.\nBrink: After all else has burned away, whenever you embrace your Brink, reroll all dice. If the conflict roll still fails, you lose your Hope die (if they had one).\nDire Conflicts: The GM may decide that a particular conflict roll will be dire. If they do so, you may either withdraw their action or press onward. If you press onward a success is handled normally, but a failure may result in permanent damage to your character (mental or physical).\nNarration Rights: If you rolled more 6s than the GM, you may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren't playing to win, but to tell a good story. If the GM tied your roll or rolled more 6s, the GM may describe what happens as a result of the conflict. If you fail a conflict roll, you may take over narration at any time, but the cost is your character's life.\nDarkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.\nChanging Scenes: Any time a candle darkens and a new scene begins, three events occur.\nTransition: The GM transitions out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.\nEstablishing Truths:\nThese things are true. The world is dark.\nEstablish # truths equal to lit candles.\nTruths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped.", "Our flashlights illuminated the water, but there were no waves." or "We filled the pickup's tank by mouth-siphoning gas from cars on the highway".\nAfter the last truth everyone left alive speaks, “and we are alive.”\nDice Pools Refresh: The Players' pool of dice refills to the number of lit candles. The Players' pool of dice refills to the number of lit candles. The GM's pool equals the number of unlit candles.`;
 
 export const finalRecordingsMessage = 'The final scene fades to black. The story is over. Your final recordings will play after a moment of silence.';

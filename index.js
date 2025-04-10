@@ -6,10 +6,10 @@ import {
 } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
-import { TEST_USER_ID, finalRecordingsMessage } from './config.js';
+import { BOT_PREFIX, TEST_USER_ID, finalRecordingsMessage } from './config.js';
 import {
   loadGameData, saveGameData, printActiveGames, getAudioDuration, getGameData,
-  gameData, handleGearCommand, playAudioFromUrl, playRandomConflictSound, handleEditGearModal,
+  gameData, playAudioFromUrl, playRandomConflictSound, handleEditGearModal,
   speakInChannel, requestConsent, loadBlockUserList, isWhitelisted, handleAddGearModal,
   handleAddGearModalSubmit, isBlockedUser, loadChannelWhitelist, saveChannelWhitelist,
   channelWhitelist, respondViaDM, findGameByUserId, handleTraitStacking, getRandomBrink,
@@ -17,7 +17,6 @@ import {
   getRandomConcept, handleDoneButton, handleGMEditButton, handleGMEditModalSubmit,
   handleDeleteGearModal, handleDeleteGearModalSubmit, handleEditGearModalSubmit, displayInventory
 } from './utils.js';
-import { sendCharacterGenStep } from './chargen.js';
 import { prevStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
 import { conflict } from './commands/conflict.js';
@@ -30,8 +29,7 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
-const prefix = '.';
-const version = '0.9.951a';
+const version = '0.9.952a';
 const botName = 'Ten Candles Bot';
 export const isTesting = false;
 let botRestarted = false;
@@ -44,8 +42,8 @@ client.once('ready', async () => {
   const serverIds = client.guilds.cache.map(guild => guild.id).join(', ');
   console.log(`${botName} is in ${client.guilds.cache.size} server${client.guilds.cache.size === 1 ? '' : 's'} (${serverIds}).`)
 
-  console.log(`Command prefix is ${prefix}`);
-  console.log(`Use ${prefix}help for a list of commands.`);
+  console.log(`Command prefix is ${BOT_PREFIX}`);
+  console.log(`Use ${BOT_PREFIX}help for a list of commands.`);
 
   if (!fs.existsSync('config.js')) {
     console.error('Configuration file not found. Please create a config.js file or copy one from https://github.com/Gavi616/CandleBot');
@@ -72,7 +70,7 @@ client.once('ready', async () => {
         if (channel) {
           await channel.send(`**${botName}** has restarted and found one or more games in-progress.`);
           if (game.characterGenStep < 9) {
-            await channel.send("Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs repeatedly, contact the developer and/or consider using `.cancelgame`*");
+            await channel.send(`Character generation was in progress.\nRestarting character generation from last successful step.\n*If this occurrs repeatedly, contact the developer and/or consider using \`${BOT_PREFIX}cancelgame\`*`);
             await sendCharacterGenStep(channel, game);
           } else if (game.inLastStand) {
             if (Object.values(game.players).every(player => player.isDead)) {
@@ -83,9 +81,6 @@ client.once('ready', async () => {
                 await channel.send("All characters are dead. Restarting the **Final Recordings**.");
                 await playRecordings(channel);
               }
-            } else {
-              await gameStatus(channel);
-              await channel.send("We are in **The Last Stand**. GM continues narration until all characters have `.died @PlayerId [cause]`");
             }
           } else if (game.inLastStand) {
             if (Object.values(game.players).every(player => player.isDead)) {
@@ -98,11 +93,11 @@ client.once('ready', async () => {
               }
             } else {
               await gameStatus(channel);
-              await channel.send("We are in **The Last Stand**. GM continues narration until all characters have `.died @PlayerId [cause]`");
+              await channel.send(`We are in **The Last Stand**. GM continues narration until all characters have \`${BOT_PREFIX}died @PlayerId [cause]\``);
             }
           } else {
             await gameStatus(channel);
-            await channel.send("GM continues narration until a Player uses `.conflict` to move the story forward.");
+            await channel.send(`GM continues narration until a Player uses \`${BOT_PREFIX}conflict\` to move the story forward.`);
           }
         }
       }
@@ -310,7 +305,7 @@ client.on('interactionCreate', async interaction => {
         if (allPlayersDone && game.characterGenStep === 7) { // Ensure we are still in step 7
           const gameChannel = client.channels.cache.get(game.textChannelId);
           if (gameChannel) {
-            await gameChannel.send('All player inventories approved by the GM. Proceeding to the next step.');
+            await gameChannel.send('All player inventories have been approved by the GM. Proceeding to the next step.');
             clearReminderTimers(game); // Make sure to import this
             game.characterGenStep++;
             saveGameData();
@@ -319,7 +314,7 @@ client.on('interactionCreate', async interaction => {
             console.error(`Could not find game channel ${game.textChannelId} to advance step.`);
             const gmUser = await client.users.fetch(game.gmId).catch(console.error);
             if (gmUser) {
-              await gmUser.send(`All inventories approved, but I couldn't find the game channel <#${game.textChannelId}> to announce the next step. Please check the channel and potentially use \`.nextstep\` manually.`).catch(console.error);
+              await gmUser.send(`Error: All inventories approved, but the game channel <#${game.textChannelId}> is invalid.`).catch(console.error);
             }
           }
         }
@@ -411,7 +406,7 @@ client.on('interactionCreate', async interaction => {
 
         // Permission Check
         if (interactorId !== playerIdFromCustomId) {
-          await interaction.reply({ content: 'You cannot interact with another player\'s gear menu.' });
+          await interaction.reply({ content: 'You cannot interact with another player\'s inventory.' });
           return;
         }
         // Context Check
@@ -463,8 +458,8 @@ client.on('messageCreate', async (message) => {
   const userName = message.author.username;
 
   if (message.channel.type === ChannelType.DM) {
-    if (message.content.startsWith(prefix)) {
-      const args = message.content.slice(prefix.length).split(/ +/);
+    if (message.content.startsWith(BOT_PREFIX)) {
+      const args = message.content.slice(BOT_PREFIX.length).split(/ +/);
       const command = args.shift().toLowerCase();
 
       console.log('DM Command:', message.content, 'from', userName);
@@ -484,7 +479,7 @@ client.on('messageCreate', async (message) => {
       } else if (command === 'gear') {
         const game = gameData[message.channel.id];
         if (game && game.scene > 0) { // only accessible once scenes have started
-          await handleGearCommand(message.author, game, userId, args);
+          await displayInventory(user, game, playerId, false);
         } else {
           await message.author.send('You are not currently in a game, or this command is not available yet.');
         }
@@ -501,8 +496,8 @@ client.on('messageCreate', async (message) => {
     }
     return;
   } else if (message.channel.type !== ChannelType.DM) {
-    if (message.content.startsWith(prefix)) {
-      const args = message.content.slice(prefix.length).split(/ +/);
+    if (message.content.startsWith(BOT_PREFIX)) {
+      const args = message.content.slice(BOT_PREFIX.length).split(/ +/);
       const command = args.shift().toLowerCase();
 
       console.log('Channel command:', message.content, 'from', userName, 'in ' + message.channel.name);
@@ -518,14 +513,14 @@ client.on('messageCreate', async (message) => {
       }
 
       if (isBlockedUser(userId) && command === 'startgame') {
-        await respondViaDM(message, `You are blocked from using the \`.startgame\` command.`, 'startgame');
+        await respondViaDM(message, `You are blocked from using the \`${BOT_PREFIX}startgame\` command.`, 'startgame');
         return;
       }
 
       if (command === 'startgame') {
         if (!isWhitelisted(message.channel.id)) {
           try {
-            await message.author.send(`The channel <#${message.channel.id}> is not whitelisted for \`.startgame\` commands. Please ask an administrator to use \`.whitelist ${message.channel.id}\` to enable games in this channel.`);
+            await message.author.send(`The channel <#${message.channel.id}> is not whitelisted for \`${BOT_PREFIX}startgame\` commands. Please ask an administrator to use \`.whitelist ${message.channel.id}\` to enable games in this channel.`);
             await message.delete();
           } catch (error) {
             console.error(`Error sending DM or deleting message:`, error);
@@ -611,12 +606,15 @@ async function me(message) {
       { name: 'Moment', value: player ? player.moment || 'Not set' : 'Not set' },
       { name: 'Brink', value: player ? player.brink || 'Not set' : 'Not set' },
       { name: 'Hope Dice', value: player ? player.hopeDice.toString() || '0' : '0' },
-      { name: 'Recordings', value: player ? player.recordings || 'Not set' : 'Not set' },
-      { name: 'Is Dead', value: player ? player.isDead ? 'Yes' : 'No' : 'No' },
+      { name: 'Final Recording', value: player ? player.recordings || 'Not set' : 'Not set' },
+      { name: 'Stack Order', value: player ? player.stackOrder || 'Not set' : 'Not set' },
       { name: 'Virtue Burned', value: player ? player.virtueBurned ? 'Yes' : 'No' : 'No', inline: true },
       { name: 'Vice Burned', value: player ? player.viceBurned ? 'Yes' : 'No' : 'No', inline: true },
       { name: 'Moment Burned', value: player ? player.momentBurned ? 'Yes' : 'No' : 'No' },
-      { name: 'Gear', value: player && player.gear ? player.gear.join(', ') : 'No Gear' },
+      { name: 'Inventory', value: player ? player.gear.length > 0 ? player.gear.join(', ') : 'No gear added.' : 'No gear added.' },
+      { name: 'Dead', value: player ? player.isDead ? 'Yes' : 'No' : 'No' },
+      { name: 'Brink you wrote', value: player ? player.givenBrink || 'Not set' : 'Not set' },
+      { name: 'Session Theme', value: game ? game.theme || 'Not set' : 'Not set' },
       { name: 'Active Game Channel:', value: `<#${gameChannelId}>` },
     )
     .setTimestamp();
@@ -978,28 +976,28 @@ export async function testRecordingCommand(message, args) {
 
 async function testDiceSounds(message, args) {
   try {
-    const channelId = args[0];
+    const voiceChannelId = args[0];
 
-    let voiceChannel = client.channels.cache.get(channelId);
+    let voiceChannel = client.channels.cache.get(voiceChannelId);
 
     if (!voiceChannel) {
       try {
-        voiceChannel = await client.channels.fetch(channelId);
+        voiceChannel = await client.channels.fetch(voiceChannelId);
       } catch (error) {
-        await message.channel.send(`Voice channel with ID ${channelId} not found.`);
+        await message.channel.send(`Voice channel with ID ${voiceChannelId} not found.`);
         return;
       }
     }
 
     if (!voiceChannel) {
-      await message.channel.send(`Voice channel with ID ${channelId} not found.`);
+      await message.channel.send(`Voice channel with ID ${voiceChannelId} not found.`);
       return;
     }
 
     const guildId = voiceChannel.guildId;
 
     if (!guildId) {
-      await message.channel.send(`Could not determine guild ID from channel ID ${channelId}.`);
+      await message.channel.send(`Could not determine guild ID from channel ID ${voiceChannelId}.`);
       return;
     }
 
@@ -1011,14 +1009,14 @@ async function testDiceSounds(message, args) {
     }
 
     if (voiceChannel.type !== ChannelType.GuildVoice) {
-      await message.channel.send(`Channel ${channelId} is not a voice channel.`);
+      await message.channel.send(`Channel ${voiceChannelId} is not a voice channel.`);
       return;
     }
 
     const existingConnection = getVoiceConnection(guildId);
     if (!existingConnection) {
       joinVoiceChannel({
-        channelId: channelId,
+        channelId: voiceChannelId,
         guildId: guildId,
         adapterCreator: guild.voiceAdapterCreator,
       });
@@ -1033,7 +1031,7 @@ async function testDiceSounds(message, args) {
 
 async function testHandleTraitStacking(message, args) {
   if (args.length < 4) {
-    await message.channel.send('Usage: .testhts <Game Channel ID> <GM ID> <Player1 ID> <Player2 ID> [<Player3 ID> ...]');
+    await message.channel.send(`Usage: ${BOT_PREFIX}testhts <Game Channel ID> <GM ID> <Player1 ID> <Player2 ID> [<Player3 ID> ...]\``);
     return;
   }
 
@@ -1097,7 +1095,6 @@ async function testHandleTraitStacking(message, args) {
     gameMode: 'text-only',
     initiatorId: message.author.id,
     gmId: gmId,
-    channelId: channelId,
     diceLost: 0,
   };
 
@@ -1158,7 +1155,7 @@ async function testHandleTraitStacking(message, args) {
 
 async function testCharGenStep(message, args) {
   if (args.length < 4) {
-    await message.channel.send('Usage: .testchargenstep <Step Number> <Game Channel ID> <GM ID> <Player1 ID> [<Player2 ID> ...]');
+    await message.channel.send(`Usage: ${BOT_PREFIX}testchargenstep <Step Number> <Game Channel ID> <GM ID> <Player1 ID> [<Player2 ID> ...]\``);
     return;
   }
 
@@ -1237,7 +1234,6 @@ async function testCharGenStep(message, args) {
     gameMode: gameMode, // Set based on channel type
     initiatorId: message.author.id,
     gmId: gmId,
-    channelId: gameChannelId,
     diceLost: 0,
   };
 

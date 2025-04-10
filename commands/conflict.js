@@ -1,7 +1,7 @@
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelType } from 'discord.js';
-import { startTruthsSystem } from '../index.js';
+import { startTruthsSystem, isTesting } from '../index.js';
 import { saveGameData, numberToWords, getDMResponse, playRandomConflictSound, respondViaDM } from '../utils.js';
-import { SACRIFICE_TIMEOUT, BRINK_TIMEOUT, CONSENT_TIMEOUT } from '../config.js';
+import { SACRIFICE_TIMEOUT, BRINK_TIMEOUT, CONSENT_TIMEOUT, BOT_PREFIX } from '../config.js';
 import { died } from './died.js';
 
 async function extinguishCandle(message, channelId) {
@@ -326,7 +326,7 @@ export async function conflict(message, args, gameData) {
     messageContent += `<@${message.author.id}>, the acting player, wins narration rights for this conflict.`;
   }
   await preRollMessage.edit(`**Conflict Initiated**\nCommunal Dice: ${dicePool}\nHope Dice: ${hopeDiceCount}\nGM Dice: ${gmDiceCount}\n\nThinking Complete!`);
-  
+
   const voiceChannelId = game.voiceChannelId;
   const voiceChannel = client.channels.cache.get(voiceChannelId);
   

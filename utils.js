@@ -7,7 +7,7 @@ import {
   joinVoiceChannel, createAudioPlayer, createAudioResource, AudioPlayerStatus, getVoiceConnection,
   StreamType
 } from '@discordjs/voice';
-import { defaultVirtues, defaultVices, defaultMoments, languageOptions } from './config.js';
+import { defaultVirtues, defaultVices, defaultMoments, languageOptions, DEFAULT_LIT_CANDLE_EMOJI, DEFAULT_UNLIT_CANDLE_EMOJI } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
 import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
@@ -123,8 +123,8 @@ export async function askPlayerToGiftHope(dyingPlayerUser, game, dyingPlayerId) 
   const embed = new EmbedBuilder()
       .setColor(0x00FF00) // Green for hope
       .setTitle('Martyrdom: Gift Your Hope')
-      .setDescription(`Your death was deemed a martyrdom! You have ${dyingPlayer.hopeDice} Hope ${dyingPlayer.hopeDice === 1 ? 'Die' : 'Dice'}. Choose one living player to receive **one** Hope Die.`)
-      .setFooter({ text: `You have ${formatDuration(MARTYRDOM_TIMEOUT)} to decide.` });
+      .setDescription(`Your death was deemed a martyrdom! Because you have Hope dice, you may choose a living player to receive **one** Hope Die.`)
+      .setFooter({ text: `You have ${formatDuration(MARTYRDOM_TIMEOUT)} left to decide.` });
 
   let dmMessage;
   try {
@@ -409,7 +409,7 @@ export async function respondViaDM(message, dmText) {
   }
 }
 
-export async function requestConsent(user, prompt, yesId, noId, time, title = 'Consent Required') {
+export async function requestConsent(user, prompt, yesId, noId, time, title = 'Consent Required', options = {}) {
   console.log(`requestConsent: Called for user ${user.tag} with prompt: ${prompt}`);
   try {
     const dmChannel = await user.createDM();
@@ -418,65 +418,103 @@ export async function requestConsent(user, prompt, yesId, noId, time, title = 'C
       .setTitle(title)
       .setDescription(prompt);
 
+    // Determine button styles based on options or defaults
+    const yesStyle = options.yesStyle || ButtonStyle.Success;
+    const noStyle = options.noStyle || ButtonStyle.Danger;
+
     const row = new ActionRowBuilder()
       .addComponents(
         new ButtonBuilder()
           .setCustomId(yesId)
           .setLabel('Yes')
-          .setStyle(ButtonStyle.Success), // Set button style to Success (green)
+          .setStyle(yesStyle), // Use determined style
         new ButtonBuilder()
           .setCustomId(noId)
           .setLabel('No')
-          .setStyle(ButtonStyle.Danger) // Set button style to Danger (red)
+          .setStyle(noStyle) // Use determined style
       );
 
     const consentMessage = await dmChannel.send({ embeds: [consentEmbed], components: [row] });
     console.log(`requestConsent: Sent consent message with ID ${consentMessage.id} to user ${user.id}`);
 
     const filter = (interaction) => interaction.user.id === user.id && interaction.message.id === consentMessage.id;
-    const collector = dmChannel.createMessageComponentCollector({ filter, time });
+    // Increased collector time slightly to prevent race conditions with interaction processing
+    const collector = dmChannel.createMessageComponentCollector({ filter, time: time + 500 });
 
-    return new Promise((resolve, reject) => { // Use Promise with reject
+    return new Promise((resolve) => { // Removed reject for simplicity, return null on error/timeout
+      let responded = false; // Flag to prevent resolving multiple times
+
       collector.on('collect', async (interaction) => {
+        if (responded) return; // Already handled
+        responded = true;
         console.log(`requestConsent: Button collected: ${interaction.customId} from ${interaction.user.tag}`);
+        collector.stop('user_response'); // Stop collector immediately
+
         try {
+          // Defer update immediately
           await interaction.deferUpdate();
+
           // Disable all buttons
           const updatedRow = new ActionRowBuilder().addComponents(
             row.components.map((button) => ButtonBuilder.from(button).setDisabled(true))
           );
-          await interaction.editReply({ components: [updatedRow] });
+          // Edit the original message to show disabled buttons
+          await interaction.editReply({ components: [updatedRow] }).catch(e => {
+            // Ignore errors if interaction already replied or message deleted
+            if (e.code !== 10062 && e.code !== 10008) console.error("requestConsent: Error editing reply:", e);
+          });
+
+          // Resolve based on the button clicked
           if (interaction.customId === yesId) {
             resolve(true);
           } else if (interaction.customId === noId) {
             resolve(false);
+          } else {
+            resolve(null); // Should not happen with filter, but safety
           }
         } catch (error) {
-          console.error(`requestConsent: Error deferring update or handling interaction:`, error);
-          reject(error); // Reject the promise if there's an error
+          console.error(`requestConsent: Error handling interaction:`, error);
+          resolve(null); // Resolve null on error
         }
-        collector.stop();
       });
 
       collector.on('end', async (collected, reason) => {
+        if (responded) return; // Already handled by 'collect'
         console.log(`requestConsent: Collector ended for ${user.tag}. Reason: ${reason}`);
         if (reason === 'time') {
-          await user.send('Consent Request timed out.');
-        } else if (reason !== 'user') {
+          try {
+             // Disable buttons on timeout
+             const timedOutRow = new ActionRowBuilder().addComponents(
+               row.components.map((button) => ButtonBuilder.from(button).setDisabled(true))
+             );
+             // Fetch message again before editing, in case cache is stale
+             const msg = await dmChannel.messages.fetch(consentMessage.id).catch(() => null);
+             if (msg) {
+                await msg.edit({ content: '*Request timed out.*', components: [timedOutRow] }).catch(e => {
+                   if (e.code !== 10008) console.error("requestConsent: Error editing message on timeout:", e);
+                });
+             }
+             // Send separate timeout message
+             await user.send('Consent Request timed out.').catch(e => console.error("requestConsent: Failed to send timeout DM:", e));
+          } catch (error) {
+             console.error("requestConsent: Error handling timeout:", error);
+          }
+          resolve(null); // Resolve null on timeout
+        } else if (reason !== 'user_response') {
           console.error(`requestConsent: Collector ended unexpectedly, reason: ${reason}`);
-          reject(new Error(`Collector ended unexpectedly: ${reason}`)); // Reject if unexpected end
+          resolve(null); // Resolve null on unexpected end
         }
-        resolve(false);
+        // If reason is 'user_response', the 'collect' handler already resolved
       });
     });
   } catch (error) {
     console.error(`requestConsent: Error requesting consent from ${user.tag}:`, error);
-    return Promise.reject(error); // Return a rejected promise
+    return Promise.resolve(null); // Return resolved null promise on initial error
   }
 }
 
 export function getGameData(identifier) {
-  console.log(`getGameData: Called with identifier: ${identifier}`); // Added logging
+  console.log(`getGameData: Called with identifier: ${identifier}`);
   let game = gameData[identifier];
 
   // If not found by channelId, try finding it by playerId
@@ -910,7 +948,7 @@ export function saveGameData() {
         console.error(`saveGameData: Game data validation failed for channel ${channelId}. Data not saved.`);
       }
     }
-    fs.writeFileSync('gameData.json', JSON.stringify(gameDataToSave));
+    fs.writeFileSync('gameData.json', JSON.stringify(gameDataToSave, null, 2));
   } catch (err) {
     console.error('saveGameData: Error saving game data:', err);
   }
@@ -937,17 +975,20 @@ export function printActiveGames() {
 }
 
 export async function sendCandleStatus(channel, litCandles) {
+  const litCandleEmoji = getLitCandleEmoji(channel.id); // Get the LIT emoji
+  const unlitCandleEmoji = getUnlitCandleEmoji(channel.id); // Get the UNLIT emoji
+
   if (litCandles === 10) {
-    channel.send('***Ten Candles are lit.***\n' + ':candle:'.repeat(litCandles));
+    await channel.send('***Ten Candles are lit.***\n' + litCandleEmoji.repeat(litCandles));
   } else if (litCandles >= 1 && litCandles <= 9) {
     const words = numberToWords(litCandles);
     if (litCandles === 1) {
-      channel.send(`***There is only ${words} lit candle.***\n` + ':candle:'.repeat(litCandles));
+      await channel.send(`***There is only ${words} lit candle.***\n` + litCandleEmoji.repeat(litCandles) + unlitCandleEmoji.repeat(10-litCandles));
     } else {
-      channel.send(`***There are ${words} lit candles.***\n` + ':candle:'.repeat(litCandles));
+      await channel.send(`***There are ${words} lit candles.***\n` + litCandleEmoji.repeat(litCandles) + unlitCandleEmoji.repeat(10-litCandles));
     }
   } else {
-    channel.send('***All candles have been extinguished.*** ' + ':wavy_dash:');
+    await channel.send('***All candles have been extinguished.***');
   }
 }
 
@@ -968,6 +1009,18 @@ export async function sendConsentConfirmation(user, userType, channelId) {
   } catch (error) {
     console.error(`Error sending consent confirmation to ${user.tag}:`, error);
   }
+}
+
+export function getOtherLivingPlayers(game, currentPlayerId) {
+  if (!game || !game.playerOrder || !game.players) {
+    return []; // Return empty array if game data is invalid
+  }
+
+  return game.playerOrder.filter(playerId =>
+    playerId !== currentPlayerId && // Exclude the current player
+    game.players[playerId] &&      // Ensure player data exists
+    !game.players[playerId].isDead // Ensure player is not dead
+  );
 }
 
 export async function playAudioFromUrl(url, voiceChannel) {
@@ -1549,7 +1602,7 @@ export async function handleTraitStacking(game) {
       });
 
       collector.on('collect', async (interaction) => {
-        await interaction.deferUpdate(); // Added this line
+        await interaction.deferUpdate();
         const chosenTrait = interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1);
         await user.send(`You have chosen ${chosenTrait}.`); // Send a new message
         playerState.availableTraits = playerState.availableTraits.filter(trait => trait !== chosenTrait);
@@ -1719,7 +1772,7 @@ async function getLoserInitialChoice(user, playerState) {
     });
 
     collector.on('collect', async (interaction) => {
-      await interaction.deferUpdate(); // Added this line
+      await interaction.deferUpdate();
       console.log(`getLoserInitialChoice: Player ${user.id} pressed button: ${interaction.customId}`);
       const chosenTrait = interaction.customId.charAt(0).toUpperCase() + interaction.customId.slice(1);
       await user.send(`You have chosen ${chosenTrait} as the top of your stack.`); // Send a new message
@@ -1768,23 +1821,39 @@ function disableAllButtons(components) {
 
 export function loadBlockUserList() {
   try {
+    // Check if file exists before reading
+    if (!fs.existsSync('userBlocklist.json')) {
+        console.log('userBlocklist.json not found. Initializing empty blocklist.');
+        Object.keys(userBlocklist).forEach(key => delete userBlocklist[key]); // Ensure it's empty
+        return;
+    }
     const data = fs.readFileSync('userBlocklist.json', 'utf8');
+     // Handle empty file case
+    if (!data.trim()) {
+        console.log('userBlocklist.json is empty. Initializing empty blocklist.');
+        Object.keys(userBlocklist).forEach(key => delete userBlocklist[key]);
+        return;
+    }
     const loadedBlocklist = JSON.parse(data);
 
+    // Clear existing in-memory object *before* loading new data
     Object.keys(userBlocklist).forEach(key => delete userBlocklist[key]);
 
+    // Assign loaded data to the existing exported object
     Object.assign(userBlocklist, loadedBlocklist);
     console.log('User Blocklist loaded successfully.');
   } catch (err) {
     console.error(`Error loading user blocklist: ${err.message}`);
+    // Ensure it's empty on error
     Object.keys(userBlocklist).forEach(key => delete userBlocklist[key]);
-    console.log('User Blocklist initialized.');
   }
 }
 
 export function saveBlockUserList() {
   try {
-    fs.writeFileSync('userBlocklist.json', JSON.stringify(userBlocklist));
+    fs.writeFileSync('userBlocklist.json', JSON.stringify(userBlocklist, null, 2));
+    console.log('User Blocklist saved successfully.');
+    loadBlockUserList();
   } catch (err) {
     console.error(`Error saving user blocklist: ${err.message}`);
   }
@@ -1796,31 +1865,68 @@ export function isBlockedUser(userId) {
 
 export function loadChannelWhitelist() {
   try {
+    // Check if file exists before reading
+    if (!fs.existsSync('channelWhitelist.json')) {
+        console.log('channelWhitelist.json not found. Initializing empty whitelist.');
+        Object.keys(channelWhitelist).forEach(key => delete channelWhitelist[key]); // Ensure it's empty
+        return;
+    }
     const data = fs.readFileSync('channelWhitelist.json', 'utf8');
-    const loadedChannelWhitelist = JSON.parse(data);
+    // Handle empty file case
+    if (!data.trim()) {
+        console.log('channelWhitelist.json is empty. Initializing empty whitelist.');
+        Object.keys(channelWhitelist).forEach(key => delete channelWhitelist[key]);
+        return;
+    }
+    const loadedData = JSON.parse(data);
 
+    // Clear existing in-memory object *before* loading new data
     Object.keys(channelWhitelist).forEach(key => delete channelWhitelist[key]);
 
-    Object.assign(channelWhitelist, loadedChannelWhitelist);
+    // Load and migrate data (existing logic)
+    for (const channelId in loadedData) {
+      const entry = loadedData[channelId];
+      if (typeof entry === 'boolean' && entry === true) {
+        channelWhitelist[channelId] = { whitelisted: true, customLitCandle: null, customUnlitCandle: null };
+      } else if (typeof entry === 'object' && entry !== null) {
+        if (entry.whitelisted !== undefined && entry.customLitCandle !== undefined && entry.customUnlitCandle !== undefined) {
+           channelWhitelist[channelId] = entry;
+        } else if (entry.whitelisted !== undefined && entry.customCandle !== undefined) {
+           channelWhitelist[channelId] = { whitelisted: entry.whitelisted, customLitCandle: entry.customCandle, customUnlitCandle: null };
+        } else if (entry.whitelisted !== undefined) {
+           channelWhitelist[channelId] = { whitelisted: entry.whitelisted, customLitCandle: null, customUnlitCandle: null };
+        }
+      }
+    }
     console.log('Channel Whitelist loaded successfully.');
   } catch (err) {
     console.error(`Error loading channel whitelist: ${err.message}`);
+    // Ensure it's empty on error
     Object.keys(channelWhitelist).forEach(key => delete channelWhitelist[key]);
-    console.log('Channel Whitelist initialized.');
   }
 }
 
 export function saveChannelWhitelist() {
   try {
-    fs.writeFileSync('channelWhitelist.json', JSON.stringify(channelWhitelist));
+    fs.writeFileSync('channelWhitelist.json', JSON.stringify(channelWhitelist, null, 2));
     console.log('Channel Whitelist saved successfully.');
+    loadChannelWhitelist();
   } catch (err) {
     console.error(`Error saving channel whitelist: ${err.message}`);
   }
 }
 
+// isWhitelisted needs adjustment
 export function isWhitelisted(channelId) {
-  return !!channelWhitelist[channelId];
+  return !!channelWhitelist[channelId]?.whitelisted; // Check the nested property
+}
+
+export function getLitCandleEmoji(channelId) {
+  return channelWhitelist[channelId]?.customLitCandle || DEFAULT_LIT_CANDLE_EMOJI;
+}
+
+export function getUnlitCandleEmoji(channelId) {
+  return channelWhitelist[channelId]?.customUnlitCandle || DEFAULT_UNLIT_CANDLE_EMOJI;
 }
 
 export function startReminderTimers(gameChannel, game) {
@@ -1828,6 +1934,7 @@ export function startReminderTimers(gameChannel, game) {
   game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 0), GM_REMINDER_TIMES[0]));
   game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 1), GM_REMINDER_TIMES[1]));
   game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 2), GM_REMINDER_TIMES[2]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 3), GM_REMINDER_TIMES[3]));
 }
 
 export function clearReminderTimers(game) {
@@ -1849,9 +1956,9 @@ async function sendReminder(gameChannel, game, reminderIndex, step) {
   const gm = await gameChannel.guild.members.fetch(game.gmId);
   const user = gm.user;
   const reminderTimes = GM_REMINDER_TIMES.map(time => formatDuration(time));
-  const reminderMessage = `**${reminderTimes[reminderIndex]} Reminder**: Character Creation **Step ${step}** is taking longer than expected. Please check with your players to ensure they are responding to their DMs.`;
+  const reminderMessage = `**Reminder @ ${reminderTimes[reminderIndex]}**: **Character Creation Step ${step}** is taking longer than expected. Please check with your players to ensure they are responding to their DMs.`;
   await user.send(reminderMessage);
-  if (reminderIndex === 2) {
+  if (reminderIndex === 3) {
     clearReminderTimers(game);
   }
 }

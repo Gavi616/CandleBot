@@ -32,6 +32,9 @@ export const gameDataSchema = Joi.object({
       initialChoice: Joi.string().allow(null).required(),
       availableTraits: Joi.array().items(Joi.string()).required(),
       inventoryConfirmed: Joi.boolean().optional(),
+      language: Joi.string().allow(null).optional(),
+      voice: Joi.string().allow(null).optional(),
+      brinkUsedThisRoll: Joi.boolean().optional(),
     }).required()
   ).required(),
   playerOrder: Joi.array().items(Joi.string().pattern(/^\d+$/)).required(),
@@ -47,15 +50,29 @@ export const gameDataSchema = Joi.object({
   diceLost: Joi.number().integer().min(0).required(),
   lastSaved: Joi.string().isoDate().optional(),
   endGame: Joi.boolean().optional(),
-  reminderTimers: Joi.array().items(Joi.any()).optional()
+  reminderTimers: Joi.array().items(Joi.any()).optional(),
+  inLastStand: Joi.boolean().optional(),
+  playingRecordings: Joi.boolean().optional(),
+  pendingMartyrdom: Joi.object({
+      dyingPlayerId: Joi.string().pattern(/^\d+$/).required(),
+      reason: Joi.string().allow('').required(),
+      gmMessageId: Joi.string().pattern(/^\d+$/).required(),
+      gmTimeoutId: Joi.any().allow(null).optional(),
+      playerTimeoutId: Joi.any().allow(null).optional(),
+  }).optional(),
+  dicePool: Joi.number().integer().min(0).optional(),
+  scene: Joi.number().integer().min(1).optional(),
 });
 
 export function validateGameData(data, schema) {
-  const { error } = schema.validate(data);
+  const { error, value } = schema.validate(data, { allowUnknown: false }); // Set allowUnknown to false for stricter validation
   if (error) {
     console.error('Validation Error:', error.details.map(detail => detail.message).join('\n'));
     return false;
   }
+  // Overwrite the original data with the validated (and potentially cleaned) data
+  // This helps remove any unknown properties if allowUnknown was true, or ensures defaults if specified
+  Object.assign(data, value);
   return true;
 }
 

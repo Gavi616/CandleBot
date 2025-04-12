@@ -1,3 +1,3 @@
 {
-  "ignore": ["gameData.json", "blocklist.json", "*.log", "*.tmp", "node_modules/**", "images/**", "audio_files/**", ".config/**"]
+  "ignore": ["gameData.json", "blocklist.json", "channelWhitelist.json", "*.log", "*.tmp", "node_modules/**", "images/**", "audio_files/**", ".config/**"]
 }

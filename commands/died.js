@@ -100,7 +100,7 @@ export async function died(message, args) {
                 throw new Error("Failed to send DM to GM."); // Trigger catch block if sendDM failed
             }
 
-            await message.reply({ content: `Player <@${playerIdToKill}> has hope dice remaining and other players are alive. Check your DMs to confirm if their death was a martyrdom.`, allowedMentions: { repliedUser: false } });
+            await message.reply({ content: `Player <@${playerIdToKill}> has Hope dice remaining and other players are alive. Check your DMs to confirm if their death was a martyrdom.`, allowedMentions: { repliedUser: false } });
 
             // Store the pending state
             game.pendingMartyrdom = {

@@ -12,7 +12,7 @@ export function getHelpEmbed(isAdmin, message) {
     .setTitle('Ten Candles Bot Help')
     .setDescription(
       'Start a Ten Candles session:\n' +
-      `\`${BOT_PREFIX}startgame <GM ID> <Player IDs>\`: Starts a Ten Candles game.\n\n` +
+      `\`${BOT_PREFIX}startgame <GM Mention> <Player Mentions>\`: Starts a Ten Candles game.\n\n` +
       '**Gameplay:**\n' +
       `\`${BOT_PREFIX}conflict\`: Makes a conflict roll for success / failure check & determines narration rights.\n\n` +
       '**Game Management:**\n' +
@@ -33,7 +33,7 @@ export function getHelpEmbed(isAdmin, message) {
         `\`${BOT_PREFIX}gamestatus\`: (DM Only) View game status and player details privately.\n`
         `\`${BOT_PREFIX}cancelgame\`: Cancel the game.\n` +
         `\`${BOT_PREFIX}removeplayer <Player ID> [Reason]\`: Removes a player.\n` +
-        `\`${BOT_PREFIX}died <Player ID> [-martyr] [Cause]\`: Marks a PC as dead. Martyrs may gift their Hope die.\n`
+        `\`${BOT_PREFIX}died <Player ID> [Cause]\`: Marks a PC as dead. Martyrs may gift their Hope die.\n`
     });
   }
 
@@ -42,7 +42,7 @@ export function getHelpEmbed(isAdmin, message) {
       name: '\n\n**Moderation Commands:**',
       value: `\`${BOT_PREFIX}block <User ID> [Reason]\`: Block a user *from using the* \`${BOT_PREFIX}startgame\` *command only*.\n` +
         `\`${BOT_PREFIX}unblock <User ID>\`: Unblock a user.\n` +
-        `\`${BOT_PREFIX}whitelist <Channel ID> [remove]\`: Add or remove a channel from the whitelist.\n`
+        `\`${BOT_PREFIX}whitelist [remove] <Channel ID> [LIT=:emoji:] [UNLIT=:emoji:]\`: Add / remove channel from whitelist, edit default candle emojis.\n`
     });
   }
 

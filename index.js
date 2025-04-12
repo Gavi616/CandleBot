@@ -1,25 +1,27 @@
 import 'dotenv/config';
 import {
-  Client, EmbedBuilder, ChannelType, GatewayIntentBits, MessageMentions,
-  PermissionsBitField, AttachmentBuilder, MessageFlags, ButtonStyle,
-  StringSelectMenuBuilder, ActionRowBuilder, ButtonBuilder, ComponentType
+  Client, EmbedBuilder, ChannelType, GatewayIntentBits, MessageMentions, ModalBuilder, TextInputBuilder,
+  TextInputStyle, ActionRowBuilder, ButtonStyle, PermissionsBitField, AttachmentBuilder,
+  MessageFlags, StringSelectMenuBuilder, ButtonBuilder, ComponentType
 } from 'discord.js';
 import fs from 'fs';
 import { getHelpEmbed } from './embed.js';
-import { BOT_PREFIX, TEST_USER_ID, finalRecordingsMessage } from './config.js';
 import {
-  loadGameData, saveGameData, printActiveGames, getGameData,
-  gameData, playAudioFromUrl, playRandomConflictSound, handleEditGearModal,
+  BOT_PREFIX, TEST_USER_ID, DEFAULT_LIT_CANDLE_EMOJI, DEFAULT_UNLIT_CANDLE_EMOJI, finalRecordingsMessage
+} from './config.js';
+import {
+  loadGameData, saveGameData, printActiveGames, getGameData, sendCandleStatus, getLitCandleEmoji,
+  gameData, playAudioFromUrl, playRandomConflictSound, handleEditGearModal, getUnlitCandleEmoji,
   speakInChannel, requestConsent, loadBlockUserList, isWhitelisted, handleAddGearModal,
   handleAddGearModalSubmit, isBlockedUser, loadChannelWhitelist, saveChannelWhitelist,
-  channelWhitelist, respondViaDM, findGameByUserId, handleTraitStacking, getRandomBrink,
+  channelWhitelist, respondViaDM, findGameByUserId, normalizeBrink, getRandomBrink,
   getRandomMoment, getRandomVice, getRandomVirtue, getRandomName, getRandomLook, getRandomConcept,
   handleDoneButton, handleDeleteGearModal, handleDeleteGearModalSubmit, handleEditGearModalSubmit,
   displayInventory, markPlayerDead, askPlayerToGiftHope, sendDM, clearReminderTimers
 } from './utils.js';
 import { prevStep, sendCharacterGenStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
-import { conflict } from './commands/conflict.js';
+import { conflict, extinguishCandle } from './commands/conflict.js';
 import { generatePlayerStatusEmbed, generateGameStatusEmbed } from './commands/gamestatus.js';
 import { removePlayer } from './commands/removeplayer.js';
 import { leaveGame } from './commands/leavegame.js';
@@ -30,7 +32,7 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
-const version = '0.9.955a';
+const version = '0.9.960a';
 const botName = 'Ten Candles Bot';
 export const isTesting = false;
 let botRestarted = false;
@@ -104,8 +106,9 @@ client.once('ready', async () => {
               await gameStatus(channel);
               await channel.send(`We are in **The Last Stand**. GM continues narration until all characters have \`${BOT_PREFIX}died @PlayerId [cause]\``);
             }
-          } else {
+          } else { // scene play continues
             await gameStatus(channel);
+            await sendCandleStatus(channel, 11 - game.scene);
             await channel.send(`GM continues narration until a Player uses \`${BOT_PREFIX}conflict\` to move the story forward.`);
           }
         }
@@ -142,6 +145,188 @@ client.on('interactionCreate', async interaction => {
         game = userGame;
         gameChannelId = game.textChannelId; // Get channel ID from the found game
       }
+    }
+
+    // --- NEW: Sacrifice Button Handling (Player) ---
+    if (interaction.isButton() && interaction.customId.startsWith('sacrifice_')) {
+      // customId format: sacrifice_yes/no_<playerId>_<channelId>
+      const parts = interaction.customId.split('_');
+      const type = parts[1]; // 'yes' or 'no'
+      const playerId = parts[2];
+      const channelIdFromButton = parts[3];
+
+      // Permission Check: Must be the player the prompt was for
+      if (interaction.user.id !== playerId) {
+        await interaction.reply({ content: 'You cannot respond to another player\'s sacrifice prompt.', ephemeral: true });
+        return;
+      }
+      // Context Check
+      if (game.textChannelId !== channelIdFromButton) {
+        await interaction.reply({ content: 'Game context mismatch.', ephemeral: true });
+        return;
+      }
+      // Ensure player exists and is alive (might be redundant if prompt was recent, but safe)
+      const player = game.players[playerId];
+      if (!player || player.isDead) {
+        await interaction.reply({ content: 'Cannot process sacrifice: Player not found or already dead.', ephemeral: true });
+        return;
+      }
+
+      // Disable buttons on the original DM
+      try {
+        const disabledRows = interaction.message.components.map(row => {
+          const newRow = ActionRowBuilder.from(row);
+          newRow.components.forEach(component => component.setDisabled(true));
+          return newRow;
+        });
+        await interaction.update({ components: disabledRows }); // Update original interaction first
+      } catch (e) {
+        if (e.code !== 10062 && e.code !== 10008) { // Ignore interaction/message already gone
+          console.error("Sacrifice Button: Error disabling buttons:", e);
+        }
+        // Don't return yet, try to proceed if possible
+      }
+
+
+      if (type === 'yes') {
+        // --- Player chose YES to Sacrifice ---
+        console.log(`Sacrifice Button: Player ${playerId} chose YES in game ${channelIdFromButton}. Showing reason modal.`);
+
+        // Build and show the modal
+        const reasonModal = new ModalBuilder()
+          .setCustomId(`sacrifice_reason_${playerId}_${channelIdFromButton}`) // Include player/channel ID
+          .setTitle('Describe Your Sacrifice');
+        const reasonInput = new TextInputBuilder()
+          .setCustomId('sacrificeReasonInput')
+          .setLabel("Reason/Final Action (Optional)")
+          .setStyle(TextInputStyle.Paragraph)
+          .setPlaceholder("Briefly describe your character's final moments...")
+          .setRequired(false);
+        const actionRow = new ActionRowBuilder().addComponents(reasonInput);
+        reasonModal.addComponents(actionRow);
+
+        try {
+          await interaction.showModal(reasonModal);
+          // The rest of the logic (martyrdom, death, scene change) happens in the modal submit handler below
+        } catch (modalError) {
+          console.error(`Sacrifice Button: Error showing modal to ${playerId}:`, modalError);
+          // Fallback: If modal fails, proceed with default reason and scene change
+          await interaction.followUp({ content: "Error showing reason input form. Proceeding with default reason.", ephemeral: true }).catch(console.error);
+          markPlayerDead(game, playerId, "Sacrificed for narrative control (Modal Error)", null); // Mark dead (no channel needed here)
+          const gameChannel = client.channels.cache.get(channelIdFromButton);
+          if (gameChannel) {
+            await gameChannel.send(`:skull: <@${playerId}> chooses to make the ultimate sacrifice! (Modal Error)`);
+            await extinguishCandle({ channel: gameChannel }, channelIdFromButton); // Trigger scene change
+          } else {
+            saveGameData(); // Save death at least
+          }
+        }
+
+      } else { // type === 'no'
+        // --- Player chose NO to Sacrifice ---
+        console.log(`Sacrifice Button: Player ${playerId} chose NO in game ${channelIdFromButton}. Triggering scene change.`);
+        // Announce choice in channel
+        const gameChannel = client.channels.cache.get(channelIdFromButton);
+        if (gameChannel) {
+          // Simply trigger a scene change
+          await extinguishCandle({ channel: gameChannel }, channelIdFromButton); // Pass a mock message object
+        } else {
+          console.error(`Sacrifice Button: Could not find game channel ${channelIdFromButton} to announce 'no' or change scene.`);
+          saveGameData(); // Save anyway? Maybe not needed if nothing changed.
+        }
+      }
+      return; // Handled sacrifice button
+    }
+
+    // --- NEW: Sacrifice Reason Modal Submit Handling ---
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('sacrifice_reason_')) {
+      // customId format: sacrifice_reason_<playerId>_<channelId>
+      const parts = interaction.customId.split('_');
+      const playerId = parts[2];
+      const channelIdFromModal = parts[3];
+
+      // Permission Check: Must be the player who submitted
+      if (interaction.user.id !== playerId) {
+        await interaction.reply({ content: 'Invalid user for this modal submission.', ephemeral: true });
+        return;
+      }
+      // Context Check
+      if (game.textChannelId !== channelIdFromModal) {
+        await interaction.reply({ content: 'Game context mismatch.', ephemeral: true });
+        return;
+      }
+      const player = game.players[playerId];
+      if (!player || player.isDead) {
+        await interaction.reply({ content: 'Cannot process sacrifice reason: Player not found or already dead.', ephemeral: true });
+        return;
+      }
+
+      // Get the reason from the modal
+      const reasonInput = interaction.fields.getTextInputValue('sacrificeReasonInput');
+      const sacrificeReason = sanitizeString(reasonInput.trim()) || "Sacrificed for narrative control"; // Use default if empty
+
+      console.log(`Sacrifice Modal: Received reason "${sacrificeReason}" from ${playerId} for game in ${channelIdFromModal}.`);
+
+      // Acknowledge modal submission quickly
+      await interaction.reply({ content: `Sacrifice reason received. Processing...`, ephemeral: true });
+
+      // --- Now continue with Martyrdom Check ---
+      let martyrdomGranted = false; // Flag
+      if (player.hopeDice > 0) {
+        const gmMember = await client.guilds.cache.get(game.guildId)?.members.fetch(game.gmId).catch(() => null);
+        if (gmMember) {
+          const gmConfirm = await requestConsent(
+            gmMember.user,
+            `<@${playerId}> (${player.name || player.playerUsername}) failed a conflict and chose to sacrifice.\nReason: ${sacrificeReason}\n\nDoes this act of sacrifice count as Martyrdom...?`,
+            `martyr_confirm_yes_${playerId}_${channelIdFromModal}`, // Use correct IDs
+            `martyr_confirm_no_${playerId}_${channelIdFromModal}`,
+            MARTYRDOM_TIMEOUT,
+            `Confirm Martyrdom...?`
+          );
+          // Store the reason in the pendingMartyrdom state (if it exists)
+          if (game.pendingMartyrdom && game.pendingMartyrdom.dyingPlayerId === playerId) {
+            game.pendingMartyrdom.reason = sacrificeReason;
+            saveGameData(); // Save the reason
+            console.log(`Sacrifice Modal: Stored reason "${sacrificeReason}" in pendingMartyrdom for ${playerId}. Waiting for GM confirmation.`);
+            // Inform player we're waiting for GM
+            await interaction.followUp({ content: "Reason recorded. Waiting for GM confirmation on Martyrdom before proceeding.", ephemeral: true }).catch(console.error);
+          } else {
+            // This case shouldn't happen if flow is correct, but handle it.
+            // GM confirmation might have timed out already, or state is weird.
+            console.warn(`Sacrifice Modal: pendingMartyrdom state missing or mismatched for ${playerId}. Proceeding with death using submitted reason.`);
+            await interaction.followUp({ content: "Reason recorded, but couldn't find pending Martyrdom state. Proceeding with death.", ephemeral: true }).catch(console.error);
+            const gameChannel = client.channels.cache.get(channelIdFromModal);
+            if (gameChannel) {
+              await gameChannel.send(`:skull: <@${playerId}> makes the ultimate sacrifice!`); // Announce
+              markPlayerDead(game, playerId, sacrificeReason, gameChannel); // Mark dead (saves)
+              await extinguishCandle({ channel: gameChannel }, channelIdFromModal); // Trigger scene change
+            } else {
+              markPlayerDead(game, playerId, sacrificeReason, null); // Mark dead (saves)
+            }
+          }
+        } else { // Couldn't find GM
+          await interaction.followUp({ content: "Reason recorded, but could not contact GM for Martyrdom confirmation. Proceeding with death.", ephemeral: true }).catch(console.error);
+          const gameChannel = client.channels.cache.get(channelIdFromModal);
+          if (gameChannel) {
+            await gameChannel.send(`:skull: <@${playerId}> makes the ultimate sacrifice! (Could not reach GM for Martyrdom check)`); // Announce
+            markPlayerDead(game, playerId, sacrificeReason, gameChannel); // Mark dead (saves)
+            await extinguishCandle({ channel: gameChannel }, channelIdFromModal); // Trigger scene change
+          } else {
+            markPlayerDead(game, playerId, sacrificeReason, null); // Mark dead (saves)
+          }
+        }
+      } else { // Player had no hope dice
+        await interaction.followUp({ content: "Reason recorded. Proceeding with death (no Martyrdom possible).", ephemeral: true }).catch(console.error);
+        const gameChannel = client.channels.cache.get(channelIdFromModal);
+        if (gameChannel) {
+          await gameChannel.send(`:skull: <@${playerId}> makes the ultimate sacrifice!`); // Announce
+          markPlayerDead(game, playerId, sacrificeReason, gameChannel); // Mark dead (saves)
+          await extinguishCandle({ channel: gameChannel }, channelIdFromModal); // Trigger scene change
+        } else {
+          markPlayerDead(game, playerId, sacrificeReason, null); // Mark dead (saves)
+        }
+      }
+      return; // Handled modal submit
     }
 
     // --- GM Status Button Handling ---
@@ -793,26 +978,20 @@ client.on('messageCreate', async (message) => {
       // --- DM Command Logic ---
       if (isTesting && command === 'testchargenstep') {
         await testCharGenStep(message, args);
+      } else if (isTesting && command === 'testgameplay') {
+        await testGameplay(message, args);
       } else if (isTesting && command === 'testtts') {
         await testTTS(message, args);
       } else if (isTesting && command === 'testdice') {
         await testDiceSounds(message, args);
       } else if (isTesting && command === 'testfinalrec') {
         await testRecordingCommand(message, args);
-      } else if (isTesting && command === 'testhts') {
-        await testHandleTraitStacking(message, args)
       } else if (command === 'gamestatus') { // DM GM-only command version
-        // gmGameStatus already uses findGameByUserId internally
         await gmGameStatus(message);
       } else if (command === 'me') {
-        // The 'me' function already uses findGameByUserId
         await me(message);
       } else if (command === 'gear') {
-        // *** FIX APPLIED HERE ***
-        // const game = gameData[message.channel.id]; // OLD BUGGY LINE
-        // Use the 'game' variable found earlier using findGameByUserId
-        if (game && game.characterGenStep === 9) { // Check if character gen is complete (step 9 reached)
-          // Pass message.author (the User object) and userId (the player's ID)
+        if (game && game.characterGenStep === 9) {
           await displayInventory(message.author, game, userId, false);
         } else if (game && game.characterGenStep < 9) {
           await message.author.send('You cannot manage your gear until character generation is complete.');
@@ -820,16 +999,14 @@ client.on('messageCreate', async (message) => {
           await message.author.send('You are not currently in an active game, or the game hasn\'t started yet.');
         }
       } else if (command === 'x') {
-        // *** FIX APPLIED HERE ***
-        // Use the 'game' variable found earlier using findGameByUserId
         if (game) {
           try {
             const gameChannel = await client.channels.fetch(game.textChannelId);
             if (gameChannel && gameChannel.isTextBased()) {
               // Send anonymous message to the game channel
-              await gameChannel.send('**X-Card Invoked:** A player has signaled a desire to wrap up the current scene or conflict. Please respect this and move towards a conclusion.');
+              await gameChannel.send('**X-Card Invoked:** A player or the GM has signaled a desire to wrap up the current scene or conflict. Please respect this and move towards a conclusion.');
               // Confirm to the user
-              await message.author.send('You have anonymously signaled to wrap up the scene. A message has been sent to the game channel.');
+              await message.author.send('You have signaled to wrap up the scene. An anonymous message has been sent to the game channel.');
             } else {
               console.error(`Could not find or send to game channel ${game.textChannelId} for .x command from ${userId}`);
               await message.author.send('You signaled to wrap up the scene, but I couldn\'t find the game channel to notify others.');
@@ -939,18 +1116,15 @@ client.on('messageCreate', async (message) => {
       } else if (command === 'died') {
         await died(message, args);
       }
-      // Add other channel-specific commands here if any
-      // Note: .me, .x, .gear are handled in the DM section now.
+      // Add other channel-specific non-DM commands here
     }
   }
 });
 
-// Make sure the 'me' function is defined correctly (it was already mostly correct)
 async function me(message) {
   const playerId = message.author.id;
 
   // This check should ideally be done *before* calling the function,
-  // but we'll keep it here for robustness.
   if (message.channel.type !== ChannelType.DM) {
     try {
       await message.delete();
@@ -961,7 +1135,7 @@ async function me(message) {
     return;
   }
 
-  const game = findGameByUserId(playerId); // Use the correct function
+  const game = findGameByUserId(playerId);
 
   if (!game) {
     await message.author.send(`You are not currently in a game.`);
@@ -969,12 +1143,9 @@ async function me(message) {
   }
 
   const player = game.players[playerId];
-  // No need to find gameChannelId again if we already have the game object
   const gameChannelId = game.textChannelId;
 
   if (!player) {
-    // This case might happen if the user is the GM but not a player
-    // Or if data is somehow corrupted.
     await message.author.send(`Could not find your player data in the game <#${gameChannelId}>.`);
     return;
   }
@@ -1041,90 +1212,118 @@ export async function startTruthsSystem(client, message, channelId) {
 }
 
 export async function whitelistChannel(message, args) {
+  // --- Permission Checks
   if (!message.member.permissions.has('Administrator') && !message.member.permissions.has('KickMembers')) {
-    try {
-      await message.author.send('Only administrators or users with the `Kick Members` permission can use this command.');
-      await message.delete();
-    } catch (error) {
-      console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
-    }
+    // ... permission denied handling ...
     return;
   }
 
-  const channelToWhitelistId = parseChannelId(args[0]);
-  if (!channelToWhitelistId) {
+  // --- Argument Parsing ---
+  if (args.length < 1) {
     try {
-      await message.author.send('Invalid channel ID or mention.');
+      await message.author.send(`Usage: \`${BOT_PREFIX}whitelist <#channel|channelID> [remove] [LIT=<emoji>] [UNLIT=<emoji>]\``);
       await message.delete();
-    } catch (error) {
-      console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
-    }
+    } catch (error) { /* ignore */ }
     return;
   }
 
-  let channel = client.channels.cache.get(channelToWhitelistId);
-  if (!channel) {
-    try {
-      channel = await client.channels.fetch(channelToWhitelistId);
-    } catch (error) {
-      console.error(`whitelistChannel: Error fetching channel ${channelToWhitelistId}:`, error);
-      try {
-        await message.author.send(`Could not find channel with ID ${channelToWhitelistId}.`);
-        await message.delete();
-      } catch (error) {
-        console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
+  const channelInput = args[0];
+  const removeFlag = args[1]?.toLowerCase() === 'remove';
+  const emojiArgStartIndex = removeFlag ? 2 : 1; // Start looking for emoji args after channelId or -remove
+
+  let litEmojiInput = null;
+  let unlitEmojiInput = null;
+
+  // Parse key-value emoji arguments
+  for (let i = emojiArgStartIndex; i < args.length; i++) {
+    const argLower = args[i].toLowerCase();
+    if (argLower.startsWith('lit=')) {
+      litEmojiInput = args[i].substring(4); // Get value after 'LIT='
+    } else if (argLower.startsWith('unlit=')) {
+      unlitEmojiInput = args[i].substring(6); // Get value after 'UNLIT='
+    }
+  }
+
+  // --- Channel Validation
+  const channelToWhitelistId = parseChannelId(channelInput);
+  if (!channelToWhitelistId) { /* ... invalid channel handling ... */ return; }
+  let channel = await client.channels.fetch(channelToWhitelistId).catch(() => null);
+  if (!channel) { /* ... channel not found handling ... */ return; }
+  const guild = channel.guild;
+  if (!guild) { /* ... no guild handling ... */ return; }
+
+  let dmText = '';
+  let channelText = '';
+  let customLitEmojiString = null; // Store the validated full emoji string
+  let customUnlitEmojiString = null; // Store the validated full emoji string
+  let emojiFeedback = '';
+  const emojiRegex = /<(a)?:(\w+):(\d+)>/; // Regex for custom emojis (animated or static)
+
+  // --- Emoji Processing Function (Helper) ---
+  const processEmoji = (input, type, defaultEmoji) => {
+    if (!input) return { feedback: ` ${type}: Default ${defaultEmoji}.`, value: null };
+
+    const match = input.match(emojiRegex);
+    if (match) {
+      const emojiId = match[3];
+      if (guild.emojis.cache.has(emojiId)) {
+        console.log(`whitelistChannel: Valid custom ${type} emoji ${input} found for channel ${channelToWhitelistId}.`);
+        return { feedback: ` ${type}: ${input}`, value: input };
+      } else {
+        console.warn(`whitelistChannel: Custom ${type} emoji ${input} (ID: ${emojiId}) not found on server ${guild.name}.`);
+        return { feedback: ` ${type} emoji ${input} not found on server **${guild.name}**. Using default ${defaultEmoji}.`, value: null };
       }
-      return;
+    } else {
+      console.warn(`whitelistChannel: Invalid ${type} emoji format "${input}" for channel ${channelToWhitelistId}.`);
+      return { feedback: ` Invalid ${type} emoji format "${input}". Using default ${defaultEmoji}.`, value: null };
     }
+  };
+
+  // --- Process Emojis if Adding/Updating ---
+  if (!removeFlag) {
+    const litResult = processEmoji(litEmojiInput, 'Lit', DEFAULT_LIT_CANDLE_EMOJI);
+    const unlitResult = processEmoji(unlitEmojiInput, 'Unlit', DEFAULT_UNLIT_CANDLE_EMOJI);
+
+    customLitEmojiString = litResult.value;
+    customUnlitEmojiString = unlitResult.value;
+    emojiFeedback = ` Using emojis:${litResult.feedback};${unlitResult.feedback}`;
   }
 
-  const channelName = channel ? channel.name : 'Unknown Channel';
-  const guildName = channel ? channel.guild.name : 'Unknown Server';
-  const adminName = message.member.id;
-  const botName = client.user.id;
-  const channelType = channel.type === ChannelType.GuildVoice ? 'voice' : 'text';
-
-  let dmText;
-  let channelText;
-  if (args[1] && args[1].toLowerCase() === 'remove') {
+  // --- Add/Update/Remove Logic ---
+  if (removeFlag) {
+    // --- Remove Whitelist ---
     if (channelWhitelist[channelToWhitelistId]) {
       delete channelWhitelist[channelToWhitelistId];
+      saveChannelWhitelist();
       dmText = `**<#${channelToWhitelistId}>** has been removed from the channel whitelist.`;
-      channelText = `This ${channelType} channel has been removed from the whitelist for <@${botName}> by <@${adminName}>.`;
+      channelText = `This ${channelType} channel has been removed from the whitelist for ${client.user.username} by <@${message.author.id}>.`;
     } else {
       dmText = `**<#${channelToWhitelistId}>** was not on the channel whitelist.`;
     }
   } else {
-    if (!channelWhitelist[channelToWhitelistId]) {
-      channelWhitelist[channelToWhitelistId] = true;
-      dmText = `**<#${channelToWhitelistId}>** has been added to the channel whitelist.`;
-      channelText = `This ${channelType} channel has been whitelisted for <@${botName}> by <@${adminName}>. Use the \`.startgame\` command to begin a session.`;
+    // --- Add/Update Whitelist ---
+    const alreadyWhitelisted = isWhitelisted(channelToWhitelistId);
+    channelWhitelist[channelToWhitelistId] = {
+      whitelisted: true,
+      customLitCandle: customLitEmojiString, // Store validated lit emoji string or null
+      customUnlitCandle: customUnlitEmojiString // Store validated unlit emoji string or null
+    };
+    saveChannelWhitelist();
+
+    if (alreadyWhitelisted) {
+      dmText = `**<#${channelToWhitelistId}>** whitelist updated.${emojiFeedback}`;
     } else {
-      dmText = `**<#${channelToWhitelistId}>** is already on the channel whitelist.`;
+      dmText = `**<#${channelToWhitelistId}>** has been added to the channel whitelist.${emojiFeedback}`;
+      channelText = `This ${channelType} channel has been whitelisted for ${client.user.username} by <@${message.author.id}>. Use the \`${BOT_PREFIX}startgame\` command to begin a session.`;
     }
   }
 
-  try {
-    await message.author.send(dmText);
-  } catch (error) {
-    console.error('whitelistChannel: Failed to send DM:', error);
-  }
-  try {
-    await message.delete();
-  } catch (error) {
-    console.error(`whitelistChannel: Failed to delete message: ${error.message}`);
-  }
-  if (channelWhitelist[channelToWhitelistId] || (args[1] && args[1].toLowerCase() === 'remove')) {
-    saveChannelWhitelist();
-  }
+  // --- Send Feedback ---
+  try { await message.author.send(dmText); } catch (error) { console.error('whitelistChannel: Failed to send DM:', error); }
+  try { await message.delete(); } catch (error) { /* ignore */ }
   if (channelText) {
-    try {
-      await channel.send(channelText);
-    } catch (error) {
-      console.error(`whitelistChannel: Failed to send message to channel ${channelToWhitelistId}:`, error);
-    }
+    try { await channel.send(channelText); } catch (error) { console.error(`whitelistChannel: Failed to send message to channel ${channelToWhitelistId}:`, error); }
   }
-  return;
 }
 
 export function parseChannelId(input) {
@@ -1181,29 +1380,40 @@ export async function setTheme(message, args) {
   }
 }
 
-// Make sure handleFinalRecording is defined or imported
 async function handleFinalRecording(message) {
   const userId = message.author.id;
   const game = findGameByUserId(userId);
 
-  if (!game) return; // Not in a game
-  // Only process if in the correct step OR if the game is in last stand/ended and recordings are missing
+  // --- DEFENSIVE CHECKS ---
+  if (!game) {
+    // console.log(`handleFinalRecording: User ${userId} sent DM but is not in a game. Ignoring.`);
+    return;
+  }
+
   const player = game.players[userId];
-  if (!player) return; // Not a player in this game
+  if (!player) {
+    // console.log(`handleFinalRecording: User ${userId} sent DM but is not a player in game ${game.textChannelId}. Ignoring.`);
+    return;
+  }
 
-  // Allow recording submission during step 8 OR if the game ended but this player's recording is missing
-  const canSubmitRecording = game.characterGenStep === 8 ||
-    (game.inLastStand && !player.recording) ||
-    (game.endGame && !player.recording); // endGame might be set by cancelGame
+  // Allow recording submission ONLY during step 8.
+  const canSubmitRecording = game.characterGenStep === 8;
 
-  if (!canSubmitRecording) return; // Not the right time to submit
+  if (!canSubmitRecording) {
+    // If it's not step 8, ignore the DM.
+    console.log(`handleFinalRecording: Received DM from ${userId} for game ${game.textChannelId}, but it's not Step 8 (Current: ${game.characterGenStep}). Ignoring.`);
+    return;
+  }
+
+  // --- Original Recording Logic ---
+  console.log(`handleFinalRecording: Processing potential recording DM from ${userId} for game ${game.textChannelId} (Step 8).`);
 
   let recordingContent = null;
   let isAudio = false;
 
+  // ... (logic for handling attachments/text) ...
   if (message.attachments.size > 0) {
     const attachment = message.attachments.first();
-    // Basic check for audio mime types - might need refinement
     if (attachment.contentType && attachment.contentType.startsWith('audio/')) {
       recordingContent = attachment.url;
       isAudio = true;
@@ -1213,12 +1423,11 @@ async function handleFinalRecording(message) {
       return;
     }
   } else if (message.content.trim()) {
-    recordingContent = sanitizeString(message.content.trim()); // Sanitize text input
+    recordingContent = sanitizeString(message.content.trim());
     isAudio = false;
     console.log(`Received text recording from ${userId}: "${recordingContent}"`);
   } else {
-    // Ignore empty messages
-    return;
+    return; // Ignore empty messages
   }
 
   if (!recordingContent) {
@@ -1226,60 +1435,52 @@ async function handleFinalRecording(message) {
     return;
   }
 
-  // Store the recording (URL or text)
-  player.recording = recordingContent; // Overwrite previous if resubmitted
+  // Store the recording (URL or text) - using 'recordings' field
+  player.recordings = recordingContent; // Overwrite previous if resubmitted
 
   // Confirmation prompt
   const confirmation = await requestConsent(
     message.author,
     `Is this your final recording?\n${isAudio ? `(Audio file: ${message.attachments.first().name})` : `"${recordingContent.substring(0, 100)}${recordingContent.length > 100 ? '...' : ''}"`}`,
-    `final_rec_yes_${userId}_${game.textChannelId}`, // Unique IDs
+    `final_rec_yes_${userId}_${game.textChannelId}`,
     `final_rec_no_${userId}_${game.textChannelId}`,
     60000, // Timeout
     'Final Recording Confirmation'
   );
 
-  if (confirmation === true) { // Explicitly check for true
+  if (confirmation === true) {
     await message.author.send('Your final recording has been saved.');
     saveGameData(); // Save the recording
 
-    // Check if all players now have recordings *if* the game is in the final stages
-    if (game.inLastStand || game.endGame || game.characterGenStep === 8) { // Check if ready to proceed
-      const allPlayersHaveRecordings = game.playerOrder.every(pId => game.players[pId]?.recording);
-      if (allPlayersHaveRecordings) {
-        const gameChannel = client.channels.cache.get(game.textChannelId);
-        if (gameChannel) {
-          if (game.characterGenStep === 8) {
-            // If we were waiting in step 8, advance
-            clearReminderTimers(game); // Clear step 8 timers
-            game.characterGenStep++;
-            saveGameData();
-            await sendCharacterGenStep(gameChannel, game); // Move to step 9
-          } else if (game.inLastStand && !game.endGame) {
-            // If in last stand and all recordings are in, play them
-            await playRecordings(gameChannel); // Pass channel instead of message
-          }
-          // If game.endGame is true, playRecordings might be called by cancelGame or similar logic
-        } else {
-          console.error(`Cannot proceed after final recording: Game channel ${game.textChannelId} not found.`);
-          const gmUser = await client.users.fetch(game.gmId).catch(console.error);
-          if (gmUser) {
-            await gmUser.send(`All final recordings received for game in ${game.textChannelId}, but the channel could not be found to proceed.`).catch(console.error);
-          }
+    // Check if all players now have recordings (since we are in step 8)
+    // Use 'recordings' field for check
+    const allPlayersHaveRecordings = game.playerOrder.every(pId => game.players[pId]?.recordings && game.players[pId].recordings.trim() !== '');
+    if (allPlayersHaveRecordings) {
+      const gameChannel = client.channels.cache.get(game.textChannelId);
+      if (gameChannel) {
+        // If we were waiting in step 8, advance
+        clearReminderTimers(game);
+        game.characterGenStep++;
+        saveGameData();
+        await sendCharacterGenStep(gameChannel, game); // Move to step 9
+      } else {
+        console.error(`Cannot proceed after final recording: Game channel ${game.textChannelId} not found.`);
+        // Notify GM...
+        const gmUser = await client.users.fetch(game.gmId).catch(console.error);
+        if (gmUser) {
+          await gmUser.send(`Error: All final recordings received for Step 8, but the game channel <#${game.textChannelId}> could not be found. Cannot advance step automatically.`).catch(console.error);
         }
       }
     }
-  } else if (confirmation === false) { // Explicitly check for false
-    player.recording = ''; // Clear the recording if they said no
+  } else if (confirmation === false) {
+    player.recordings = ''; // Clear the recording if they said no
     saveGameData();
-    await message.author.send('Okay, your previous recording attempt has been discarded. Please send your final recording again when ready.');
-  } else {
-    // Handle timeout or error from requestConsent if necessary
-    // Currently, requestConsent sends its own timeout message.
-    // We might want to clear the recording here too if it timed out.
-    player.recording = ''; // Clear on timeout as well
+    await message.author.send('Okay, your previous recording attempt has been discarded. Please send your final recording again when ready (during Step 8).');
+  } else { // Timeout or error
+    player.recordings = ''; // Clear on timeout as well
     saveGameData();
     console.log(`Recording confirmation timed out or failed for user ${userId}. Recording discarded.`);
+    // requestConsent already sends a timeout message
   }
 }
 
@@ -1378,26 +1579,30 @@ export async function playRecordings(channel) {
     // --- End Voice Connection Setup ---
 
     // Iterate through players in the original order
-    for (const playerId of game.playerOrder) {
+    for (let i = 0; i < game.playerOrder.length; i++) {
+      const playerId = game.playerOrder[i];
       const player = game.players[playerId];
-
-      // Check if the player exists and has a recording
-      if (!player || !player.recording) {
-        console.log(`playRecordings: Skipping player ${playerId} - no data or recording found.`);
-        // Optionally send a message indicating skip
-        // await channel.send(`*(Skipping player <@${playerId}> - no recording found)*`);
-        await new Promise(resolve => setTimeout(resolve, 500)); // Small pause even if skipping
-        continue; // Skip this player
-      }
+      const isLastPlayer = (i === game.playerOrder.length - 1); // Check if this is the last player
 
       // Fetch user for display name (handle potential errors)
       let user;
-      try {
-        user = await client.users.fetch(playerId);
-      } catch (fetchError) {
-        console.warn(`playRecordings: Could not fetch user ${playerId}. Using stored username.`);
+      try { user = await client.users.fetch(playerId); }
+      catch (fetchError) { console.warn(`playRecordings: Could not fetch user ${playerId}. Using stored username.`); }
+      const playerName = player?.name || player?.playerUsername || (user ? user.username : `Player ${playerId}`);
+
+      // *** MODIFIED CHECK FOR MISSING RECORDING ***
+      if (!player || !player.recordings || player.recordings.trim() === '') {
+        console.log(`playRecordings: Skipping player ${playerId} - no data or recording found.`);
+        // Announce the skip in the channel
+        let skipMessage = `*(No final message found for ${playerName}.)*`;
+        // Add follow-up text if not the last player
+        if (!isLastPlayer) {
+          skipMessage += ` Playing the next recording after a short pause.`;
+        }
+        await channel.send(skipMessage);
+        await new Promise(resolve => setTimeout(resolve, 3000)); // Pause after skip message
+        continue; // Skip this player
       }
-      const playerName = player.name || player.playerUsername || (user ? user.username : `Player ${playerId}`);
 
       // Announce whose recording is playing
       await channel.send(`***Now playing the final recording from ${playerName}...***`);
@@ -1565,301 +1770,274 @@ async function testDiceSounds(message, args) {
   }
 }
 
-async function testHandleTraitStacking(message, args) {
-  if (args.length < 4) {
-    await message.channel.send(`Usage: ${BOT_PREFIX}testhts <Game Channel ID> <GM ID> <Player1 ID> <Player2 ID> [<Player3 ID> ...]\``);
-    return;
+function shuffleArray(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]]; // Swap elements
+  }
+  return array; // Return the shuffled array (though it's shuffled in place)
+}
+
+async function setupTestGame(message, args, isGameplayTest) {
+  const expectedArgCount = isGameplayTest ? 4 : 3; // scene + channel + gm + player1 = 4 for gameplay
+  if (args.length < expectedArgCount) {
+    const usage = isGameplayTest
+      ? `Usage: ${BOT_PREFIX}testGameplay <Scene (1-10)> <Game Channel ID> <GM ID> <Player1 ID> [<Player2 ID> ...]`
+      : `Usage: ${BOT_PREFIX}testCharGenStep <Step (1-9)> <Game Channel ID> <GM ID> <Player1 ID> [<Player2 ID> ...]`
+    return { error: usage };
+  }
+
+  let sceneOrStep = null;
+  if (isGameplayTest) {
+    sceneOrStep = parseInt(args.shift());
+    if (isNaN(sceneOrStep) || sceneOrStep < 1 || sceneOrStep > 10) {
+      return { error: `Invalid Scene Number: ${sceneOrStep}. Please use a number between 1 and 10.` };
+    }
+  } else {
+    sceneOrStep = parseInt(args.shift()); // For char gen test
+    if (isNaN(sceneOrStep) || sceneOrStep < 1 || sceneOrStep > 9) {
+      return { error: `Invalid Step Number: ${sceneOrStep}. Please use a number between 1 and 9.` };
+    }
   }
 
   const gameChannelId = args.shift();
   const gmId = args.shift();
   const playerIds = args;
-  const channelId = message.channel.id;
 
-  // Validate IDs
-  if (!/^\d+$/.test(gmId)) {
-    await message.channel.send(`Invalid GM ID: ${gmId}. Please use a numeric user ID.`);
-    return;
-  }
+  // --- Validate IDs ---
   if (!/^\d+$/.test(gameChannelId)) {
-    await message.channel.send(`Invalid Game Channel ID: ${gameChannelId}. Please use a numeric channel ID.`);
-    return;
+    return { error: `Invalid Game Channel ID: ${gameChannelId}. Please use a numeric channel ID.` };
+  }
+  if (!/^\d+$/.test(gmId)) {
+    return { error: `Invalid GM ID: ${gmId}. Please use a numeric user ID.` };
   }
   for (const playerId of playerIds) {
     if (!/^\d+$/.test(playerId)) {
-      await message.channel.send(`Invalid Player ID: ${playerId}. Please use a numeric user ID.`);
-      return;
+      return { error: `Invalid Player ID: ${playerId}. Please use a numeric user ID.` };
     }
   }
+  if (playerIds.length < 1 || playerIds.length > 9) {
+    return { error: 'Invalid number of players. Please provide between 1 and 9 player IDs.' };
+  }
+  if (playerIds.includes(gmId)) {
+    return { error: 'The GM cannot also be a player.' };
+  }
 
-  // Fetch the game channel
+  // --- Fetch Discord Objects ---
   let gameChannel;
   try {
     gameChannel = await client.channels.fetch(gameChannelId);
+    if (!gameChannel) throw new Error('Channel not found in cache or API.');
   } catch (error) {
-    console.error(`testHandleTraitStacking: Error fetching game channel ${gameChannelId}:`, error);
-    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
-    return;
+    console.error(`setupTestGame: Error fetching game channel ${gameChannelId}:`, error);
+    return { error: `Could not find or fetch game channel with ID ${gameChannelId}.` };
   }
 
-  if (!gameChannel) {
-    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
-    return;
-  }
-
-  // Fetch the guild
   const guild = gameChannel.guild;
   if (!guild) {
-    await message.channel.send(`Could not find guild for channel ${gameChannelId}.`);
-    return;
+    return { error: `Could not find guild for channel ${gameChannelId}.` };
   }
 
-  // Send a message to the game channel and store the message object
-  const testMessage = await gameChannel.send({ content: `A test of HandleTraitStacking() is being run by <@${message.author.id}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.` });
+  let gmMember;
+  try {
+    gmMember = await guild.members.fetch(gmId);
+  } catch (error) {
+    console.error(`setupTestGame: Error fetching GM member ${gmId}:`, error);
+    return { error: `Could not fetch GM member with ID ${gmId}.` };
+  }
 
-  // Create a dummy game object
-  const game = {
-    gm: { consent: true, brink: '' },
-    players: {},
-    playerOrder: [], // Initialize as empty
-    characterGenStep: 6, // Set to step 6 for trait stacking
-    traitsRequested: true,
-    theme: 'Test Theme',
-    textChannelId: gameChannelId, // Use the provided gameChannelId
-    guildId: guild.id,
-    voiceChannelId: gameChannelId, // Use the provided gameChannelId
-    gameMode: 'text-only',
-    initiatorId: message.author.id,
-    gmId: gmId,
-    diceLost: 0,
-  };
-
-  const fetchedPlayers = []; // Array to store fetched player objects
-
-  for (const playerId of playerIds) {
+  const fetchedPlayers = [];
+  const missingPlayerIds = [];
+  await Promise.all(playerIds.map(async (playerId) => {
     try {
       const member = await guild.members.fetch(playerId);
-      const player = member;
-      if (player) {
-        game.players[playerId] = {
-          playerUsername: player.user.username,
-          consent: true,
-          brink: 'Test Brink',
-          moment: 'Test Moment',
-          virtue: 'Test Virtue',
-          vice: 'Test Vice',
-          name: 'Test Name',
-          look: 'Test Look',
-          concept: 'Test Concept',
-          recordings: '',
-          hopeDice: 0,
-          virtueBurned: false,
-          viceBurned: false,
-          momentBurned: false,
-          isDead: false,
-          availableTraits: ['Virtue', 'Vice', 'Moment'], // Initialize availableTraits here
-          stackOrder: [], // Initialize stackOrder here
-          initialChoice: null, // Initialize initialChoice here
-          inventoryConfirmed: false, // Initialize inventoryConfirmed here
-          gear: [], // Initialize gear here
-        };
-        fetchedPlayers.push(player); // Add fetched player to the array
-        game.playerOrder.push(playerId); // Add playerId to playerOrder
-      } else {
-        console.error(`testHandleTraitStacking: Could not fetch member with ID ${playerId}`);
-        await message.channel.send(`Could not fetch member with ID ${playerId}. Skipping this player.`);
-      }
+      fetchedPlayers.push(member);
     } catch (error) {
-      console.error(`testHandleTraitStacking: Error fetching member with ID ${playerId}:`, error);
-      await message.channel.send(`Error fetching member with ID ${playerId}. Skipping this player.`);
+      console.error(`setupTestGame: Error fetching player member ${playerId}:`, error);
+      missingPlayerIds.push(playerId);
     }
+  }));
+
+  if (missingPlayerIds.length > 0) {
+    return { error: `Could not fetch the following player members: ${missingPlayerIds.join(', ')}.` };
   }
 
-  gameData[gameChannelId] = game; // Use the provided gameChannelId
-  saveGameData();
+  // --- Create Base Game Object ---
+  const gameMode = gameChannel.type === ChannelType.GuildVoice ? 'voice-plus-text' : 'text-only';
+  const game = {
+    gm: { consent: true, brink: '', givenBrink: '' }, // Will be populated later
+    players: {},
+    playerOrder: playerIds, // Use the validated list
+    characterGenStep: isGameplayTest ? 9 : sceneOrStep, // Set appropriately
+    scene: isGameplayTest ? sceneOrStep : 1, // Set scene for gameplay test
+    dicePool: isGameplayTest ? Math.max(0, 11 - sceneOrStep) : 10, // Calculate dice pool for gameplay
+    diceLost: 0,
+    inLastStand: isGameplayTest ? (sceneOrStep === 11) : false, // Scene 11 is theoretical Last Stand start
+    traitsRequested: true, // Assume true for testing
+    theme: 'Test Theme',
+    textChannelId: gameChannelId,
+    guildId: guild.id,
+    voiceChannelId: gameChannel.type === ChannelType.GuildVoice ? gameChannelId : null,
+    gameMode: gameMode,
+    initiatorId: message.author.id,
+    gmId: gmId,
+    // Add other necessary base fields from schema if missing
+    endGame: false,
+    playingRecordings: false,
+  };
 
-  await handleTraitStacking(game); // Removed initialMessages
-  console.log(`testHandleTraitStacking: handleTraitStacking complete`);
-  await message.channel.send('Test for handleTraitStacking() complete.');
-
-  try {
-    await testMessage.delete();
-  } catch (error) {
-    console.error(`testHandleTraitStacking: Error deleting test message:`, error);
-  }
+  return { game, gameChannel, gmMember, fetchedPlayers, scene: isGameplayTest ? sceneOrStep : null, error: null };
 }
 
 async function testCharGenStep(message, args) {
-  if (args.length < 4) {
-    await message.channel.send(`Usage: ${BOT_PREFIX}testchargenstep <Step Number> <Game Channel ID> <GM ID> <Player1 ID> [<Player2 ID> ...]\``);
+  const setupResult = await setupTestGame(message, args, false);
+
+  if (setupResult.error) {
+    await message.channel.send(setupResult.error);
     return;
   }
 
-  const step = parseInt(args.shift());
-  const gameChannelId = args.shift();
-  const gmId = args.shift();
-  const playerIds = args;
-  const channelId = message.channel.id;
+  const { game, gameChannel, gmMember, fetchedPlayers, error } = setupResult;
+  const step = game.characterGenStep; // Get step from the game object set by helper
 
-  if (step < 1 || step > 9) { // Ensure step is between 1 and 9
-    await message.channel.send(`Invalid Step Number: ${step}. Please use a number between 1 and 9.`);
-    return;
-  }
+  // --- Populate GM Data ---
+  game.gm.brink = getRandomBrink(true); // Keep raw for char gen
+  game.gm.givenBrink = `You saw *them* ${getRandomBrink(true)}.`; // Keep raw for char gen
 
-  // Validate IDs
-  if (!/^\d+$/.test(gmId)) {
-    await message.channel.send(`Invalid GM ID: ${gmId}. Please use a numeric user ID.`);
-    return;
-  }
-  if (!/^\d+$/.test(gameChannelId)) {
-    await message.channel.send(`Invalid Game Channel ID: ${gameChannelId}. Please use a numeric channel ID.`);
-    return;
-  }
-  for (const playerId of playerIds) {
-    if (!/^\d+$/.test(playerId)) {
-      await message.channel.send(`Invalid Player ID: ${playerId}. Please use a numeric user ID.`);
-      return;
+  // --- Populate Player Data ---
+  for (const playerMember of fetchedPlayers) {
+    const playerId = playerMember.id;
+    const playerName = getRandomName();
+
+    // Determine stack order based on the step being tested
+    let stackOrderForTest = [];
+    let initialChoiceForTest = null;
+    let availableTraitsForTest = ['Virtue', 'Vice', 'Moment']; // Default for early steps
+
+    if (step > 6) { // If testing step 7, 8, or 9, the stack should be formed
+      const traitsToShuffle = ['Virtue', 'Vice', 'Moment'];
+      const shuffledTraits = shuffleArray([...traitsToShuffle]);
+      stackOrderForTest = [...shuffledTraits, 'Brink'];
+      initialChoiceForTest = stackOrderForTest[0]; // Set based on randomized top
+      availableTraitsForTest = []; // No traits available after stack is formed
+      console.log(`testCharGenStep (Step ${step}): Generated stack for ${playerName} (${playerId}): ${stackOrderForTest.join(', ')}`);
+    } else {
+      // For steps 1-6, the stack is empty or in progress
+      console.log(`testCharGenStep (Step ${step}): Stack order empty for ${playerName} (${playerId})`);
     }
+
+
+    game.players[playerId] = {
+      playerUsername: playerMember.user.username,
+      consent: true,
+      brink: getRandomBrink(), // Keep raw for char gen
+      givenBrink: `You saw ${getRandomName()} ${getRandomBrink()}.`, // Keep raw for char gen
+      moment: getRandomMoment(),
+      virtue: getRandomVirtue(),
+      vice: getRandomVice(),
+      name: playerName,
+      look: getRandomLook(),
+      concept: getRandomConcept(),
+      recordings: step > 7 ? 'Final recording text.' : '', // Add placeholder if testing step 8+
+      hopeDice: 0,
+      virtueBurned: false,
+      viceBurned: false,
+      momentBurned: false,
+      isDead: false,
+      // *** Use the determined stack order and available traits ***
+      availableTraits: availableTraitsForTest,
+      stackOrder: stackOrderForTest,
+      initialChoice: initialChoiceForTest,
+      gear: step > 7 ? ['House Keys', 'Cell Phone', 'Hair Clip'] : [], // Add gear if testing step 8+
+      inventoryConfirmed: step > 7, // Assume confirmed if testing step 8+
+      language: null,
+      voice: null,
+      brinkUsedThisRoll: false, // Initialize this field
+    };
   }
 
-  // Validate player count
-  if (playerIds.length < 1 || playerIds.length > 9) {
-    await message.channel.send('Invalid number of players. Please provide between 1 and 9 player IDs.');
-    return;
-  }
+  // --- Save and Start ---
+  gameData[game.textChannelId] = game;
+  saveGameData(); // Ensure validation schema includes brinkUsedThisRoll
 
-  // Fetch the game channel
-  let gameChannel;
-  try {
-    gameChannel = await client.channels.fetch(gameChannelId);
-  } catch (error) {
-    console.error(`testHandleTraitStacking: Error fetching game channel ${gameChannelId}:`, error);
-    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
-    return;
-  }
+  await message.channel.send(`Starting character generation test at step ${step} in <#${game.textChannelId}> with GM <@${game.gmId}> and players ${game.playerOrder.map(id => `<@${id}>`).join(', ')}.`);
 
-  if (!gameChannel) {
-    await message.channel.send(`Could not find game channel with ID ${gameChannelId}.`);
-    return;
-  }
-
-  // Fetch the guild
-  const guild = gameChannel.guild;
-  if (!guild) {
-    await message.channel.send(`Could not find guild for channel ${gameChannelId}.`);
-    return;
-  }
-
-  // Send a message to the game channel and store the message object
-  const testMessage = await gameChannel.send({ content: `A test of Character Generation Step ${step} is being run by <@${message.author.id}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.` });
-
-  // Determine gameMode based on channel type
-  const gameMode = gameChannel.type === ChannelType.GuildVoice ? 'voice-plus-text' : 'text-only';
-
-  // Create a dummy game object
-  const game = {
-    gm: { consent: true, brink: getRandomBrink(true) }, // Use a random threat brink for the GM in the test
-    players: {},
-    playerOrder: [], // Initialize as empty
-    characterGenStep: step, // Set to the specified step
-    traitsRequested: true,
-    theme: 'Test Theme',
-    textChannelId: gameChannelId, // Use the provided gameChannelId
-    guildId: guild.id,
-    voiceChannelId: gameChannelId, // Use the provided gameChannelId
-    gameMode: gameMode, // Set based on channel type
-    initiatorId: message.author.id,
-    gmId: gmId,
-    diceLost: 0,
-  };
-
-  // Fetch GM data
-  const gmMember = await guild.members.fetch(gmId);
-  if (!gmMember) {
-    console.error(`testCharGenStep: Could not fetch GM member with ID ${gmId}`);
-    await message.channel.send(`Could not fetch GM member with ID ${gmId}.`);
-    return;
-  }
-
-  // Add GM to players object
-  game.players[gmId] = {
-    playerUsername: gmMember.user.username,
-    consent: true,
-    brink: getRandomBrink(true),
-    moment: getRandomMoment(),
-    virtue: getRandomVirtue(),
-    vice: getRandomVice(),
-    name: getRandomName(),
-    look: getRandomLook(),
-    concept: getRandomConcept(),
-    recordings: '',
-    hopeDice: 0,
-    virtueBurned: false,
-    viceBurned: false,
-    momentBurned: false,
-    isDead: false,
-    availableTraits: ['Virtue', 'Vice', 'Moment'],
-    stackOrder: [],
-    initialChoice: null,
-    inventoryConfirmed: false,
-  };
-
-  const fetchedPlayers = []; // Array to store fetched player objects
-
-  for (const playerId of playerIds) {
-    try {
-      const member = await guild.members.fetch(playerId);
-      const player = member;
-      if (player) {
-        game.players[playerId] = {
-          playerUsername: player.user.username,
-          consent: true,
-          brink: getRandomBrink(),
-          moment: getRandomMoment(),
-          virtue: getRandomVirtue(),
-          vice: getRandomVice(),
-          name: getRandomName(),
-          look: getRandomLook(),
-          concept: getRandomConcept(),
-          recordings: '',
-          hopeDice: 0,
-          virtueBurned: false,
-          viceBurned: false,
-          momentBurned: false,
-          isDead: false,
-          availableTraits: ['Virtue', 'Vice', 'Moment'],
-          stackOrder: [],
-          initialChoice: null,
-          gear: step > 7 ? ['House Keys', 'Cell Phone', 'Hair Clip'] : [], // Add gear for after step 7 only
-          inventoryConfirmed: false,
-        };
-        fetchedPlayers.push(player); // Add fetched player to the array
-        game.playerOrder.push(playerId); // Add playerId to playerOrder
-      } else {
-        console.error(`testHandleTraitStacking: Could not fetch member with ID ${playerId}`);
-        await message.channel.send(`Could not fetch member with ID ${playerId}. Skipping this player.`);
-      }
-    } catch (error) {
-      console.error(`testHandleTraitStacking: Error fetching member with ID ${playerId}:`, error);
-      await message.channel.send(`Error fetching member with ID ${playerId}. Skipping this player.`);
-    }
-  }
-
-  // Clear data for steps after the test step
-  clearDataForLaterSteps(game, step);
-
-  gameData[gameChannelId] = game; // Use the provided gameChannelId
-  saveGameData();
-
-  await message.channel.send(`Starting character generation at step ${step} in <#${gameChannelId}> with GM <@${gmId}> and players ${playerIds.map(id => `<@${id}>`).join(', ')}.`);
-
+  // Send the appropriate character generation step message/logic
   await sendCharacterGenStep(gameChannel, game);
+}
 
-  try {
-    await testMessage.delete();
-  } catch (error) {
-    console.error(`testHandleTraitStacking: Error deleting test message:`, error);
+async function testGameplay(message, args) {
+  const setupResult = await setupTestGame(message, args, true);
+
+  if (setupResult.error) {
+    await message.channel.send(setupResult.error);
+    return;
   }
+
+  const { game, gameChannel, gmMember, fetchedPlayers, scene, error } = setupResult;
+
+  // --- Populate GM Data ---
+  game.gm.brink = normalizeBrink(getRandomBrink(true), "Someone", true); // Normalized Threat Brink
+  game.gm.givenBrink = `You saw *them* ${getRandomBrink(true)}.`; // Example formatted givenBrink
+
+  // --- Populate Player Data (Gameplay Ready) ---
+  for (const playerMember of fetchedPlayers) {
+    const playerId = playerMember.id;
+    const playerName = getRandomName();
+    const traitsToShuffle = ['Virtue', 'Vice', 'Moment'];
+    // Shuffle the traits and add Brink at the end
+    const finalStackOrder = [...shuffleArray([...traitsToShuffle]), 'Brink']; // Use spread to shuffle a copy
+
+    game.players[playerId] = {
+      playerUsername: playerMember.user.username,
+      consent: true,
+      brink: normalizeBrink(getRandomBrink(), playerName, false),
+      givenBrink: `You saw ${getRandomName()} ${getRandomBrink()}.`,
+      moment: getRandomMoment(),
+      virtue: getRandomVirtue(),
+      vice: getRandomVice(),
+      name: playerName,
+      look: getRandomLook(),
+      concept: getRandomConcept(),
+      recordings: 'Placeholder final recording text.',
+      hopeDice: 0,
+      virtueBurned: false,
+      viceBurned: false,
+      momentBurned: false,
+      isDead: false,
+      availableTraits: [], // No available traits left to choose in gameplay
+      // *** Use the randomized stack order ***
+      stackOrder: finalStackOrder,
+      initialChoice: finalStackOrder[0], // Set initial choice based on the randomized top
+      gear: ['Flashlight', 'Map Fragment', 'Half-eaten candy bar'],
+      inventoryConfirmed: true,
+      language: 'en-US',
+      voice: 'en-US-Standard-B',
+      brinkUsedThisRoll: false, // Initialize this field
+    };
+    // Log the generated stack for verification during testing
+    console.log(`testGameplay: Generated stack for ${playerName} (${playerId}): ${finalStackOrder.join(', ')}`);
+  }
+
+  // --- Save and Announce ---
+  gameData[game.textChannelId] = game;
+  saveGameData(); // Ensure validation schema includes brinkUsedThisRoll
+
+  const statusMessage = game.inLastStand
+    ? `Starting gameplay test in **The Last Stand** (Scene ${scene})`
+    : `Starting gameplay test in **Scene ${scene}** (Dice Pool: ${game.dicePool})`;
+
+  await message.channel.send(`${statusMessage} in <#${game.textChannelId}> with GM <@${game.gmId}> and players ${game.playerOrder.map(id => `<@${id}>`).join(', ')}.`);
+
+  // Announce the current scene status in the game channel
+  await gameChannel.send(`**--- Test Start: Scene ${scene} ---**`);
+  if (game.inLastStand) {
+    await gameChannel.send(`The last candle is extinguished. The darkness closes in.\n\n**WE ARE IN THE LAST STAND.**`);
+  } else {
+    await sendCandleStatus(gameChannel, game.dicePool);
+    await gameChannel.send(`Dice Pool Remaining: ${game.dicePool}. GM Dice: ${Math.max(0, game.scene - 1)}.`);
+  }
+  await gameChannel.send(`GM (<@${game.gmId}>), please narrate the scene. Players, be on the lookout for any actions you can take to drive the story forward (using \`${BOT_PREFIX}conflict\`).`);
 }
 
 function clearDataForLaterSteps(game, step) {

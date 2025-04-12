@@ -104,7 +104,7 @@ export async function gmGameStatus(message) {
 export function generateGameStatusEmbed(game, gameChannelName) {
     const embed = new EmbedBuilder()
         .setColor(0x0099FF)
-        .setTitle(`Game Status: ${gameChannelName}`)
+        .setTitle(`Game Status: <#${game.textChannelId}>`)
         .addFields(
             { name: 'Theme / Module', value: game.theme || 'Not set' },
             { name: 'Game Mode', value: game.gameMode || 'N/A' },
@@ -121,7 +121,7 @@ export function generateGameStatusEmbed(game, gameChannelName) {
         embed.addFields(
             { name: 'Status', value: `Gameplay Active` },
             { name: 'Current Scene', value: `${game.scene || 'N/A'}`, inline: true },
-            { name: 'Communal Dice', value: `${game.dicePool !== undefined ? game.dicePool : 'N/A'}`, inline: true }
+            { name: 'Dice Pool Remaining', value: `${game.dicePool !== undefined ? game.dicePool : 'N/A'}`, inline: true }
         );
     }
     return embed;

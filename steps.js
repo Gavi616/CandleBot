@@ -138,123 +138,133 @@ export async function handleStepFive(gameChannel, game) {
   gameChannel.send(stepFiveMessage);
   sendCandleStatus(gameChannel, 9);
   await new Promise(resolve => setTimeout(resolve, 5000));
-  startReminderTimers(gameChannel, game); // Pass gameChannel and game
+  startReminderTimers(gameChannel, game);
 
-  let brinkOrder = getVirtualTableOrder(game, true); // Get order including GM
-  // Ensure all participants exist in game data or are the GM
-  brinkOrder = brinkOrder.filter(participantId => game.players[participantId] || participantId === game.gmId);
-
+  const brinkOrder = getVirtualTableOrder(game, true); // Get order including GM
   await gameChannel.guild.members.fetch(); // Cache members
 
-  // --- 1. Collect all givenBrinks (Core Text) ---
-  const brinkPromises = brinkOrder.map(async (writerId) => {
-      const member = gameChannel.guild.members.cache.get(writerId);
-      if (!member) {
-          console.error(`handleStepFive: Could not find member ${writerId}`);
-          return;
-      }
-      const writerUser = member.user;
+  const collectedBrinkCores = {}; // Store { writerId: coreText }
 
-      let prompt;
-      let isThreatBrink = false; // Is the brink being written *about* the threat?
+  console.log("handleStepFive: --- Collecting Brink Cores ---");
+  // --- 1. Collect all Brink Cores ---
+  const collectionPromises = brinkOrder.map(async (writerId) => {
+    const member = gameChannel.guild.members.cache.get(writerId);
+    if (!member) {
+      console.error(`handleStepFive (Collect): Could not find member ${writerId}`);
+      return;
+    }
+    const writerUser = member.user;
 
-      // Determine the recipient and prompt
-      const writerIndex = brinkOrder.indexOf(writerId);
-      const recipientId = brinkOrder[(writerIndex + 1) % brinkOrder.length];
+    // Determine the recipient and prompt
+    const writerIndex = brinkOrder.indexOf(writerId);
+    const recipientId = brinkOrder[(writerIndex + 1) % brinkOrder.length]; // Neighbor to the LEFT
+    const isRecipientGM = (recipientId === game.gmId);
+    const isThreatBrink = isRecipientGM; // Threat brink is written *for* the GM
 
-      if (recipientId === game.gmId) {
-          // This writer is writing the Threat Brink for the GM
-          prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
-          isThreatBrink = true;
-      } else {
-          // This writer is writing a Player Brink for the next player
-          const recipientPlayer = game.players[recipientId];
-          const recipientName = recipientPlayer?.name || recipientPlayer?.playerUsername || "Someone";
-          prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${recipientName} do in a moment of desperation.`;
-          isThreatBrink = false;
-      }
-      // askForBrink now saves the sanitized core to game.players[writerId].givenBrink or game.gm.givenBrink
-      await askForBrink(writerUser, game, writerId, prompt, BRINK_TIMEOUT, isThreatBrink);
+    let prompt;
+    if (isThreatBrink) {
+      // This writer (player to GM's right) is writing the Threat Brink for the GM
+      prompt = 'Write a phrase to follow, “I have seen *them*..” & give a detail about the threat without outright identifying them.';
+    } else {
+      // This writer is writing a Player Brink for the next player
+      const recipientPlayer = game.players[recipientId];
+      const recipientName = recipientPlayer?.name || recipientPlayer?.playerUsername || "Someone";
+      prompt = `Write a phrase to follow, “I have seen you..” & a detail about what you saw ${recipientName} do in a moment of desperation.`;
+    }
+
+    // askForBrink gets the RAW, SANITIZED core text
+    const coreText = await askForBrink(writerUser, game, writerId, prompt, BRINK_TIMEOUT, isThreatBrink);
+    if (coreText !== null) {
+      collectedBrinkCores[writerId] = coreText;
+      console.log(`handleStepFive (Collect): Collected core "${coreText}" from ${writerId}`);
+    } else {
+      console.error(`handleStepFive (Collect): Failed to collect core from ${writerId}`);
+      // Handle timeout/error case - maybe assign random core here?
+      const randomCore = getRandomBrink(isThreatBrink);
+      collectedBrinkCores[writerId] = sanitizeString(randomCore);
+      console.log(`handleStepFive (Collect): Assigned random core "${collectedBrinkCores[writerId]}" to ${writerId} due to error/timeout.`);
+    }
   });
 
-  await Promise.all(brinkPromises);
-  console.log("handleStepFive: All givenBrinks collected.");
+  await Promise.all(collectionPromises);
+  console.log("handleStepFive: --- All Brink Cores Collected ---");
+  console.log("Collected Cores:", collectedBrinkCores);
 
-  // --- 2. Assign and Normalize Brinks (Replaces swapBrinks) ---
+  // --- 2. Assign Formatted Brinks and Overwrite givenBrinks ---
+  console.log("handleStepFive: --- Assigning Formatted Brinks ---");
   const assignmentPromises = [];
-  // Use a standard for loop to ensure sequential fetching if needed, though Promise.all handles concurrency well.
+
   for (let i = 0; i < brinkOrder.length; i++) {
-      const writerId = brinkOrder[i];
-      const recipientId = brinkOrder[(i + 1) % brinkOrder.length];
+    const writerId = brinkOrder[i];
+    const recipientId = brinkOrder[(i + 1) % brinkOrder.length]; // Neighbor to the LEFT
 
-      const writerData = (writerId === game.gmId) ? game.gm : game.players[writerId];
-      // Get writer's character name or username, fallback to "The GM"
-      const writerName = game.players[writerId]?.name || game.players[writerId]?.playerUsername || "The GM";
-      const givenBrinkCore = writerData?.givenBrink; // This is the RAW sanitized core saved in Loop 1
+    const writerData = (writerId === game.gmId) ? game.gm : game.players[writerId];
+    const recipientData = (recipientId === game.gmId) ? game.gm : game.players[recipientId];
 
-      if (givenBrinkCore === undefined || givenBrinkCore === null) {
-          console.error(`handleStepFive: Missing givenBrink for writer ${writerId}. Skipping assignment to ${recipientId}.`);
-          continue; // Skip this iteration if the core is missing
-      }
+    if (!writerData || !recipientData) {
+        console.error(`handleStepFive (Assign): Missing data for writer ${writerId} or recipient ${recipientId}. Skipping.`);
+        continue;
+    }
 
-      let finalNormalizedBrink; // This will be the recipient's brink
-      let writerFormattedGivenBrink; // This will be the writer's "You saw..." sentence
-      let recipientUser;
-      let recipientNameForSentence; // Name used in the writer's sentence
+    // Get the CORE text written BY the writer (collected in step 1)
+    const givenBrinkCore = collectedBrinkCores[writerId];
 
-      try {
-           const recipientMember = await gameChannel.guild.members.fetch(recipientId);
-           recipientUser = recipientMember.user;
-      } catch (error) {
-           console.error(`handleStepFive: Error fetching recipient ${recipientId}:`, error);
-           continue; // Skip if recipient can't be fetched
-      }
+    if (givenBrinkCore === undefined || givenBrinkCore === null) {
+      console.error(`handleStepFive (Assign): Missing collected core for writer ${writerId}. Skipping assignment to ${recipientId}.`);
+      continue;
+    }
 
-      // Determine if the recipient is the GM
-      const isRecipientGM = (recipientId === game.gmId);
+    // Get writer's name (observer)
+    // IMPORTANT: If GM is the writer, the observer name for the player's brink should be "Someone"
+    const writerName = (writerId === game.gmId)
+        ? "Someone"
+        : (game.players[writerId]?.name || game.players[writerId]?.playerUsername || "Someone");
 
-      // --- A. Create and Save the Recipient's Brink ---
-      // Use normalizeBrink to create the sentence the recipient sees
-      finalNormalizedBrink = normalizeBrink(givenBrinkCore, writerName, isRecipientGM);
+    // Get recipient's name (for the writer's givenBrink sentence)
+    const recipientName = (recipientId === game.gmId)
+        ? "*them*" // Use "*them*" when the recipient is the GM
+        : (game.players[recipientId]?.name || game.players[recipientId]?.playerUsername || "Someone");
 
-      if (isRecipientGM) {
-          // Assigning the Threat Brink TO the GM
-          game.gm.brink = finalNormalizedBrink;
-          recipientNameForSentence = "*them*"; // For the writer's sentence later
-          assignmentPromises.push(sendDM(recipientUser, `Your Brink (from ${writerName}) is: ${finalNormalizedBrink}`));
-      } else {
-          // Assigning a Player Brink TO a player
-          if (!game.players[recipientId]) game.players[recipientId] = {}; // Ensure recipient player object exists
-          game.players[recipientId].brink = finalNormalizedBrink;
-          // Get recipient's name for the writer's sentence
-          const recipientPlayerData = game.players[recipientId];
-          recipientNameForSentence = recipientPlayerData?.name || recipientPlayerData?.playerUsername || "Someone";
-          assignmentPromises.push(sendDM(recipientUser, `Your Brink (from ${writerName}) is: ${finalNormalizedBrink}`));
-      }
-      console.log(`handleStepFive: Assigned Recipient Brink from ${writerId} to ${recipientId}: "${finalNormalizedBrink}"`);
+    const isRecipientGM = (recipientId === game.gmId);
+    const isThreatBrinkBeingAssigned = isRecipientGM; // The brink being assigned *is* a threat brink if recipient is GM
 
-      // --- B. Create and Overwrite the Writer's givenBrink ---
-      // Now that the raw core has been used, format the sentence for the WRITER
-      writerFormattedGivenBrink = `You saw ${recipientNameForSentence} ${givenBrinkCore}`;
-      // Ensure it ends with a period
-      if (!writerFormattedGivenBrink.endsWith('.')) {
-          writerFormattedGivenBrink += '.';
-      }
+    // --- A. Create and Save the Recipient's FINAL `brink` ---
+    // Use normalizeBrink to create the sentence the recipient receives. The observer is the writerName (which is "Someone" if GM wrote it).
+    const finalRecipientBrink = normalizeBrink(givenBrinkCore, writerName, isThreatBrinkBeingAssigned);
 
-      // Overwrite the writer's givenBrink with the formatted sentence
-      if (writerId === game.gmId) {
-          game.gm.givenBrink = writerFormattedGivenBrink;
-      } else {
-          // Ensure writer player object exists (should, but safety check)
-          if (!game.players[writerId]) game.players[writerId] = {};
-          game.players[writerId].givenBrink = writerFormattedGivenBrink;
-      }
-      console.log(`handleStepFive: Overwrote Writer ${writerId}'s givenBrink with: "${writerFormattedGivenBrink}"`);
+    recipientData.brink = finalRecipientBrink; // Assign to recipient's `brink` field
+    console.log(`handleStepFive (Assign): Assigned Recipient Brink to ${recipientId}: "${finalRecipientBrink}" (Writer: ${writerId}, Observer: ${writerName})`);
+
+    // Send DM to recipient with their final Brink
+    try {
+        const recipientMember = await gameChannel.guild.members.fetch(recipientId);
+        assignmentPromises.push(sendDM(recipientMember.user, `Your Brink (from ${writerName}) is: ${finalRecipientBrink}`));
+    } catch (error) {
+        console.error(`handleStepFive (Assign): Error fetching/DMing recipient ${recipientId}:`, error);
+    }
+
+    // --- B. Create and Overwrite the WRITER'S `givenBrink` ---
+    // This stores the sentence *they* wrote, for their own reference. Use the *actual* writer name here, even if it's the GM's username.
+    const actualWriterName = game.players[writerId]?.name || game.players[writerId]?.playerUsername || (writerId === game.gmId ? (gm.nickname || gm.user.username) : "Someone");
+
+    let writerFormattedGivenBrink;
+    if (isRecipientGM) { // If the writer wrote about the threat
+        writerFormattedGivenBrink = `${actualWriterName} has seen ${recipientName} ${givenBrinkCore}`; // recipientName is "*them*" here
+    } else { // If the writer wrote about another player
+        writerFormattedGivenBrink = `${actualWriterName} saw ${recipientName} ${givenBrinkCore}`;
+    }
+    // Ensure it ends with a period
+    if (!writerFormattedGivenBrink.endsWith('.')) {
+        writerFormattedGivenBrink += '.';
+    }
+
+    writerData.givenBrink = writerFormattedGivenBrink; // Overwrite writer's `givenBrink`
+    console.log(`handleStepFive (Assign): Overwrote Writer ${writerId}'s givenBrink with: "${writerFormattedGivenBrink}"`);
 
   } // End of for loop
 
   await Promise.all(assignmentPromises);
-  console.log("handleStepFive: All received Brinks assigned, writer givenBrinks overwritten, and DMs sent.");
+  console.log("handleStepFive: --- All Brinks Assigned and DMs Sent ---");
 
   // --- 3. Finalize Step ---
   clearReminderTimers(game);

@@ -1,15 +1,26 @@
+// Bot Configuration
+export const BOT_PREFIX = '.';
+export const TEST_USER_ID = '583340515869589522';
+
+// Timeouts
 export const CONSENT_TIMEOUT = 60000; // 1 minute
 export const TRAIT_TIMEOUT = 60000; // 1 minute
 export const BRINK_TIMEOUT = 60000; // 1 minute
 export const MARTYRDOM_TIMEOUT = 300000; // 5 minutes
 export const CONFLICT_TIMEOUT = 15000; // 15 seconds
 export const GM_REMINDER_TIMES = [120000, 300000, 600000, 1200000]; // 2, 5, 10, 20 minutes in milliseconds
-export const BOT_PREFIX = '.';
 
-export const TEST_USER_ID = '583340515869589522';
+// Embed Colors
+export const CONFLICT_EMBED_COLOR_INITIAL = 0xFFA500; // Orange - Default/Pending
+export const CONFLICT_EMBED_COLOR_SUCCESS = 0x00FF00; // Green - Success
+export const CONFLICT_EMBED_COLOR_FAILURE = 0xFF0000; // Red - Failure
+export const CONFLICT_EMBED_COLOR_SACRIFICE = 0x8B0000; // Dark Red - Sacrifice Offered
+
+// Emojis
 export const DEFAULT_LIT_CANDLE_EMOJI = ':candle:';
 export const DEFAULT_UNLIT_CANDLE_EMOJI = ':wavy_dash:';
 
+// TTS and Language Options
 export const languageOptions = {
   'en-US': {
     name: 'English (US)',
@@ -74,6 +85,7 @@ export const languageOptions = {
   // Add additional languages here...
 };
 
+// Default Values (Traits, Brinks, etc.)
 export const defaultVirtues = [
   'courageous', 'compassionate', 'just', 'wise', 'temperate', 'hopeful', 'faithful', 'loving', 'loyal', 'honest',
   'generous', 'patient', 'diligent', 'forgiving', 'kind', 'optimistic', 'reliable', 'respectful', 'selfless', 'sincere',
@@ -158,6 +170,7 @@ export const defaultThreatBrinks = [
   "as a profound sense of dread washed over me."
 ];
 
+// Random Name, Look & Concept Generators
 export const randomNames = [
   "Aria", "Jasper", "Luna", "Felix", "Nova", "Silas", "Iris", "Orion", "Hazel", "Leo",
   "Willow", "River", "Skye", "Rowan", "Sage", "Asher", "Ivy", "Finn", "Jade", "Kai",
@@ -233,30 +246,18 @@ export const randomConcepts = [
   "a trickster, using wit and cunning to survive."
 ];
 
+// Character Creation Messages
 export const newGameMessage = `**The World of Ten Candles**\nYour characters will face unimaginable terrors in the dying of the light.\n\n**Though you know your characters will die, you must have hope that they will survive.**\n\n**Ten Candles** focuses around shared narrative control.\nEveryone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\nLet\'s begin character generation. Check your DMs for instructions.\n\n`;
-
 export const stepOneMessage = `**Step One: Players Write Traits**\nPlayers, check your DMs and reply with a Virtue and a Vice.`;
-
 export const stepTwoMessage = `**Step Two: GM Introduces this session's Module / Theme**\nThe GM will now introduce the module/theme and then use \`${BOT_PREFIX}theme [description]\` to advance to Step Three`;
-
 export const stepThreeMessage = `**Step Three: Players Create Concepts**\nPlayers, expect a DM and respond with your character\'s Name, Look and Concept, in that order as three separate messages.`;
-
 export const stepFourMessage = `**Step Four: Players Plan Moments**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.`;
-
 export const stepFiveMessage = `**Step Five: Players and GM Discover Brinks**\nCheck your DMs for personalized instructions on this step.`;
-
 export const stepSixMessage = '**Step Six: Arrange Trait Stacks**\nPlayers should now arrange their Traits, Moment, and Brink cards. Your Brink must go on the bottom of the stack, face down. See your DMs to confirm your stack order.';
-
 export const stepSevenMessage = '**Step Seven: Inventory Supplies**\nYour character has whatever items you have in your pockets (or follow your GM\'s instructions, if provided). See your DMs to input your gear.';
-
 export const stepSevenReminder = '**It begins.**\n\n*For the remainder of the session, you should endeavor to act in-character.*';
-
 export const stepEightMessage = '**Final Recordings**\nPlayers, please check your DMs for instructions on sending your final recordings.';
-
 export const gameStartMessage = `**Game Start**\nCharacter generation is complete! Ten candles are lit, and the game begins.\n\n**How to Use \`${BOT_PREFIX}conflict\`:**\nUse the \`${BOT_PREFIX}conflict\` command to perform actions.\nBuring a Virtue or Vice from the top of your stack allows your \`${BOT_PREFIX}conflict\` to reroll all ones.\nBuring your Moment from the top of your stack will give you a valuable Hope die if the \`${BOT_PREFIX}conflict\` succeeds!\n\nCandles will be extinguished as the scenes progress.`;
-
 export const startingMessageGM = `**Ten Candles Game Mechanics**\nResolving a Conflict: Players use \`${BOT_PREFIX}conflict\` to roll the communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).\nBurning Traits: A player may burn a Trait to reroll all dice which come up 1 in a conflict.\nMoment: If a player lives their Moment successfully, they gain a Hope Die to add to their conflict rolls.\nHope Die: A Hope Die succeeds on a 5 or a 6.\nBrink: After all else has burned away, whenever a player embraces their Brink, they reroll all dice. If the conflict roll still fails, they lose their Hope die (if they had one).\nDire Conflicts: You may decide that a particular conflict roll will be dire. The player may either withdraw their action or press onward. If they press onward a success is handled normally, but a failure may result in permanent damage to the character (mental or physical).\nNarration Rights: If the player rolled more 6s than you (the GM), that player may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren't playing to win, but to tell a good story. If you (the GM) tied the player's roll or rolled more 6s than the player, you (the GM) may describe what happens as a result of the conflict. A player who fails a conflict roll may take over narration at any time, the cost is their character's life.\nDarkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.\nChanging Scenes: Any time a candle darkens and a new scene begins, three events occur.\nTransition: You (the GM) transition the players out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.\nEstablishing Truths:\nThese things are true. The world is dark.\nEstablish # truths equal to lit candles.\nTruths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped"; "Our flashlights illuminated the water, but there were no waves."; or "We filled the pickup's tank by mouth-siphoning gas from cars on the highway").\nAfter the last truth everyone left alive speaks, “and we are alive.”\nDice Pools Refresh: The Players' pool of dice refills to the number of lit candles. The GM's pool equals the number of unlit candles.`;
-
 export const startingMessagePlayer = `**Ten Candles Game Mechanics**\nResolving a Conflict: Use \`${BOT_PREFIX}conflict\` after you have declared the action you'd like to take to roll the communal dice pool. If at least one die lands on 6 the conflict is successful. Any dice that come up 1 are removed until the scene ends. A candle is darkened if no 6s appear on a conflict roll (after any appropriate Traits are burned).\nBurning Traits: A trait can be burned in order to reroll all dice which come up 1 in a conflict.\nMoment: If you live your Moment successfully, gain a Hope Die to add to your conflict rolls.\nHope Die: A Hope Die succeeds on a 5 or a 6.\nBrink: After all else has burned away, whenever you embrace your Brink, reroll all dice. If the conflict roll still fails, you lose your Hope die (if they had one).\nDire Conflicts: The GM may decide that a particular conflict roll will be dire. If they do so, you may either withdraw their action or press onward. If you press onward a success is handled normally, but a failure may result in permanent damage to your character (mental or physical).\nNarration Rights: If you rolled more 6s than the GM, you may describe what happens as a result of the conflict. Keep the narration simple, reasonable, and interesting. Remember: you aren't playing to win, but to tell a good story. If the GM tied your roll or rolled more 6s, the GM may describe what happens as a result of the conflict. If you fail a conflict roll, you may take over narration at any time, but the cost is your character's life.\nDarkening Candles: Whenever a candle is darkened for any reason, the current scene ends and Changing Scenes events happen before a new scene begins. Once darkened, candles may never be relit. When no lit candles remain, the game enters The Last Stand.\nChanging Scenes: Any time a candle darkens and a new scene begins, three events occur.\nTransition: The GM transitions out of the failed conflict roll and scene. This should be brief so as not to close off too many player avenues.\nEstablishing Truths:\nThese things are true. The world is dark.\nEstablish # truths equal to lit candles.\nTruths are irrefutable facts pertaining to a single change in the story. (e.g. "Billy began convulsing on the floor and then suddenly stopped.", "Our flashlights illuminated the water, but there were no waves." or "We filled the pickup's tank by mouth-siphoning gas from cars on the highway".\nAfter the last truth everyone left alive speaks, “and we are alive.”\nDice Pools Refresh: The Players' pool of dice refills to the number of lit candles. The Players' pool of dice refills to the number of lit candles. The GM's pool equals the number of unlit candles.`;
-
 export const finalRecordingsMessage = 'The final scene fades to black. The story is over. Your final recordings will play after a moment of silence.';

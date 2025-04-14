@@ -811,46 +811,33 @@ export async function askForBrink(user, game, participantId, prompt, time, isThr
       const response = await getDMResponse(user, prompt, time, m => m.author.id === participantId, "Request for Brink");
       if (response) {
           if (response.trim() === "?") {
-              // Get raw random brink
               coreInput = getRandomBrink(isThreat);
-              coreInput = sanitizeString(coreInput); // Sanitize it
-              // NO normalization here
+              coreInput = sanitizeString(coreInput);
               await user.send(`A random Brink core has been assigned: ${coreInput}\n(This will be formatted for the recipient later)`);
-              break; // Exit loop, save below
+              break;
           }
           coreInput = response.trim();
           if (!coreInput) {
               await user.send('Invalid Brink. Please provide a non-empty value.');
               continue;
           }
-          coreInput = sanitizeString(coreInput); // Sanitize
-          // NO normalization here
+          coreInput = sanitizeString(coreInput);
 
-          // Confirm the sanitized core text
-          const confirmation = await confirmInput(user, `Are you happy with this Brink core text?\n"${coreInput}"\n(This will be formatted like "[Your Name] saw you/them ${coreInput}" for the recipient)`, time, "Confirm Your Brink Core");
+          const confirmation = await confirmInput(user, `Are you happy with this Brink core text?\n"${coreInput}"\n(This will be formatted for the recipient later)`, time, "Confirm Your Brink Core");
           if (confirmation) {
-              break; // Exit loop, save below
+              break;
           } else {
-              continue; // Ask again
+              continue;
           }
       } else {
-          // Timeout: Assign random sanitized core
           coreInput = getRandomBrink(isThreat);
           coreInput = sanitizeString(coreInput);
           await user.send(`Response timed out. A random Brink core has been assigned: ${coreInput}\n(This will be formatted for the recipient later)`);
-          break; // Exit loop, save below
+          break;
       }
   }
 
-  // Save the SANITIZED CORE text to givenBrink
-  if (participantId === game.gmId) {
-      game.gm.givenBrink = coreInput;
-  } else {
-      if (!game.players[participantId]) game.players[participantId] = {}; // Ensure player object exists
-      game.players[participantId].givenBrink = coreInput;
-  }
-  saveGameData();
-  return coreInput; // Return the core text just saved
+  return coreInput; // Return the collected core text
 }
 
 export function getRandomName() {
@@ -1097,42 +1084,32 @@ export function normalizeSentence(str) {
   return str;
 }
 
-export function normalizeBrink(brink, name, isThreat = false) {
-  if (brink === undefined || typeof brink !== 'string') {
-    brink = getRandomBrink(isThreat); // Get a random one if input is bad
+export function normalizeBrink(coreBrink, observerName, isThreat = false) {
+  if (coreBrink === undefined || typeof coreBrink !== 'string') {
+    console.warn(`normalizeBrink: Invalid coreBrink received. Assigning random.`);
+    coreBrink = getRandomBrink(isThreat); // Get a random one if input is bad
   } else {
-    brink = brink.trim(); // Trim whitespace first
-  }
-
-  // Regular expressions to detect existing prefixes (case-insensitive)
-  // Matches variations like "I saw you", "Someone saw you", "Bob saw you", "I have seen them", etc.
-  const playerPrefixRegex = /^(?:i|someone|\w+)\s+saw\s+you\s*/i;
-  const threatPrefixRegex = /^(?:i|someone|\w+)\s+ha(?:ve|s)\s+seen\s+(?:them|\*them\*)\s*/i;
-
-  let coreBrink = brink; // The part after the prefix
-  let prefixFound = false;
-
-  if (playerPrefixRegex.test(brink)) {
-    coreBrink = brink.replace(playerPrefixRegex, '');
-    prefixFound = true;
-    isThreat = false; // Correct the type if user input implies player brink
-  } else if (threatPrefixRegex.test(brink)) {
-    coreBrink = brink.replace(threatPrefixRegex, '');
-    prefixFound = true;
-    isThreat = true; // Correct the type if user input implies threat brink
+    coreBrink = coreBrink.trim(); // Trim whitespace first
   }
 
   // Clean up the core part: remove leading/trailing quotes and periods
+  // Also remove common prefixes if accidentally included by user
+  const playerPrefixRegex = /^(?:i|someone|\w+)\s+saw\s+you\s*/i;
+  const threatPrefixRegex = /^(?:i|someone|\w+)\s+ha(?:ve|s)\s+seen\s+(?:them|\*them\*)\s*/i;
+
+  coreBrink = coreBrink.replace(playerPrefixRegex, '');
+  coreBrink = coreBrink.replace(threatPrefixRegex, '');
   coreBrink = coreBrink.replace(/^['"]+|['"]+$/g, '').replace(/\.+$/, '').trim();
 
   // Construct the final, correct prefix
   let finalPrefix = '';
-  const characterName = name || (isThreat ? "Someone" : "Someone"); // Use "Someone" as fallback
+  // Use "Someone" as fallback observer if name is missing, but handle GM case in the calling function
+  const nameToUse = observerName || "Someone";
 
   if (isThreat) {
-    finalPrefix = `${characterName} has seen *them* `;
+    finalPrefix = `${nameToUse} has seen *them* `;
   } else {
-    finalPrefix = `${characterName} saw you `;
+    finalPrefix = `${nameToUse} saw you `; // "you" refers to the recipient
   }
 
   // Combine the correct prefix and the cleaned core brink

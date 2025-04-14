@@ -9,7 +9,11 @@ import {
   respondViaDM, markPlayerDead, areOtherPlayersAlive, sendDM, formatDuration,
   getGameData, sendCandleStatus, requestConsent, normalizeBrink, getOtherLivingPlayers
 } from '../utils.js';
-import { BOT_PREFIX, MARTYRDOM_TIMEOUT, CONFLICT_TIMEOUT } from '../config.js';
+import {
+  BOT_PREFIX, MARTYRDOM_TIMEOUT, CONFLICT_TIMEOUT,
+  CONFLICT_EMBED_COLOR_INITIAL, CONFLICT_EMBED_COLOR_SUCCESS,
+  CONFLICT_EMBED_COLOR_FAILURE, CONFLICT_EMBED_COLOR_SACRIFICE
+} from '../config.js';
 
 export async function extinguishCandle(message, channelId) {
   const game = getGameData(channelId);
@@ -105,7 +109,13 @@ export async function conflict(message, args, globalGameData) {
   let hopeDiceCount = player.hopeDice || 0;
   const gmDiceCount = Math.max(0, game.scene - 1);
 
-  const preRollMessage = await message.channel.send(`**Conflict: <@${playerId}>**\nDice Pool: ${currentDicePool}\nHope Dice: ${hopeDiceCount}\nGM Dice: ${gmDiceCount}\n\n*Rolling...*`);
+  // --- Embed Setup ---
+  const embed = new EmbedBuilder()
+    .setTitle(`Conflict: <@${playerId}>`)
+    .setColor(CONFLICT_EMBED_COLOR_INITIAL) // Use initial color
+    .setDescription(`*Rolling...*\n\nInitial Dice Pool: ${currentDicePool}\nHope Dice: ${hopeDiceCount}\nGM Dice: ${gmDiceCount}`);
+
+  const conflictEmbedMessage = await message.channel.send({ embeds: [embed] });
 
   // Player Roll
   let rolls = [];
@@ -138,25 +148,35 @@ export async function conflict(message, args, globalGameData) {
   let numOnesRerolled = 0;
   let brinkReroll = false;
   let rerollHappened = false; // Flag to track if sound needs playing later
+  let rerollActionText = ''; // Store reroll info for embed
 
   const topTrait = player.stackOrder.length > 0 ? player.stackOrder[0] : null;
   const initialOnesCount = finalOnes; // Store initial count for messages
 
+  // --- Helper function to update embed with current rolls ---
+  const updateEmbedRolls = (descriptionSuffix = '') => {
+    const diceEmojis = rolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
+    const hopeDiceEmojis = hopeRolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
+    const gmDiceEmojis = gmRolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
+
+    embed.setFields( // Use setFields to replace existing fields
+      { name: `Player Roll (Pool: ${currentDicePool})`, value: diceEmojis || 'None', inline: true },
+      { name: `Player Roll (Hope: ${hopeDiceCount})`, value: hopeDiceEmojis || 'None', inline: true },
+      { name: '\u200B', value: '\u200B' }, // Spacer
+      { name: `GM Roll (Dice: ${gmDiceCount})`, value: gmDiceEmojis || 'None', inline: true },
+      { name: '\u200B', value: '\u200B', inline: true }, // Spacer
+      { name: '\u200B', value: '\u200B' }, // Spacer
+      { name: 'Player Successes (for Narration)', value: `**${playerSixes}**`, inline: true },
+      { name: 'GM Successes (for Narration)', value: `**${gmSixes}**`, inline: true }
+    );
+    embed.setDescription(descriptionSuffix); // Update description
+  };
+
   // 1. Check for Ones & Offer Trait Burn
   if (initialOnesCount > 0) {
     // Show initial results before DM prompt
-    const initialDiceEmojis = rolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
-    const initialHopeDiceEmojis = hopeRolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
-    const initialGmDiceEmojis = gmRolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
-    let initialResultMessage = `**Conflict: <@${playerId}>** (Initial Roll)\n\n` +
-      `**Player Roll:**\n` +
-      `  Dice Pool (${currentDicePool}): ${initialDiceEmojis || 'None'}\n` +
-      (hopeDiceCount > 0 ? `  Hope (${hopeDiceCount}): ${initialHopeDiceEmojis || 'None'}\n` : '') +
-      `  Successes (Player - for narration): **${playerSixes}**\n\n` + // Clarify sixes purpose
-      `**GM Roll (${gmDiceCount}):** ${initialGmDiceEmojis || 'None'}\n` +
-      `  Successes (GM - for narration): **${gmSixes}**\n\n` +
-      `*Rolled ${initialOnesCount} one(s). Check your DMs for options.*`;
-    await preRollMessage.edit(initialResultMessage).catch(console.error);
+    updateEmbedRolls(`*Rolled ${initialOnesCount} one(s). Check your DMs for options.*`);
+    await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
 
     const burnableTraits = ['Virtue', 'Vice', 'Moment'];
     if (topTrait && burnableTraits.includes(topTrait) && !player[`${topTrait.toLowerCase()}Burned`]) {
@@ -198,11 +218,20 @@ export async function conflict(message, args, globalGameData) {
           success = rolls.some(r => r === 6) || hopeRolls.some(r => r === 5 || r === 6);
           playerNarrativeSuccess = playerSixes > gmSixes;
 
+          rerollActionText += `*Burned **${traitToBurn}** to reroll ${numOnesRerolled} one(s).*\n`;
+          updateEmbedRolls(`*Rerolled ${numOnesRerolled} one(s) using ${traitToBurn}.*`); // Update description
+          await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error); // Update embed after reroll
+
           console.log(`conflict: Rerolled ${numOnesRerolled} ones for ${playerId} using ${traitToBurn}. New Pool=[${rolls.join(',')}] -> New Ones: ${finalOnes}, New Player Sixes: ${playerSixes}, New Success: ${success}, New Narrative Success: ${playerNarrativeSuccess}`);
 
         } else {
           if (burnConfirmation === null) {
             await message.author.send(`Timed out waiting for response to burn ${topTrait}. Proceeding without reroll.`).catch(console.error);
+            updateEmbedRolls(`*Timed out waiting for ${topTrait} burn response.*`);
+            await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
+          } else {
+            updateEmbedRolls(`*Declined to burn ${topTrait}.*`);
+            await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
           }
         }
       } catch (error) {
@@ -212,12 +241,13 @@ export async function conflict(message, args, globalGameData) {
   }
 
   // 2. Offer Brink (Only if Brink is top and not used this roll)
-  if (topTrait === 'Brink' && !player.brinkUsedThisRoll) {
-    if (initialOnesCount > 0 && !traitToBurn) {
-      await preRollMessage.edit(preRollMessage.content + `\n*Check DMs to potentially use your Brink.*`).catch(console.error);
-    } else if (initialOnesCount === 0) {
-      await preRollMessage.edit(`**Conflict: <@${playerId}>**\nDice Pool Remaining: ${currentDicePool}\nHope Dice: ${hopeDiceCount}\nGM Dice: ${gmDiceCount}\n\n*Rolling...*\n*Check DMs to potentially use your Brink.*`).catch(console.error);
-    }
+  // Ensure topTrait is re-evaluated in case the stack changed
+  const currentTopTraitAfterBurn = player.stackOrder.length > 0 ? player.stackOrder[0] : null;
+  if (currentTopTraitAfterBurn === 'Brink' && !player.brinkUsedThisRoll) {
+    // Update description to indicate Brink check
+    let brinkCheckDescription = embed.description + `\n*Check DMs to potentially use your Brink.*`;
+    updateEmbedRolls(brinkCheckDescription);
+    await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
 
     try {
       const brinkConfirmation = await requestConsent(
@@ -244,11 +274,20 @@ export async function conflict(message, args, globalGameData) {
         success = rolls.some(r => r === 6) || hopeRolls.some(r => r === 5 || r === 6);
         playerNarrativeSuccess = playerSixes > gmSixes;
 
+        rerollActionText += `*Embraced **Brink** for a full reroll.*\n`;
+        updateEmbedRolls(`*Embraced Brink for a full reroll.*`); // Update description
+        await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error); // Update embed after reroll
+
         console.log(`conflict: Rerolled entire pool for ${playerId} using Brink. New Pool=[${rolls.join(',')}] -> New Ones: ${finalOnes}, New Player Sixes: ${playerSixes}, New Success: ${success}, New Narrative Success: ${playerNarrativeSuccess}`);
 
       } else {
         if (brinkConfirmation === null) {
           await message.author.send(`Timed out waiting for response to use Brink. Proceeding without reroll.`).catch(console.error);
+          updateEmbedRolls(embed.description + `\n*Timed out waiting for Brink response.*`);
+          await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
+        } else {
+          updateEmbedRolls(embed.description + `\n*Declined to use Brink.*`);
+          await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
         }
       }
     } catch (error) {
@@ -256,29 +295,10 @@ export async function conflict(message, args, globalGameData) {
     }
   } // End of Brink offer
 
-  // --- Final Outcome & Message Construction ---
-  const finalDiceEmojis = rolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
-  const finalHopeDiceEmojis = hopeRolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
-  const finalGmDiceEmojis = gmRolls.map(roll => `⚀⚁⚂⚃⚄⚅`[roll - 1]).join(' ');
-
-  let resultMessage = `**Conflict Result for <@${playerId}>**\n\n`;
-  resultMessage += `**Player Roll:**\n`;
-  resultMessage += `  Dice Pool (${currentDicePool}): ${finalDiceEmojis || 'None'}\n`;
-  if (hopeDiceCount > 0) {
-    resultMessage += `  Hope (${hopeDiceCount}): ${finalHopeDiceEmojis || 'None'}\n`;
-  }
-  if (traitToBurn) {
-    resultMessage += `  *Burned **${traitToBurn}** to reroll ${numOnesRerolled} one(s).*\n`;
-  }
-  if (brinkReroll) {
-    resultMessage += `  *Embraced **Brink** for a full reroll.*\n`;
-  }
-  resultMessage += `  Successes (Player - for narration): **${playerSixes}**\n\n`;
-
-  resultMessage += `**GM Roll (${gmDiceCount}):** ${finalGmDiceEmojis || 'None'}\n`;
-  resultMessage += `  Successes (GM - for narration): **${gmSixes}**\n\n`;
-
-  resultMessage += `**Outcome:** ${success ? 'Success!' : 'Failure.'}\n`;
+  // --- Final Outcome & Embed Update ---
+  let outcomeText = '';
+  let hopeText = '';
+  let narrationText = playerNarrativeSuccess ? '**You** have narration control.' : '**GM** has narration control.';
 
   // --- Handle Dice Loss (Based on FINAL ones count) ---
   let diceLostThisRoll = 0;
@@ -286,37 +306,46 @@ export async function conflict(message, args, globalGameData) {
     diceLostThisRoll = finalOnes;
     game.diceLost += diceLostThisRoll;
     game.dicePool = Math.max(0, game.dicePool - diceLostThisRoll);
+    outcomeText += `Lost ${diceLostThisRoll} dice from the pool due to ones.\n`;
   }
 
-  // --- Handle Narration Control & Hope ---
-  resultMessage += playerNarrativeSuccess ? '**You** have narration control.\n' : '**GM** has narration control.\n';
-
+  // --- Handle Success/Failure & Hope ---
   if (success) {
+    embed.setColor(CONFLICT_EMBED_COLOR_SUCCESS); // Set success color
+    outcomeText += '**Outcome: Success!**\n';
     if (traitToBurn === 'Moment') { // Hope gain only on Moment burn success
       player.hopeDice = Math.min(9, player.hopeDice + 1);
-      resultMessage += `*Burned Moment for success! Gained 1 Hope die.*\n`;
+      hopeText = `*Burned Moment for success! Gained 1 Hope die (Total: ${player.hopeDice})*`;
     }
-    // No message needed for standard success hope gain/loss
   } else { // Failure
+    embed.setColor(CONFLICT_EMBED_COLOR_FAILURE); // Set failure color
+    outcomeText += '**Outcome: Failure.**\n';
     // HOPE DICE LOSS LOGIC (Only on Brink Failure)
     if (brinkReroll) { // Check if failure happened AFTER a Brink reroll
       if (player.hopeDice > 0) {
-        // Keep this message as it's specific and important
-        resultMessage += `*Failed after embracing Brink! Lost ${player.hopeDice} Hope ${player.hopeDice === 1 ? 'Die' : 'Dice'}.*\n`;
+        hopeText = `*Failed after embracing Brink! Lost ${player.hopeDice} Hope ${player.hopeDice === 1 ? 'Die' : 'Dice'}.*`;
         player.hopeDice = 0; // Lose ALL hope dice
       } else {
-        // Add a simple note about the Brink failure context
-        resultMessage += `*Failed despite embracing Brink.*\n`;
+        hopeText = `*Failed despite embracing Brink.*`;
       }
     }
-    // *** NO HOPE DICE LOSS message on other failures ***
   }
 
-  // Add final pool status
-  resultMessage += `\nDice Pool Remaining: ${game.dicePool}`;
+  // Update embed with final results
+  updateEmbedRolls(null); // Clear description
+  embed.addFields(
+    { name: 'Result', value: outcomeText, inline: false },
+    { name: 'Narration', value: narrationText, inline: true },
+    { name: 'Dice Pool Remaining', value: `${game.dicePool}`, inline: true }
+  );
+  if (rerollActionText) {
+    embed.addFields({ name: 'Actions Taken', value: rerollActionText.trim(), inline: false });
+  }
+  if (hopeText) {
+    embed.addFields({ name: 'Hope Dice', value: hopeText, inline: false });
+  }
 
-  // --- Update Final Message ---
-  await preRollMessage.edit({ content: resultMessage, components: [] }).catch(console.error);
+  await conflictEmbedMessage.edit({ embeds: [embed], components: [] }).catch(console.error);
 
   // --- Play Sound ---
   const voiceChannelId = game.voiceChannelId;
@@ -351,6 +380,12 @@ export async function conflict(message, args, globalGameData) {
       // Offer Sacrifice
       try {
         const characterName = player.name || player.playerUsername; // Get character name
+
+        // Update embed to show sacrifice offer
+        embed.setColor(CONFLICT_EMBED_COLOR_SACRIFICE);
+        embed.addFields({ name: 'Sacrifice Offered', value: `<@${playerId}>, your conflict failed. Check DMs to potentially sacrifice yourself for narrative control.` });
+        await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
+
         const sacrificeConfirm = await requestConsent(
           message.author,
           // Use character name in the prompt
@@ -366,16 +401,27 @@ export async function conflict(message, args, globalGameData) {
         if (sacrificeConfirm === true) {
           // Martyrdom Check and Hope Gifting logic is now handled by interaction handlers in index.js triggered by the 'sacrifice_yes' button click and subsequent modal/GM interactions.
           console.log(`Conflict: Player ${playerId} chose sacrifice. Interaction handler will proceed.`);
+          // Embed already updated to show offer, interaction handler will manage further updates/death messages.
           return; // Exit conflict function early, interaction handler takes over.
         } else { // Player declined sacrifice or timed out
+          // Revert embed color if sacrifice declined/timed out
+          embed.setColor(CONFLICT_EMBED_COLOR_FAILURE); // Back to failure color
+          // Remove or update the sacrifice field
+          const sacrificeFieldIndex = embed.data.fields?.findIndex(f => f.name === 'Sacrifice Offered');
+          if (sacrificeFieldIndex !== -1 && sacrificeFieldIndex !== undefined) {
+            embed.spliceFields(sacrificeFieldIndex, 1); // Remove the field
+          }
+          embed.addFields({ name: 'Scene Change', value: 'Sacrifice declined or timed out. A candle is extinguished.' });
+          await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
+
           if (sacrificeConfirm === null) { // TIMEOUT
             console.log(`Conflict: Player ${playerId} timed out on sacrifice. Triggering scene change.`);
             // requestConsent already sent DM. Trigger scene change.
             await extinguishCandle(message, channelId); // Pass original message for context
             return; // Exit conflict function
           } else { // sacrificeConfirm === false (Explicit No)
-            console.log(`Conflict: Player ${playerId} declined sacrifice. Interaction handler will proceed.`);
-            // Interaction handler is responsible for extinguishCandle
+            console.log(`Conflict: Player ${playerId} declined sacrifice. Triggering scene change.`);
+            await extinguishCandle(message, channelId); // Trigger scene change
             return; // Exit conflict function
           }
         }
@@ -383,12 +429,25 @@ export async function conflict(message, args, globalGameData) {
         // Error during consent - treat like timeout/no?
         console.error(`Error during sacrifice consent request for ${playerId}:`, error);
         console.log(`Conflict: Error during sacrifice consent for ${playerId}. Triggering scene change.`);
+        // Update embed on error
+        embed.setColor(CONFLICT_EMBED_COLOR_FAILURE);
+        const sacrificeFieldIndex = embed.data.fields?.findIndex(f => f.name === 'Sacrifice Offered');
+        if (sacrificeFieldIndex !== -1 && sacrificeFieldIndex !== undefined) {
+            embed.spliceFields(sacrificeFieldIndex, 1);
+        }
+        embed.addFields({ name: 'Error', value: 'An error occurred during the sacrifice offer. A candle is extinguished.' });
+        await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
+
         await extinguishCandle(message, channelId); // Trigger scene change on error too? Seems safest.
         return; // Exit
       }
     } else { // Last player alive fails
       sacrificeOfferedOrHappened = true;
-      await message.channel.send(`:skull_crossbones: <@${playerId}>, you are the last one standing, and your conflict failed. You meet your end. GM, you have narrative control to describe their final moments.`);
+      // Update embed for last player death
+      embed.setColor(CONFLICT_EMBED_COLOR_FAILURE);
+      embed.addFields({ name: 'Final Failure', value: `:skull_crossbones: <@${playerId}>, you are the last one standing, and your conflict failed. You meet your end.` });
+      await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);
+
       markPlayerDead(game, playerId, "Last player standing, failed conflict"); // Saves internally
       console.log(`Conflict failure for last player ${playerId}. Triggering scene change.`);
       await extinguishCandle(message, channelId); // Call for last player case

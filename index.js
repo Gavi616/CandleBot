@@ -31,9 +31,9 @@ import { getVoiceConnection, joinVoiceChannel } from '@discordjs/voice';
 
 export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessages, GatewayIntentBits.MessageContent, GatewayIntentBits.GuildMembers, GatewayIntentBits.DirectMessages, GatewayIntentBits.GuildMessageReactions, GatewayIntentBits.GuildVoiceStates] });
 
-const version = '0.9.961a';
+const version = '0.9.962a';
 const botName = 'Ten Candles Bot';
-export const isTesting = true;
+export const isTesting = false;
 let botRestarted = false;
 
 client.once('ready', async () => {

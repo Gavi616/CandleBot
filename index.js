@@ -22,7 +22,7 @@ import {
 import { prevStep, sendCharacterGenStep } from './steps.js';
 import { startGame } from './commands/startgame.js';
 import { conflict, extinguishCandle } from './commands/conflict.js';
-import { gameStatus, generatePlayerStatusEmbed, generateGameStatusEmbed } from './commands/gamestatus.js';
+import { gameStatus, gmGameStatus, generatePlayerStatusEmbed, generateGameStatusEmbed } from './commands/gamestatus.js';
 import { removePlayer } from './commands/removeplayer.js';
 import { leaveGame } from './commands/leavegame.js';
 import { cancelGame } from './commands/cancelgame.js';
@@ -144,52 +144,109 @@ client.on('interactionCreate', async interaction => {
       }
     }
 
+    // --- Logging for askForTraits Interactions ---
+    if (interaction.isButton() && interaction.customId.startsWith('ask_traits_start_')) {
+      console.log(`Interaction LOG: Received 'ask_traits_start' button click. ID: ${interaction.customId}, User: ${interaction.user.tag}`);
+      // Ensure game context is found for this button
+      const parts = interaction.customId.split('_');
+      const channelIdFromButton = parts[parts.length - 1];
+      const traitGame = getGameData(channelIdFromButton);
+      if (!traitGame) {
+        console.error(`Interaction ERROR: Could not find game for ask_traits_start button: ${interaction.customId}`);
+        try { await interaction.reply({ content: 'Error: Could not find game context for this action.', ephemeral: true }); } catch { /* ignore */ }
+        return; // Stop if no game found
+      }
+      // Add permission check if needed (e.g., ensure it's the correct player)
+      const targetPlayerId = parts[3];
+      if (interaction.user.id !== targetPlayerId) {
+        console.warn(`Interaction WARN: User ${interaction.user.tag} clicked ask_traits_start button for player ${targetPlayerId}`);
+        try { await interaction.reply({ content: 'You cannot start this process for another player.', ephemeral: true }); } catch { /* ignore */ }
+        return;
+      }
+      console.log(`Interaction LOG: Proceeding to show modal for ${interaction.customId}`);
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId.startsWith('traits_modal_')) {
+      console.log(`Interaction LOG: Received 'traits_modal' submission. ID: ${interaction.customId}, User: ${interaction.user.tag}`);
+      // Add game/permission checks if needed
+      const parts = interaction.customId.split('_');
+      const channelIdFromModal = parts[parts.length - 1];
+      const traitGame = getGameData(channelIdFromModal);
+      if (!traitGame) {
+        console.error(`Interaction ERROR: Could not find game for traits_modal submission: ${interaction.customId}`);
+        try { await interaction.reply({ content: 'Error: Could not find game context for this submission.', ephemeral: true }); } catch { /* ignore */ }
+        return; // Stop if no game found
+      }
+      const targetPlayerId = parts[2];
+      if (interaction.user.id !== targetPlayerId) {
+        console.warn(`Interaction WARN: User ${interaction.user.tag} submitted traits_modal for player ${targetPlayerId}`);
+        try { await interaction.reply({ content: 'You cannot submit this form for another player.', ephemeral: true }); } catch { /* ignore */ }
+        return;
+      }
+      console.log(`Interaction LOG: Proceeding to process modal and show confirmation for ${interaction.customId}`);
+      return;
+    }
+
+    if (interaction.isButton() && interaction.customId.startsWith('traits_confirm_')) {
+      console.log(`Interaction LOG: Received 'traits_confirm' button click. ID: ${interaction.customId}, User: ${interaction.user.tag}`);
+      // Add game/permission checks if needed
+      const parts = interaction.customId.split('_');
+      const channelIdFromButton = parts[parts.length - 1];
+      const traitGame = getGameData(channelIdFromButton);
+      if (!traitGame) {
+        console.error(`Interaction ERROR: Could not find game for traits_confirm button: ${interaction.customId}`);
+        try { await interaction.reply({ content: 'Error: Could not find game context for this action.', ephemeral: true }); } catch { /* ignore */ }
+        return; // Stop if no game found
+      }
+      const targetPlayerId = parts[3];
+      if (interaction.user.id !== targetPlayerId) {
+        console.warn(`Interaction WARN: User ${interaction.user.tag} clicked traits_confirm button for player ${targetPlayerId}`);
+        try { await interaction.reply({ content: 'You cannot confirm traits for another player.', ephemeral: true }); } catch { /* ignore */ }
+        return;
+      }
+      console.log(`Interaction LOG: Proceeding to handle confirmation for ${interaction.customId}`);
+      return;
+    }
+    // --- End Logging for askForTraits ---
+
     // --- NEW: Handle "Set Theme" Button ---
     if (interaction.isButton() && interaction.customId.startsWith('set_theme_button_')) {
       const channelIdFromButton = customIdParts[customIdParts.length - 1];
       const themeGame = getGameData(channelIdFromButton); // Get game data using ID from button
 
       if (!themeGame) {
-        await interaction.reply({ content: 'Could not find the game associated with this button. It might have been cancelled.', ephemeral: true });
+        // Use ephemeral reply if possible, otherwise followUp
+        try { await interaction.reply({ content: 'Could not find the game associated with this button. It might have been cancelled.', ephemeral: true }); } catch { /* ignore */ }
         return;
       }
       if (interaction.user.id !== themeGame.gmId) {
-        await interaction.reply({ content: 'Only the GM can set the theme.', ephemeral: true });
+        try { await interaction.reply({ content: 'Only the GM can set the theme.', ephemeral: true }); } catch { /* ignore */ }
         return;
       }
       if (themeGame.characterGenStep !== 2) {
-        await interaction.reply({ content: `Theme can only be set during Step 2. Current step: ${themeGame.characterGenStep}.`, ephemeral: true });
+        try { await interaction.reply({ content: `Theme can only be set during Step 2. Current step: ${themeGame.characterGenStep}.`, ephemeral: true }); } catch { /* ignore */ }
         return;
       }
 
-      // Disable the button on the original DM message
-      try {
-        const disabledRow = new ActionRowBuilder().addComponents(
-          ButtonBuilder.from(interaction.component).setDisabled(true)
-        );
-        await interaction.update({ components: [disabledRow] }); // Update the interaction that triggered this
-      } catch (e) {
-        if (e.code !== 10062 && e.code !== 10008) console.error("Error disabling 'Set Theme' button:", e);
-        // Proceed even if disabling fails
-      }
-
-      // Build and show the modal
+      // Build the modal first
       const themeModal = new ModalBuilder()
         .setCustomId(`theme_modal_${channelIdFromButton}`)
         .setTitle('Set Game Theme');
 
       const titleInput = new TextInputBuilder()
         .setCustomId('themeTitle')
-        .setLabel("Theme Title (or '?' for random)")
+        .setLabel("Title")
         .setStyle(TextInputStyle.Short)
+        .setPlaceholder("Enter theme title (or '?' for random).")
         .setRequired(true);
 
-        const descriptionInput = new TextInputBuilder()
+      const descriptionInput = new TextInputBuilder()
         .setCustomId('themeDescription')
-        .setLabel("Theme Description")
+        .setLabel("Description")
         .setStyle(TextInputStyle.Paragraph)
-        .setPlaceholder("Enter the theme description here (max 1024 characters). If using '?' as the title, this will be filled appropriately.")
-        .setRequired(false) // Not required if title is '?'
+        .setPlaceholder("Enter theme description (auto-filled if title is '?').") // Updated placeholder
+        .setRequired(false)
         .setMaxLength(1024);
 
       themeModal.addComponents(
@@ -197,13 +254,52 @@ client.on('interactionCreate', async interaction => {
         new ActionRowBuilder().addComponents(descriptionInput)
       );
 
+      // --- Action 1: Show the modal (This is the primary interaction response) ---
       try {
-        await interaction.showModal(themeModal);
+        await interaction.showModal(themeModal); // <<< PRIMARY RESPONSE
         console.log(`Theme Modal shown to GM ${interaction.user.tag} for game ${channelIdFromButton}`);
       } catch (modalError) {
         console.error(`Error showing theme modal:`, modalError);
-        await interaction.followUp({ content: 'Could not display the theme input form. Please try again or contact support.', ephemeral: true });
+        // Use followUp here because showModal might have failed *after* acknowledging
+        try {
+          // Check if already replied/deferred before attempting followUp
+          if (!interaction.replied && !interaction.deferred) {
+            await interaction.reply({ content: 'Could not display the theme input form. Please try again or contact support.', ephemeral: true });
+          } else {
+            await interaction.followUp({ content: 'Could not display the theme input form. Please try again or contact support.', ephemeral: true });
+          }
+        } catch (followUpError) {
+          console.error(`Error sending followUp after modal error:`, followUpError);
+        }
+        return; // Stop if modal failed to show
       }
+
+      // --- Action 2: Disable the button on the original message (Secondary effect) ---
+      try {
+        // Fetch the original message the button was on
+        const originalMessage = interaction.message;
+        if (originalMessage && originalMessage.components.length > 0) {
+          // Rebuild the row with the clicked button disabled
+          const disabledRow = new ActionRowBuilder().addComponents(
+            originalMessage.components[0].components.map(comp => {
+              const button = ButtonBuilder.from(comp);
+              if (comp.customId === interaction.customId) {
+                button.setDisabled(true);
+              }
+              return button;
+            })
+          );
+          // Edit the *message*, not the interaction
+          await originalMessage.edit({ components: [disabledRow] }); // <<< USE message.edit()
+        }
+      } catch (e) {
+        // Ignore errors if message was deleted (10008) or interaction expired (10062)
+        // These errors are okay because the primary action (modal) likely succeeded.
+        if (e.code !== 10008 && e.code !== 10062) {
+          console.error("Error disabling 'Set Theme' button after showing modal:", e);
+        }
+      }
+
       return; // Handled button
     }
 
@@ -213,15 +309,15 @@ client.on('interactionCreate', async interaction => {
       const themeGame = getGameData(channelIdFromModal); // Get game data
 
       if (!themeGame) {
-        await interaction.reply({ content: 'Could not find the game associated with this submission.', ephemeral: true });
+        await interaction.reply({ content: 'Could not find the game associated with this submission.' });
         return;
       }
       if (interaction.user.id !== themeGame.gmId) {
-        await interaction.reply({ content: 'Only the GM can submit the theme.', ephemeral: true });
+        await interaction.reply({ content: 'Only the GM can submit the theme.' });
         return;
       }
       if (themeGame.characterGenStep !== 2) {
-        await interaction.reply({ content: `Theme can only be set during Step 2. Current step: ${themeGame.characterGenStep}.`, ephemeral: true });
+        await interaction.reply({ content: `Theme can only be set during Step 2. Current step: ${themeGame.characterGenStep}.` });
         return;
       }
 
@@ -267,13 +363,13 @@ client.on('interactionCreate', async interaction => {
 
       try {
         // Reply to the modal submission with the confirmation
-        await interaction.reply({ embeds: [confirmEmbed], components: [confirmRow], ephemeral: false }); // Make it visible in DM
+        await interaction.reply({ embeds: [confirmEmbed], components: [confirmRow] });
         console.log(`Theme Modal: Sent confirmation to GM ${interaction.user.tag}`);
       } catch (replyError) {
         console.error(`Theme Modal: Error sending confirmation reply:`, replyError);
         // Attempt follow-up if reply failed
         try {
-          await interaction.followUp({ content: 'Error displaying confirmation. Please try setting the theme again.', ephemeral: true });
+          await interaction.followUp({ content: 'Error displaying confirmation. Please try setting the theme again.' });
         } catch { /* Ignore follow-up error */ }
         // Clear pending theme on error
         delete themeGame.pendingTheme;
@@ -290,60 +386,59 @@ client.on('interactionCreate', async interaction => {
       const themeGame = getGameData(channelIdFromConfirm); // Get game data
 
       if (!themeGame) {
-        await interaction.reply({ content: 'Could not find the game associated with this confirmation.', ephemeral: true });
+        try { await interaction.reply({ content: 'Could not find the game associated with this confirmation.', ephemeral: true }); } catch { /* ignore */ }
         return;
       }
       if (interaction.user.id !== themeGame.gmId) {
-        await interaction.reply({ content: 'Only the GM can confirm or edit the theme.', ephemeral: true });
+        try { await interaction.reply({ content: 'Only the GM can confirm or edit the theme.', ephemeral: true }); } catch { /* ignore */ }
         return;
       }
-      // Ensure we have a pending theme to work with
       if (!themeGame.pendingTheme) {
-        await interaction.reply({ content: 'Could not find the theme data to confirm or edit. Please try setting it again.', ephemeral: true });
+        try { await interaction.reply({ content: 'Could not find the theme data to confirm or edit. Please try setting it again.', ephemeral: true }); } catch { /* ignore */ }
         return;
       }
 
-      // Disable buttons on the confirmation message
-      try {
-        const disabledRows = interaction.message.components.map(row => {
-          const newRow = ActionRowBuilder.from(row);
-          newRow.components.forEach(component => component.setDisabled(true));
-          return newRow;
-        });
-        await interaction.update({ components: disabledRows }); // Update the message the button was on
-      } catch (e) {
-        if (e.code !== 10062 && e.code !== 10008) console.error("Error disabling theme confirm buttons:", e);
-        // Proceed even if disabling fails
-      }
-
+      // --- Logic Split: YES vs EDIT ---
       if (confirmationType === 'yes') {
         // --- Confirm YES ---
         console.log(`Theme Confirm: GM ${interaction.user.id} confirmed theme for game ${channelIdFromConfirm}`);
+
+        // Disable buttons on the confirmation message first
+        try {
+          const disabledRows = interaction.message.components.map(row => {
+            const newRow = ActionRowBuilder.from(row);
+            newRow.components.forEach(component => component.setDisabled(true));
+            return newRow;
+          });
+          await interaction.update({ components: disabledRows }); // Use update here for the 'Yes' path
+        } catch (e) {
+          if (e.code !== 10062 && e.code !== 10008) console.error("Error disabling theme confirm buttons (Yes):", e);
+          // Proceed even if disabling fails
+        }
+
         // Finalize theme
         themeGame.theme = themeGame.pendingTheme;
         delete themeGame.pendingTheme; // Clean up temporary storage
         themeGame.characterGenStep++; // Advance to Step 3
-
-        // Stop reminder timers for Step 2
-        clearReminderTimers(themeGame);
-
+        clearReminderTimers(themeGame); // Stop reminder timers for Step 2
         saveGameData(); // Save the finalized theme and step
 
         // Fetch channel and start Step 3
         const gameChannel = client.channels.cache.get(channelIdFromConfirm);
         if (gameChannel) {
-          await interaction.followUp({ content: `Theme confirmed! Starting Step 3 in <#${channelIdFromConfirm}>.`, ephemeral: false }); // Confirm in DM
+          // Use followUp because we already used interaction.update
+          await interaction.followUp({ content: `Theme confirmed! Starting Step 3 in <#${channelIdFromConfirm}>.` }).catch(console.error);
           sendCharacterGenStep(gameChannel, themeGame); // Trigger handleStepThree
         } else {
           console.error(`Theme Confirm: Could not find game channel ${channelIdFromConfirm} to start Step 3.`);
-          await interaction.followUp({ content: `Theme confirmed, but could not find the game channel <#${channelIdFromConfirm}> to start Step 3 automatically.`, ephemeral: false });
+          await interaction.followUp({ content: `Theme confirmed, but could not find the game channel <#${channelIdFromConfirm}> to start Step 3 automatically.` }).catch(console.error);
         }
 
       } else { // confirmationType === 'no' (Edit)
-        // --- Confirm NO (Edit) ---
+        // --- Confirm Edit ---
         console.log(`Theme Confirm: GM ${interaction.user.id} chose to edit theme for game ${channelIdFromConfirm}`);
 
-        // Re-show the modal, pre-filled with pendingTheme data
+        // Build the modal first
         const themeModal = new ModalBuilder()
           .setCustomId(`theme_modal_${channelIdFromConfirm}`) // Same modal ID
           .setTitle('Edit Game Theme');
@@ -361,23 +456,53 @@ client.on('interactionCreate', async interaction => {
           .setStyle(TextInputStyle.Paragraph)
           .setPlaceholder("Enter the theme description here.")
           .setValue(themeGame.pendingTheme.description || '') // Pre-fill
-          .setRequired(false);
+          .setRequired(false)
+          .setMaxLength(1024); // Ensure max length is set
 
         themeModal.addComponents(
           new ActionRowBuilder().addComponents(titleInput),
           new ActionRowBuilder().addComponents(descriptionInput)
         );
 
+        // --- Action 1: Show the modal (Primary response for 'Edit') ---
         try {
-          // Need to show modal from the button interaction context
-          await interaction.showModal(themeModal);
+          await interaction.showModal(themeModal); // <<< PRIMARY RESPONSE
           console.log(`Theme Edit: Re-showing modal to GM ${interaction.user.tag}`);
         } catch (modalError) {
           console.error(`Theme Edit: Error re-showing theme modal:`, modalError);
-          await interaction.followUp({ content: 'Could not display the theme edit form. Please try again.', ephemeral: true });
+          // Use followUp because showModal might fail *after* acknowledging
+          try {
+            if (!interaction.replied && !interaction.deferred) {
+              await interaction.reply({ content: 'Could not display the theme edit form. Please try again.', ephemeral: true });
+            } else {
+              await interaction.followUp({ content: 'Could not display the theme edit form. Please try again.', ephemeral: true });
+            }
+          } catch (followUpError) {
+            console.error(`Error sending followUp after modal error (Edit):`, followUpError);
+          }
           // Keep pendingTheme for next attempt
+          return; // Stop if modal failed
         }
-      }
+
+        // --- Action 2: Disable buttons on the *previous* confirmation message (Secondary effect) ---
+        try {
+          const originalMessage = interaction.message; // The message the 'Edit' button was on
+          if (originalMessage && originalMessage.components.length > 0) {
+            const disabledRows = originalMessage.components.map(row => {
+              const newRow = ActionRowBuilder.from(row);
+              newRow.components.forEach(component => component.setDisabled(true));
+              return newRow;
+            });
+            // Edit the *message*, not the interaction
+            await originalMessage.edit({ components: disabledRows }); // <<< USE message.edit()
+          }
+        } catch (e) {
+          // Ignore errors if message was deleted (10008) or interaction expired (10062)
+          if (e.code !== 10008 && e.code !== 10062) {
+            console.error("Error disabling theme confirm buttons (Edit):", e);
+          }
+        }
+      } // End Edit logic
       return; // Handled confirmation button
     }
 
@@ -574,13 +699,13 @@ client.on('interactionCreate', async interaction => {
       const statusGame = getGameData(channelIdFromButton);
 
       if (!statusGame) {
-        await interaction.reply({ content: `The interaction chain for this button was broken, please use \`${BOT_PREFIX}gamestatus\` again.`, ephemeral: true });
+        await interaction.reply({ content: `The interaction chain for this button was broken, please use \`${BOT_PREFIX}gamestatus\` again.` });
         return;
       }
 
       // Permission Check: Must be the GM
       if (interaction.user.id !== statusGame.gmId) {
-        await interaction.reply({ content: 'Only the GM can view this status information.', ephemeral: true });
+        await interaction.reply({ content: 'Only the GM can view this status information.' });
         return;
       }
 
@@ -622,7 +747,7 @@ client.on('interactionCreate', async interaction => {
         console.error(`Error updating GM status interaction: ${error}`);
         // Attempt a follow-up if update fails (e.g., interaction expired)
         try {
-          await interaction.followUp({ content: 'Failed to update the status view.', ephemeral: true });
+          await interaction.followUp({ content: 'Failed to update the status view.' });
         } catch (followUpError) {
           console.error(`Error sending follow-up for failed GM status update: ${followUpError}`);
         }
@@ -631,16 +756,16 @@ client.on('interactionCreate', async interaction => {
     }
 
     // --- Handle Ghosts Speak Toggle ---
-    if (interaction.isButton() && interaction.customId.startsWith('gmstatus_toggle_ghosts_')) { // Ensure it's a button interaction
+    if (interaction.isButton() && interaction.customId.startsWith('gmstatus_toggle_ghosts_')) {
       const channelIdFromButton = interaction.customId.split('_')[3];
       const statusGame = getGameData(channelIdFromButton);
 
       if (!statusGame) {
-        await interaction.reply({ content: `The interaction chain for this button was broken, please use \`${BOT_PREFIX}gamestatus\` again.`, ephemeral: true });
+        await interaction.reply({ content: `The interaction chain for this button was broken, please use \`${BOT_PREFIX}gamestatus\` again.` });
         return;
       }
       if (interaction.user.id !== statusGame.gmId) {
-        await interaction.reply({ content: 'Only the GM can change this setting.', ephemeral: true });
+        await interaction.reply({ content: 'Only the GM can change this setting.' });
         return;
       }
 
@@ -709,47 +834,11 @@ client.on('interactionCreate', async interaction => {
         console.error(`Error updating GM status interaction after toggle: ${error}`);
         // Attempt follow-up if update fails
         try {
-          await interaction.followUp({ content: 'Failed to update the status view after toggle.', ephemeral: true });
+          await interaction.followUp({ content: 'Failed to update the status view after toggle.' });
         } catch { /* Ignore follow-up error */ }
       }
       return; // Handled toggle button
     }
-
-    let newEmbed;
-    let targetId = null;
-    const type = interaction.customId.split('_')[1]; // 'game' or 'player'
-
-    if (type === 'player') {
-      targetId = interaction.customId.split('_')[2];
-      newEmbed = generatePlayerStatusEmbed(statusGame, targetId);
-    } else { // type === 'game'
-      let gameChannelName = `Channel ${channelIdFromButton}`;
-      try {
-        const channel = await client.channels.fetch(channelIdFromButton);
-        if (channel) gameChannelName = `#${channel.name}`;
-      } catch { /* Ignore */ }
-      newEmbed = generateGameStatusEmbed(statusGame, gameChannelName);
-    }
-
-    // Update button states (disable the clicked one, enable others)
-    const finalComponents = interaction.message.components.map(row => {
-      const newRow = ActionRowBuilder.from(row);
-      newRow.components.forEach(component => {
-        if (component.data.type === ComponentType.Button) {
-          // Disable ONLY the button that was just clicked
-          component.setDisabled(component.data.custom_id === interaction.customId);
-        }
-      });
-      return newRow;
-    });
-
-    try {
-      await interaction.update({ embeds: [newEmbed], components: finalComponents });
-    } catch (error) {
-      console.error(`Error updating GM status interaction: ${error}`);
-      await interaction.followUp({ content: 'Failed to update the status view.' }).catch(console.error);
-    }
-    return; // Handled GM status button
   }
 
   // Martyrdom Confirmation Button Handling (GM) ---
@@ -998,6 +1087,13 @@ client.on('interactionCreate', async interaction => {
     }
 
     return; // Handled hope gifting
+  }
+
+  if (interaction.isButton() && (interaction.customId === 'input_yes' || interaction.customId === 'input_no')) {
+    // These buttons are generated and handled by the collector within the confirmInput utility function (utils.js).
+    // That collector calls interaction.update(). We just need to prevent fallthrough in this main listener.
+    console.log(`Interaction LOG: Received '${interaction.customId}' button click. Handled by confirmInput collector.`);
+    return; // Stop processing in the main listener
   }
 
   // --- Initial Game Check (for other interactions) ---
@@ -1376,8 +1472,19 @@ client.on('messageCreate', async (message) => {
         await message.author.send(`Unknown command: \`${command}\`. Use \`${BOT_PREFIX}help\` in a server channel for available commands.`);
       }
     } else {
-      // Handle non-command DMs (like final recordings)
-      await handleFinalRecording(message);
+      const game = findGameByUserId(userId);
+
+      if (game && game.characterGenStep === 8) {
+        // It's step 8, likely a recording attempt
+        console.log(`DM Received: Routing to handleFinalRecording for user ${userId} (Game Step 8)`);
+        await handleFinalRecording(message);
+      } else {
+        // It's not step 8, or user isn't in a game.
+        // It could be a response for an active collector which will be handled (name/look/concept/moment/brink)
+        // OR it's just a random DM.
+        // DO NOTHING HERE - let the collectors handle it.
+        // console.log(`DM Received: Ignoring non-command DM from ${userId} (Not Step 8 or no game found)`);
+      }
     }
     return; // End DM processing
   }
@@ -1470,49 +1577,58 @@ client.on('messageCreate', async (message) => {
 });
 
 async function me(message) {
-  const playerId = message.author.id;
+  const userId = message.author.id;
+  const userName = message.author.username;
+  console.log(`DEBUG: .me command received from ${userName} (${userId})`); // Log entry
 
-  // This check should ideally be done *before* calling the function,
-  if (message.channel.type !== ChannelType.DM) {
-    try {
-      await message.delete();
-      await message.author.send({ content: `The \`${BOT_PREFIX}me\` command can only be used in a direct message.` });
-    } catch (error) {
-      console.error('Could not send DM to user or delete message:', error);
-    }
-    return;
-  }
+  const game = findGameByUserId(userId);
 
-  const game = findGameByUserId(playerId);
-
+  // 1. Check if a game was found
   if (!game) {
-    await message.author.send(`You are not currently in a game.`);
-    return;
+      console.log(`DEBUG: .me - No game found for user ${userName} (${userId})`);
+      await message.author.send("You don't seem to be in an active game right now.");
+      return;
   }
+  console.log(`DEBUG: .me - Found game ${game.textChannelId} for user ${userName} (${userId})`);
 
-  const player = game.players[playerId];
-  const gameChannelId = game.textChannelId;
+  // 2. Explicitly check if game.players exists
+  if (!game.players) {
+       console.error(`CRITICAL: .me - Game object for ${game.textChannelId} is missing 'players' property! User: ${userName} (${userId})`, game);
+       await message.author.send("Error: Game data seems corrupted (missing players object). Please contact the admin.");
+       return;
+  }
+  console.log(`DEBUG: .me - game.players object exists for game ${game.textChannelId}`);
 
+  // 3. Check if the specific player exists within game.players
+  // This is likely line 1600 where the error occurred
+  const player = game.players[userId];
   if (!player) {
-    await message.author.send(`Could not find your player data in the game <#${gameChannelId}>.`);
-    return;
+      console.error(`CRITICAL: .me - Player data for ${userName} (${userId}) not found within game.players object for game ${game.textChannelId}.`);
+       // Check if it's the GM trying to use .me
+       if (game.gmId === userId) {
+           await message.author.send("GMs use `.gamestatus` to see game details and player statuses.");
+       } else {
+           // Player is in playerOrder but not in players object? Data inconsistency.
+           await message.author.send("Error: Could not find your specific player data within the game. Data might be inconsistent.");
+       }
+      return;
   }
+  console.log(`DEBUG: .me - Found player data for ${userName} (${userId}) in game ${game.textChannelId}`);
 
-  // Use the generatePlayerStatusEmbed function for consistency
-  const characterEmbed = generatePlayerStatusEmbed(game, playerId); // Assuming this function is available or imported
-
-  // Add game-specific info if needed, or keep it focused on the player
-  characterEmbed.addFields(
-    { name: 'Session Theme', value: game.theme?.title || 'Not set' },
-    { name: 'Description', value: game.theme?.description || 'Not set' },
-    { name: 'Active Game Channel', value: `<#${gameChannelId}>` }
-  );
-
+  // 4. Try generating and sending the embed
   try {
-    await message.author.send({ embeds: [characterEmbed] });
+      const playerEmbed = generatePlayerStatusEmbed(game, userId);
+      await sendDM(message.author, { embeds: [playerEmbed] });
+      console.log(`DEBUG: .me - Sent status embed to ${userName} (${userId})`);
   } catch (error) {
-    console.error(`Could not send character sheet DM to ${message.author.tag}: `, error.message);
-    // Optionally try to inform the user in the original channel if DM fails, but that's tricky from a DM context.
+      console.error(`Error generating or sending .me embed for ${userName} (${userId}):`, error);
+      // Check if the error is the specific TypeError we saw
+      if (error instanceof TypeError && error.message.includes('Cannot read properties of undefined')) {
+           console.error(`DEBUG: .me - Caught TypeError during embed generation/sending. Game state might be inconsistent.`);
+           await message.author.send("Sorry, there was an error generating your status display, possibly due to data inconsistency.");
+      } else {
+           await message.author.send("Sorry, there was an unexpected error generating your status display.");
+      }
   }
 }
 
@@ -1694,70 +1810,6 @@ export function parseChannelId(input) {
     return channel.id;
   }
   return null;
-}
-
-export async function setTheme(message, args) {
-  const channelId = message.channel.id;
-  const game = getGameData(channelId);
-
-  if (!game) {
-    message.channel.send('No game in progress.');
-    return;
-  }
-
-  if (game.gmId !== message.author.id) {
-    try {
-      await message.author.send({ content: 'Only the GM can use this command.' });
-      await message.delete();
-    } catch (error) {
-      console.error(`Failed to delete message in <#${channelId}>: ${error.message}`);
-    }
-    return;
-  }
-
-  // Check if we are actually in Step 2, ready for the theme
-  if (game.characterGenStep !== 2) {
-    message.reply(`You can only set the theme during Character Generation Step 2. Current step: ${game.characterGenStep}`);
-    return;
-  }
-
-  const themeInput = args.join(' ').trim();
-
-  // --- Handle Theme Setting ---
-  if (themeInput === '?') {
-    // Assign a random theme object
-    game.theme = getRandomTheme();
-    console.log(`setTheme: GM requested random theme. Assigned Title: "${game.theme.title}"`);
-    // Announce using the title
-    await message.channel.send(`The GM requested a random theme. The theme is: **${game.theme.title}**`);
-  } else if (themeInput) {
-    // For custom themes via command, set both title and description to the input
-    const sanitizedInput = sanitizeString(themeInput);
-    game.theme = {
-      title: sanitizedInput,
-      description: sanitizedInput
-    };
-    console.log(`setTheme: GM set custom theme: "${game.theme.title}"`);
-    // Announce the custom theme title
-    await message.channel.send(`The GM has set the theme: **${game.theme.title}**`);
-  } else {
-    message.reply(`Please provide a theme description or use \`${BOT_PREFIX}theme ?\` for a random one.`);
-    return; // Don't proceed if theme is invalid
-  }
-  // --- End Theme Setting ---
-
-  // Advance step and save AFTER theme is successfully set
-  game.characterGenStep++;
-  saveGameData();
-
-  // Get the channel object to pass to sendCharacterGenStep
-  const gameChannel = message.guild.channels.cache.get(game.textChannelId);
-  if (gameChannel) {
-    sendCharacterGenStep(gameChannel, game); // Start Step 3
-  } else {
-    console.error(`setTheme: Could not find game channel ${game.textChannelId} to start Step 3.`);
-    await message.author.send(`Error: Theme set, but could not find the game channel <#${game.textChannelId}> to start Step 3 automatically.`).catch(console.error);
-  }
 }
 
 async function handleFinalRecording(message) {
@@ -2253,9 +2305,9 @@ async function setupTestGame(message, args, isGameplayTest) {
     diceLost: 0,
     inLastStand: isGameplayTest ? (sceneOrStep === 11) : false,
     // Initialize theme object based on step
-    theme: sceneOrStep >= 3
-             ? getRandomTheme() // Call the function to get { title, description }
-             : { title: "", description: "" },
+    theme: sceneOrStep > 3
+      ? getRandomTheme() // Call the function to get { title, description }
+      : { title: "", description: "" },
     textChannelId: gameChannelId,
     guildId: guild.id,
     voiceChannelId: gameChannel.type === ChannelType.GuildVoice ? gameChannelId : null,
@@ -2307,7 +2359,7 @@ async function testCharGenStep(message, args) {
   // --- Populate Player Data ---
   for (const playerMember of fetchedPlayers) {
     const playerId = playerMember.id;
-    const playerName = getRandomName();
+    const characterName = playerMember.name || playerMember.playerUsername;
 
     // Determine stack order based on the step being tested
     let stackOrderForTest = [];
@@ -2320,10 +2372,10 @@ async function testCharGenStep(message, args) {
       stackOrderForTest = [...shuffledTraits, 'Brink']; // Add Brink at the end
       initialChoiceForTest = stackOrderForTest[0]; // Set based on randomized top
       availableTraitsForTest = []; // No traits available after stack is formed
-      console.log(`testCharGenStep (Step ${step}): Generated stack for ${playerName} (${playerId}): ${stackOrderForTest.join(', ')}`);
+      console.log(`testCharGenStep (Step ${step}): Generated stack for ${characterName} (${playerId}): ${stackOrderForTest.join(', ')}`);
     } else {
       // For steps 1-5, the stack is empty or in progress
-      console.log(`testCharGenStep (Step ${step}): Stack order empty for ${playerName} (${playerId})`);
+      console.log(`testCharGenStep (Step ${step}): Stack order empty for ${characterName} (${playerId})`);
     }
 
     game.players[playerId] = {
@@ -2331,13 +2383,13 @@ async function testCharGenStep(message, args) {
       consent: true,
       brink: '', // Will be populated below if step >= 5
       givenBrink: '', // Will be populated below if step >= 5
-      moment: getRandomMoment(),
-      virtue: getRandomVirtue(),
-      vice: getRandomVice(),
-      name: playerName,
-      look: getRandomLook(),
-      concept: getRandomConcept(),
-      finalRecording: step >= 8 ? 'Final recording text.' : '', // Add placeholder if testing step 8+
+      moment: step > 4 ? getRandomMoment() : "",
+      virtue: step > 1 ? getRandomVirtue() : "",
+      vice: step > 1 ? getRandomVice() : "",
+      name: step > 3 ? getRandomName() : "",
+      look: step > 3 ? getRandomLook() : "",
+      concept: step > 3 ? getRandomConcept() : "",
+      finalRecording: step > 8 ? 'Final recording text.' : '', // Add placeholder if testing step 8+
       hopeDice: 0,
       virtueBurned: false,
       viceBurned: false,
@@ -2404,7 +2456,6 @@ async function testCharGenStep(message, args) {
       if (!writerFormattedGivenBrink.endsWith('.')) {
         writerFormattedGivenBrink += '.';
       }
-
       writerData.givenBrink = writerFormattedGivenBrink;
       console.log(`testCharGenStep: Assigned givenBrink to ${writerId} (about ${recipientId}): "${writerData.givenBrink}"`);
     }
@@ -2418,6 +2469,8 @@ async function testCharGenStep(message, args) {
   saveGameData(); // Ensure validation schema includes brinkUsedThisRoll
 
   await message.channel.send(`Starting character generation test at step ${step} in <#${game.textChannelId}> with GM <@${game.gmId}> and players ${game.playerOrder.map(id => `<@${id}>`).join(', ')}.`);
+
+  await gameChannel.send(`**--- Test Start: Character Creation Step ${step} ---**`);
 
   // Send the appropriate character generation step message/logic
   console.log(`testCharGenStep: Sending status DMs for step ${step}...`);
@@ -2508,7 +2561,6 @@ async function testGameplay(message, args) {
   // --- Populate Player Data (Gameplay Ready) ---
   for (const playerMember of fetchedPlayers) {
     const playerId = playerMember.id;
-    const playerName = getRandomName();
     const traitsToShuffle = ['Virtue', 'Vice', 'Moment'];
     const finalStackOrder = [...shuffleArray([...traitsToShuffle]), 'Brink']; // Use spread to shuffle a copy
 
@@ -2520,7 +2572,7 @@ async function testGameplay(message, args) {
       moment: getRandomMoment(),
       virtue: getRandomVirtue(),
       vice: getRandomVice(),
-      name: playerName,
+      name: getRandomName(),
       look: getRandomLook(),
       concept: getRandomConcept(),
       finalRecording: 'Placeholder final recording text.',
@@ -2538,7 +2590,7 @@ async function testGameplay(message, args) {
       voice: 'en-US-Standard-B',
       brinkUsedThisRoll: false,
     };
-    console.log(`testGameplay: Generated stack for ${playerName} (${playerId}): ${finalStackOrder.join(', ')}`);
+    console.log(`testGameplay: Generated stack for ${characterName} (${playerId}): ${finalStackOrder.join(', ')}`);
   }
 
   // --- Assign Formatted Brinks ---
@@ -2713,7 +2765,7 @@ function resetPlayerProperties(game, propertiesToReset) {
         case 'moment':
         case 'brink':
         case 'givenBrink':
-        case 'name': // Keep name/look/concept populated by test function
+        case 'name':
         case 'look':
         case 'concept':
         case 'finalRecording':
@@ -2758,7 +2810,7 @@ function clearDataForLaterSteps(game, targetStep) {
   const propertiesByStep = {
     // Properties introduced IN or AFTER this step number (for players)
     2: ['virtue', 'vice'],
-    // 3: ['name', 'look', 'concept'], // Don't clear these, testCharGenStep populates them
+    3: ['name', 'look', 'concept'],
     4: ['moment'],
     5: ['brink', 'givenBrink'],
     6: ['stackOrder', 'initialChoice', 'availableTraits'], // availableTraits needs special handling
@@ -2798,21 +2850,6 @@ function clearDataForLaterSteps(game, targetStep) {
   if (targetStep < 3) {
     console.log(`  Resetting theme object`);
     game.theme = { title: "", description: "" };
-  }
-
-  // Scene: Reset if going back to any character creation step
-  if (targetStep <= 8) {
-    console.log(`  Resetting dicePool to 10, diceLost to 0, inLastStand to false`);
-    game.scene = 0;
-    game.dicePool = 10;
-    game.diceLost = 0;
-    game.inLastStand = false;
-  }
-
-  // theme: Reset if going back before step 3
-  if (targetStep < 3) {
-      console.log(`  Resetting theme object`);
-      game.theme = { title: "", description: "" };
   }
 
   // Special handling for player availableTraits if clearing step 6+ data

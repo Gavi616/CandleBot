@@ -63,7 +63,7 @@ export const gameDataSchema = Joi.object({
       playerTimeoutId: Joi.any().allow(null).optional(),
   }).optional(),
   dicePool: Joi.number().integer().min(0).optional(),
-  scene: Joi.number().integer().min(1).optional(),
+  scene: Joi.number().integer().min(0).optional(),
 });
 
 export function validateGameData(data, schema) {

@@ -160,6 +160,7 @@ export function generatePlayerStatusEmbed(game, playerId) {
     }
 
     // --- Prepare Data ---
+    const displayName = player.name || "Not set";
     const characterName = player.name || player.playerUsername;
     const playerMention = `<@${playerId}>`;
     const statusText = player.isDead ? '**DEAD**' : 'Alive';
@@ -177,12 +178,12 @@ export function generatePlayerStatusEmbed(game, playerId) {
 
     // --- Build Description String ---
     // Combine Name, Mention, Status, Hope Dice
-    const descriptionString = `**Name: ${characterName}** - **Player: ${playerMention}** - **Status: ${statusText}** - **Hope Dice: ${hopeDice}**`;
+    const descriptionString = `**Name: ${displayName}** - **Player: ${playerMention}** - **Status: ${statusText}** - **Hope Dice: ${hopeDice}**`;
 
     // --- Create Embed ---
     const embed = new EmbedBuilder()
         .setColor(player.isDead ? 0x808080 : 0x0099FF) // Grey out if dead
-        .setTitle(`Player Status: ${characterName}`) // Keep title for clarity
+        .setTitle(`Character Sheet`) // Keep title for clarity
         .setDescription(descriptionString) // Set the combined top line
         .addFields(
             { name: 'Concept', value: concept, inline: false },

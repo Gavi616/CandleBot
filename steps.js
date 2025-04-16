@@ -136,6 +136,8 @@ export async function handleStepTwo(gameChannel, game) {
   // 1. Send the message to the game channel as before
   await gameChannel.send(stepTwoMessage); // "GM will now introduce the module/theme..."
 
+  await new Promise(resolve => setTimeout(resolve, 5000)); // Pause before DMs (like other steps)
+
   // 2. Send a DM to the GM with a button to start the theme process
   try {
     const gmMember = await gameChannel.guild.members.fetch(game.gmId);
@@ -150,7 +152,7 @@ export async function handleStepTwo(gameChannel, game) {
       );
 
     await sendDM(gmUser, {
-      content: `It's time to set the theme for the **Ten Candles** session in <#${game.textChannelId}>. Click the button below to enter the theme details.`,
+      content: `It's time to set the theme for your **Ten Candles** session in <#${game.textChannelId}>. Click the button below to enter the theme details.`,
       components: [row]
     });
     console.log(`handleStepTwo: Sent 'Set Theme' button DM to GM ${gmUser.tag} for game ${game.textChannelId}`);
@@ -507,15 +509,38 @@ export async function swapTraits(client, players, game, guildId) {
   return swappedPlayers;
 }
 
+
 async function getCharacterInfo(gameChannel, channelId) {
   const game = getGameData(channelId);
+  if (!game) {
+      console.error(`getCharacterInfo: Could not find game data for channel ${channelId}`);
+      return;
+  }
   const playerOrder = game.playerOrder;
-  const infoPromises = playerOrder.map(async (playerId) => {
-    const player = await gameChannel.guild.members.fetch(playerId);
-    const user = player.user;
-    await askForCharacterInfo(user, game, playerId, 'name', "What's your character's name or nickname?", 60000);
-    await askForCharacterInfo(user, game, playerId, 'look', 'What does your character look like at a quick glance?', 60000);
-    await askForCharacterInfo(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', 60000);
-  });
-  await Promise.all(infoPromises);
+
+  // Use a sequential loop for each player
+  for (const playerId of playerOrder) {
+    try {
+      const member = await gameChannel.guild.members.fetch(playerId);
+      const user = member.user;
+
+      console.log(`getCharacterInfo: Asking ${user.tag} for Name...`);
+      // Pass the prompt string as the 5th argument, TRAIT_TIMEOUT as the 6th
+      await askForCharacterInfo(user, game, playerId, 'name', "What's your character's name or nickname?", TRAIT_TIMEOUT);
+
+      console.log(`getCharacterInfo: Asking ${user.tag} for Look...`);
+      await askForCharacterInfo(user, game, playerId, 'look', 'What does your character look like at a quick glance?', TRAIT_TIMEOUT);
+
+      console.log(`getCharacterInfo: Asking ${user.tag} for Concept...`);
+      await askForCharacterInfo(user, game, playerId, 'concept', 'Briefly, what is your character\'s concept (profession or role)?', TRAIT_TIMEOUT);
+
+      console.log(`getCharacterInfo: Finished info collection for ${user.tag}`);
+
+    } catch (error) {
+        console.error(`getCharacterInfo: Error collecting info for player ${playerId}:`, error);
+        await gameChannel.send(`⚠️ An error occurred while collecting character info for <@${playerId}> (Reason: ${error.message}). They may need to provide it manually or the GM might need to intervene.`).catch(console.error);
+        // For now, log and continue
+    }
+  }
+  console.log(`getCharacterInfo: Finished info collection for all players in game ${channelId}`);
 }

@@ -1,1 +1,94 @@
-{}
+{
+  "973337999985217537": {
+    "gm": {
+      "consent": true,
+      "brink": "",
+      "givenBrink": ""
+    },
+    "players": {
+      "1348988696669458523": {
+        "playerUsername": "balsamicgames",
+        "consent": true,
+        "brink": "",
+        "givenBrink": "",
+        "moment": "Locate a safe place to rest.",
+        "virtue": "faithful",
+        "vice": "pessimistic",
+        "name": "Cyrus",
+        "look": "Has a kind face and gentle eyes, but their hands are calloused and worn.",
+        "concept": "A musician, trying to bring joy to the survivors.",
+        "finalRecording": "",
+        "hopeDice": 0,
+        "virtueBurned": false,
+        "viceBurned": false,
+        "momentBurned": false,
+        "isDead": false,
+        "availableTraits": [
+          "Virtue",
+          "Vice",
+          "Moment"
+        ],
+        "stackOrder": [],
+        "initialChoice": null,
+        "gear": [],
+        "inventoryConfirmed": false,
+        "language": null,
+        "voice": null,
+        "brinkUsedThisRoll": false
+      },
+      "877545709644173372": {
+        "playerUsername": "wyldwoodwitch",
+        "consent": true,
+        "brink": "",
+        "givenBrink": "",
+        "moment": "",
+        "virtue": "creative",
+        "vice": "deceitful",
+        "name": "Orion",
+        "look": "Covered in tattoos, each one a symbol of their past.",
+        "concept": "A farmer, trying to grow food in barren lands.",
+        "finalRecording": "",
+        "hopeDice": 0,
+        "virtueBurned": false,
+        "viceBurned": false,
+        "momentBurned": false,
+        "isDead": false,
+        "availableTraits": [
+          "Virtue",
+          "Vice",
+          "Moment"
+        ],
+        "stackOrder": [],
+        "initialChoice": null,
+        "gear": [],
+        "inventoryConfirmed": false,
+        "language": null,
+        "voice": null,
+        "brinkUsedThisRoll": false
+      }
+    },
+    "playerOrder": [
+      "1348988696669458523",
+      "877545709644173372"
+    ],
+    "characterGenStep": 4,
+    "scene": 0,
+    "dicePool": 10,
+    "diceLost": 0,
+    "inLastStand": false,
+    "theme": {
+      "title": "LIVING IN DARKNESS",
+      "description": "Dad blames commies, Mom's quiet. Five days ago, people started disappearing – neighbors, classmates. Gone. Then soldiers came, forcing everyone into trucks, taking you all to city hall. No TV, no radio, but your walkie-talkie still works. You and your friends talk after curfew, agreeing someone needs to do something. The adults seem resigned, but you're not. Mr. Guthrie, the town historian, might know what's happening. His house is across town, past the cemetery, and the soldiers have blocked the roads. It's risky, especially after dark, but someone has to find answers. That someone is you.\nGoal: Talk to Mr Guthrie and figure out what's going on.\nPlay Note: For this module, all the characters are kids or young teenagers."
+    },
+    "textChannelId": "973337999985217537",
+    "guildId": "888119534375030815",
+    "voiceChannelId": null,
+    "gameMode": "text-only",
+    "initiatorId": "583340515869589522",
+    "gmId": "583340515869589522",
+    "endGame": false,
+    "playingRecordings": false,
+    "ghostsSpeakTruths": true,
+    "lastSaved": "2025-04-16T19:43:18.791Z"
+  }
+}

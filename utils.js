@@ -695,35 +695,86 @@ export async function sendDM(user, message) {
   }
 }
 
-export async function askForCharacterInfo(user, game, playerId, field, question, time) {
-  let input;
-  while (true) {
-    const response = await getDMResponse(user, question, time, m => m.author.id === playerId);
-    if (response) {
-      input = response.trim();
-      if (!input) {
-        await user.send('Invalid input. Please provide a non-empty value.');
-        continue;
+export async function askForCharacterInfo(user, game, playerId, infoType, prompt, time) {
+  let confirmed = false;
+  let response = '';
+
+  while (!confirmed) {
+    try {
+      // 1. Get the DM response - This line now correctly uses the passed-in 'prompt'
+      response = await getDMResponse(user, prompt, time, m => m.author.id === playerId, `Request for ${infoType}`);
+      if (!response) { // Handle empty input or timeout from getDMResponse
+         // Check if it was a timeout specifically
+         // (getDMResponse returns null on timeout or error)
+         // We'll handle the timeout message within the main catch block
+         await user.send(`Input cannot be empty. Please provide your ${infoType}.`);
+         continue; // Ask again
       }
-      input = sanitizeString(input);
-      if (field === 'name') {
-        input = normalizeName(input);
+      console.log(`askForCharacterInfo DEBUG: Received raw response for ${infoType} from ${user.tag}: "${response}"`);
+
+      // 2. Handle '?' for random generation
+      let originalResponse = response;
+      let wasRandom = false;
+      if (response === '?') {
+        wasRandom = true;
+        console.log(`askForCharacterInfo DEBUG: User entered '?' for ${infoType}. Attempting random generation.`);
+        if (infoType === 'name') response = getRandomName();
+        else if (infoType === 'look') response = getRandomLook();
+        else if (infoType === 'concept') response = getRandomConcept();
+        else {
+            console.log(`askForCharacterInfo WARN: Random generation not supported for infoType '${infoType}'. Using '?'.`);
+            response = '?';
+            wasRandom = false;
+        }
+        if (!response || response === '?') {
+            console.log(`askForCharacterInfo WARN: Random generation failed or returned empty for ${infoType}. Asking user to try again.`);
+            await user.send(`Sorry, I couldn't generate a random ${infoType}. Please provide one manually or try '?' again later.`);
+            response = originalResponse;
+            continue;
+        }
+         console.log(`askForCharacterInfo DEBUG: Generated random ${infoType}: "${response}"`);
+      }
+
+      // 3. Confirm the input
+      const confirmPrompt = wasRandom
+         ? `I generated the following ${infoType} for you: **"${response}"**. Is this okay?`
+         : `You entered: **"${response}"**. Is this correct?`;
+
+      console.log(`askForCharacterInfo DEBUG: Asking for confirmation for ${infoType}: "${response}"`);
+      confirmed = await confirmInput(user, confirmPrompt, time);
+      console.log(`askForCharacterInfo DEBUG: Confirmation result for ${infoType}: ${confirmed}`);
+
+      if (confirmed) {
+        console.log(`askForCharacterInfo DEBUG: Entering confirmed block for ${infoType}.`);
+        const sanitizedInput = sanitizeString(response);
+        console.log(`askForCharacterInfo DEBUG: Sanitized ${infoType}: "${sanitizedInput}"`);
+
+        try {
+            game.players[playerId][infoType] = sanitizedInput;
+            console.log(`askForCharacterInfo DEBUG: Assigned to game object: game.players[${playerId}][${infoType}] = "${game.players[playerId][infoType]}"`);
+            saveGameData();
+            console.log(`askForCharacterInfo: Saved ${infoType} for ${user.tag} (${playerId}): "${sanitizedInput}"`);
+            await user.send(`Okay, I've recorded your ${infoType} as: "${sanitizedInput}".`);
+        } catch (saveError) {
+             console.error(`askForCharacterInfo CRITICAL: Failed to save ${infoType} for ${playerId}:`, saveError);
+             await user.send(`⚠️ There was a critical error saving your ${infoType}. Please notify the bot admin.`);
+             throw saveError;
+        }
+
       } else {
-        input = normalizeSentence(input);
+        console.log(`askForCharacterInfo DEBUG: Confirmation was 'No' for ${infoType}. Looping back.`);
+        await user.send(`Okay, let's try again. Please provide your ${infoType}.`);
       }
-      const confirmation = await confirmInput(user, `Is this ${field} correct?\n${input}`, time);
-      if (confirmation) {
-        game.players[playerId][field] = input;
-        await user.send(`Your character's ${field} has been recorded.`);
-        return;
-      } else {
-        continue;
-      }
-    } else {
-      await user.send(`Request timed out. Please provide your ${field} again.`);
-      continue;
+    } catch (error) {
+      // Handle timeout from getDMResponse or confirmInput
+      // Check if the error object indicates a timeout (might depend on how getDMResponse/confirmInput throw errors)
+      // For now, assume any error here might be a timeout or DM failure
+      console.log(`askForCharacterInfo: Timed out or error waiting for ${infoType} or confirmation from ${user.tag} (${playerId}). Error: ${error.message}`);
+      await user.send(`You took too long to respond or an error occurred. We'll need to restart character creation later.`);
+      throw new Error(`Timeout or error waiting for ${infoType} from ${playerId}`); // Propagate error
     }
-  }
+  } // end while(!confirmed)
+  console.log(`askForCharacterInfo DEBUG: Finished loop for ${infoType} for ${user.tag}`);
 }
 
 export async function askForTraits(user, game, playerId) {
@@ -737,12 +788,12 @@ export async function askForTraits(user, game, playerId) {
     const startButtonId = `ask_traits_start_${playerId}_${channelId}`;
     const startEmbed = new EmbedBuilder()
       .setColor(0x0099FF)
-      .setTitle('Step 1: Set Virtue & Vice')
-      .setDescription('Click the button below to enter your character\'s Virtue and Vice.');
+      .setTitle('Virtue & Vice')
+      .setDescription('Click the button below to enter a Virtue and a Vice.\nVirtues solve more problems than they create, Vices cause more problems than they solve. Each should be a single vague but descriptive adjective.');
     const startRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder()
         .setCustomId(startButtonId)
-        .setLabel('Set Virtue & Vice')
+        .setLabel('Virtue & Vice')
         .setStyle(ButtonStyle.Primary)
     );
 
@@ -802,7 +853,7 @@ export async function askForTraits(user, game, playerId) {
       await buttonInteraction.showModal(traitsModal);
     } catch (modalError) {
       console.error(`askForTraits: Error showing modal to ${user.tag}:`, modalError);
-      await buttonInteraction.followUp({ content: 'Error showing trait input form. Please try again later or contact support.', ephemeral: true }).catch(() => {});
+      await buttonInteraction.followUp({ content: 'Error showing trait input form. Please try again later or contact support.' }).catch(() => {});
       // Let the loop restart on error showing modal
       await startMessage.edit({ content: '*Error displaying input form. Click button again if needed.*', components: [startRow] }).catch(() => {}); // Re-enable button potentially
       continue; // Restart loop
@@ -843,11 +894,10 @@ export async function askForTraits(user, game, playerId) {
 
     // Basic validation (ensure they are not empty after processing)
     if (!currentVirtue || !currentVice) {
-        await modalInteraction.reply({ content: 'Invalid input received. Both Virtue and Vice must be provided (or use "?"). Please try again.', ephemeral: true }).catch(() => {});
+        await modalInteraction.reply({ content: 'Invalid input received. Both Virtue and Vice must be provided (or use "?"). Please try again.' }).catch(() => {});
         await startMessage.edit({ content: '*Invalid input. Click button again.*', components: [startRow] }).catch(() => {}); // Re-enable button
         continue; // Restart loop
     }
-
 
     // --- 6. Confirmation Step ---
     const confirmButtonYesId = `traits_confirm_yes_${playerId}_${channelId}`;
@@ -859,7 +909,7 @@ export async function askForTraits(user, game, playerId) {
       .setDescription(`Are you happy with these Traits?\n\n**Virtue:** ${currentVirtue}\n**Vice:** ${currentVice}`);
     const confirmRow = new ActionRowBuilder().addComponents(
       new ButtonBuilder().setCustomId(confirmButtonYesId).setLabel('Yes').setStyle(ButtonStyle.Success),
-      new ButtonBuilder().setCustomId(confirmButtonNoId).setLabel('No, Try Again').setStyle(ButtonStyle.Danger)
+      new ButtonBuilder().setCustomId(confirmButtonNoId).setLabel('Edit').setStyle(ButtonStyle.Danger)
     );
 
     // Reply to the modal submission with the confirmation message
@@ -868,7 +918,7 @@ export async function askForTraits(user, game, playerId) {
         confirmMessage = await modalInteraction.reply({ embeds: [confirmEmbed], components: [confirmRow], fetchReply: true });
     } catch (replyError) {
         console.error(`askForTraits: Error sending confirmation reply to ${user.tag}:`, replyError);
-        await modalInteraction.followUp({ content: 'Error displaying confirmation. Please try again.', ephemeral: true }).catch(() => {});
+        await modalInteraction.followUp({ content: 'Error displaying confirmation. Please try again.' }).catch(() => {});
         await startMessage.edit({ content: '*Error during confirmation. Click button again.*', components: [startRow] }).catch(() => {}); // Re-enable button
         continue; // Restart loop
     }
@@ -902,12 +952,12 @@ export async function askForTraits(user, game, playerId) {
       // Confirmed YES
       finalVirtue = currentVirtue;
       finalVice = currentVice;
-      await confirmInteraction.followUp({ content: 'Traits confirmed!', ephemeral: true }).catch(() => {}); // Ephemeral confirmation
+      await confirmInteraction.followUp({ content: 'Traits confirmed!' }).catch(() => {});
       await startMessage.delete().catch(() => {}); // Clean up original button message
       break; // Exit loop, traits are set
     } else {
       // Confirmed NO (Try Again)
-      await confirmInteraction.followUp({ content: 'Okay, let\'s try entering the traits again.', ephemeral: true }).catch(() => {});
+      await confirmInteraction.followUp({ content: 'Okay, let\'s try entering the traits again.' }).catch(() => {});
       await startMessage.edit({ content: 'Please click the button again to re-enter your Virtue & Vice.', components: [startRow] }).catch(() => {}); // Edit original message
       // Loop continues
     }
@@ -931,81 +981,186 @@ export async function askForTraits(user, game, playerId) {
 }
 
 export async function askForMoment(user, game, playerId, time) {
-  let input;
-  while (true) {
-    const response = await getDMResponse(user, 'Please send me your Moment.\nA Moment is an event that would bring you hope andbe reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.', time, m => m.author.id === playerId);
-    if (response) {
-      if (response.trim() === "?") {
-        let randomMoment = getRandomMoment();
-        randomMoment = sanitizeString(randomMoment);
-        randomMoment = normalizeSentence(randomMoment);
-        game.players[playerId].moment = randomMoment; // Save the processed string
-        await user.send(`A random Moment has been assigned:\n${randomMoment}`); // Show the processed string 
-        saveGameData(); // write the data to the file
-        return;
-      }
-      input = response.trim();
+  let confirmed = false;
+  let response = '';
+  const infoType = 'Moment'; // Define for logging/prompts
 
-      if (!input) {
-        await user.send('Invalid Moment. Please provide a non-empty value.');
-        continue;
-      }
+  // The prompt text is now internal to this function
+  const basePrompt = 'Please send me your Moment.\nA Moment is an event that would bring you hope and be reasonable to achieve, kept succinct and clear to provide strong direction.\nAll Moments should have the potential for failure.';
 
-      input = sanitizeString(input);
-      input = normalizeSentence(input);
-      const confirmation = await confirmInput(user, `Are you happy with your Moment?\n${input}`, time);
-      if (confirmation) {
-        game.players[playerId].moment = input;
-        saveGameData();
-        return;
+  while (!confirmed) {
+    try {
+      // 1. Get the DM response
+      response = await getDMResponse(user, basePrompt, time, m => m.author.id === playerId, `Request for ${infoType}`);
+      if (!response) { // Handle empty input or timeout from getDMResponse
+         // getDMResponse returns null on timeout or error
+         // Throw an error to be caught by the main catch block below
+         throw new Error('Timeout or empty response');
+      }
+      console.log(`askForMoment DEBUG: Received raw response for ${infoType} from ${user.tag}: "${response}"`);
+
+      // 2. Handle '?' for random generation OR process user input
+      let currentMoment = ''; // Temporary variable to hold the moment being confirmed
+      let wasRandom = false;
+
+      if (response === '?') {
+        wasRandom = true;
+        console.log(`askForMoment DEBUG: User entered '?' for ${infoType}. Attempting random generation.`);
+        currentMoment = getRandomMoment();
+        // Basic check if random generation worked
+        if (!currentMoment) {
+            console.log(`askForMoment WARN: Random generation failed or returned empty for ${infoType}. Asking user to try again.`);
+            await user.send(`Sorry, I couldn't generate a random ${infoType}. Please provide one manually or try '?' again later.`);
+            continue; // Ask again
+        }
+        // Sanitize and normalize the *random* moment
+        currentMoment = normalizeSentence(sanitizeString(currentMoment));
+        console.log(`askForMoment DEBUG: Generated and processed random ${infoType}: "${currentMoment}"`);
       } else {
-        continue;
+        // Sanitize and normalize the *user's* input
+        currentMoment = normalizeSentence(sanitizeString(response));
+        // Check if it became empty after processing
+        if (!currentMoment) {
+            await user.send(`Invalid ${infoType}. Please provide a non-empty value.`);
+            continue; // Ask again
+        }
+        console.log(`askForMoment DEBUG: Processed user input for ${infoType}: "${currentMoment}"`);
       }
-    } else {
-      let randomMoment = getRandomMoment();
-      randomMoment = sanitizeString(randomMoment);
-      randomMoment = normalizeSentence(randomMoment);
-      game.players[playerId].moment = randomMoment; // Save processed random moment
-      await user.send(`Request timed out. A random Moment has been assigned:\n${randomMoment}`);
-      saveGameData();
-      return;
+
+      // 3. Confirm the input (either user-provided or randomly generated)
+      const confirmPrompt = wasRandom
+         ? `I generated the following ${infoType} for you:\n**"${currentMoment}"**\n\nIs this okay?`
+         : `You entered:\n**"${currentMoment}"**\n\nIs this correct?`;
+
+      console.log(`askForMoment DEBUG: Asking for confirmation for ${infoType}: "${currentMoment}"`);
+      confirmed = await confirmInput(user, confirmPrompt, time); // confirmInput returns true/false/null
+      console.log(`askForMoment DEBUG: Confirmation result for ${infoType}: ${confirmed}`);
+
+      if (confirmed === true) {
+        // --- User confirmed YES ---
+        console.log(`askForMoment DEBUG: Entering confirmed block for ${infoType}.`);
+        try {
+            game.players[playerId][infoType.toLowerCase()] = currentMoment; // Save the confirmed moment
+            console.log(`askForMoment DEBUG: Assigned to game object: game.players[${playerId}].${infoType.toLowerCase()} = "${game.players[playerId][infoType.toLowerCase()]}"`);
+            saveGameData();
+            console.log(`askForMoment: Saved ${infoType} for ${user.tag} (${playerId}): "${currentMoment}"`);
+            await user.send(`Okay, I've recorded your ${infoType} as:\n"${currentMoment}"`);
+            // Loop will terminate because confirmed is true
+        } catch (saveError) {
+             console.error(`askForMoment CRITICAL: Failed to save ${infoType} for ${playerId}:`, saveError);
+             await user.send(`⚠️ There was a critical error saving your ${infoType}. Please notify the bot admin.`);
+             throw saveError; // Stop the process here
+        }
+
+      } else if (confirmed === false) {
+        // --- User confirmed NO ---
+        console.log(`askForMoment DEBUG: Confirmation was 'No' for ${infoType}. Looping back.`);
+        await user.send(`Okay, let's try again. Please provide your ${infoType}.`);
+        // Loop continues naturally
+      } else {
+        // --- Timeout during confirmation ---
+        // confirmInput handles sending the timeout message
+        console.log(`askForMoment: Timed out waiting for confirmation from ${user.tag} (${playerId}).`);
+        throw new Error(`Timeout waiting for ${infoType} confirmation from ${playerId}`);
+      }
+    } catch (error) {
+      // Handle timeout/error from getDMResponse or other unexpected errors
+      console.log(`askForMoment: Timed out or error waiting for ${infoType} or confirmation from ${user.tag} (${playerId}). Error: ${error.message}`);
+      // Send a generic timeout/error message
+      await user.send(`You took too long to respond or an error occurred while processing your ${infoType}. We'll need to restart character creation later.`).catch(e => console.error("askForMoment: Failed to send timeout/error DM:", e));
+      // Propagate the error to be caught by handleStepFour
+      throw new Error(`Timeout or error waiting for ${infoType} from ${playerId}`);
     }
-  }
+  } // end while(!confirmed)
+  console.log(`askForMoment DEBUG: Finished loop for ${infoType} for ${user.tag}`);
+  // Successfully got and confirmed this piece of info
 }
 
 export async function askForBrink(user, game, participantId, prompt, time, isThreat = false) {
-  let coreInput;
-  while (true) {
-      const response = await getDMResponse(user, prompt, time, m => m.author.id === participantId, "Request for Brink");
-      if (response) {
-          if (response.trim() === "?") {
-              coreInput = getRandomBrink(isThreat);
-              coreInput = sanitizeString(coreInput);
-              await user.send(`A random Brink core has been assigned: ${coreInput}\n(This will be formatted for the recipient later)`);
-              break;
-          }
-          coreInput = response.trim();
-          if (!coreInput) {
-              await user.send('Invalid Brink. Please provide a non-empty value.');
-              continue;
-          }
-          coreInput = sanitizeString(coreInput);
+  let confirmed = false; // Use confirmed flag for loop control
+  let finalCoreInput = ''; // Store the final confirmed value
+  const infoType = 'Brink Core'; // For logging/prompts
 
-          const confirmation = await confirmInput(user, `Are you happy with this Brink core text?\n"${coreInput}"\n(This will be formatted for the recipient later)`, time, "Confirm Your Brink Core");
-          if (confirmation) {
-              break;
-          } else {
-              continue;
-          }
-      } else {
-          coreInput = getRandomBrink(isThreat);
-          coreInput = sanitizeString(coreInput);
-          await user.send(`Response timed out. A random Brink core has been assigned: ${coreInput}\n(This will be formatted for the recipient later)`);
-          break;
+  while (!confirmed) {
+    try {
+      // 1. Get the DM response
+      const response = await getDMResponse(user, prompt, time, m => m.author.id === participantId, `Request for ${infoType}`);
+      if (!response) { // Handle empty input or timeout from getDMResponse
+         throw new Error('Timeout or empty response');
       }
-  }
+      console.log(`askForBrink DEBUG: Received raw response for ${infoType} from ${user.tag}: "${response}"`);
 
-  return coreInput; // Return the collected core text
+      // 2. Handle '?' for random generation OR process user input
+      let currentBrinkCore = ''; // Temporary variable to hold the brink being confirmed
+      let wasRandom = false;
+
+      if (response.trim() === '?') {
+        wasRandom = true;
+        console.log(`askForBrink DEBUG: User entered '?' for ${infoType}. Attempting random generation.`);
+        currentBrinkCore = getRandomBrink(isThreat);
+        // Basic check if random generation worked
+        if (!currentBrinkCore) {
+            console.log(`askForBrink WARN: Random generation failed or returned empty for ${infoType}. Asking user to try again.`);
+            await user.send(`Sorry, I couldn't generate a random ${infoType}. Please provide one manually or try '?' again later.`);
+            continue; // Ask again
+        }
+        // Sanitize the *random* brink core
+        currentBrinkCore = sanitizeString(currentBrinkCore);
+        console.log(`askForBrink DEBUG: Generated and sanitized random ${infoType}: "${currentBrinkCore}"`);
+      } else {
+        // Sanitize the *user's* input
+        currentBrinkCore = sanitizeString(response.trim());
+        // Check if it became empty after processing
+        if (!currentBrinkCore) {
+            await user.send(`Invalid ${infoType}. Please provide a non-empty value.`);
+            continue; // Ask again
+        }
+        console.log(`askForBrink DEBUG: Sanitized user input for ${infoType}: "${currentBrinkCore}"`);
+      }
+
+      // 3. Confirm the input (either user-provided or randomly generated)
+      const confirmPrompt = wasRandom
+         ? `I generated the following ${infoType} for you:\n**"${currentBrinkCore}"**\n\nIs this okay? (This will be formatted for the recipient later)`
+         : `You entered:\n**"${currentBrinkCore}"**\n\nIs this correct? (This will be formatted for the recipient later)`;
+
+      console.log(`askForBrink DEBUG: Asking for confirmation for ${infoType}: "${currentBrinkCore}"`);
+      const confirmationResult = await confirmInput(user, confirmPrompt, time, `Confirm Your ${infoType}`); // confirmInput returns true/false/null
+      console.log(`askForBrink DEBUG: Confirmation result for ${infoType}: ${confirmationResult}`);
+
+      if (confirmationResult === true) {
+        // --- User confirmed YES ---
+        console.log(`askForBrink DEBUG: User confirmed ${infoType}.`);
+        finalCoreInput = currentBrinkCore; // Store the confirmed value
+        confirmed = true; // Set flag to exit loop
+        await user.send(`Okay, I've recorded your ${infoType} as:\n"${finalCoreInput}"`).catch(e => console.error("askForBrink: Failed to send confirmation DM:", e));
+        // Loop will terminate
+
+      } else if (confirmationResult === false) {
+        // --- User confirmed NO ---
+        console.log(`askForBrink DEBUG: Confirmation was 'No' for ${infoType}. Looping back.`);
+        await user.send(`Okay, let's try again. Please provide your ${infoType}.`).catch(e => console.error("askForBrink: Failed to send retry DM:", e));
+        // Loop continues naturally
+
+      } else {
+        // --- Timeout during confirmation ---
+        // confirmInput handles sending the timeout message
+        console.log(`askForBrink: Timed out waiting for confirmation from ${user.tag} (${participantId}).`);
+        throw new Error(`Timeout waiting for ${infoType} confirmation from ${participantId}`);
+      }
+    } catch (error) {
+      // Handle timeout/error from getDMResponse or other unexpected errors
+      console.log(`askForBrink: Timed out or error waiting for ${infoType} or confirmation from ${user.tag} (${participantId}). Error: ${error.message}`);
+
+      // Assign random on timeout/error
+      finalCoreInput = getRandomBrink(isThreat);
+      finalCoreInput = sanitizeString(finalCoreInput);
+      await user.send(`Response timed out or an error occurred. A random ${infoType} has been assigned: ${finalCoreInput}\n(This will be formatted for the recipient later)`).catch(e => console.error("askForBrink: Failed to send timeout/error DM:", e));
+      confirmed = true; // Exit loop after assigning random due to error/timeout
+    }
+  } // end while(!confirmed)
+
+  console.log(`askForBrink DEBUG: Finished loop for ${infoType} for ${user.tag}. Returning: "${finalCoreInput}"`);
+  return finalCoreInput; // Return the final confirmed or randomly assigned core text
 }
 
 export function getRandomTheme() {
@@ -1305,7 +1460,7 @@ export function normalizeBrink(coreBrink, observerName, isThreat = false) {
 
 export async function displayInventory(user, game, playerId, isRejected = false) {
   const player = game.players[playerId];
-  const characterName = player.name || user.username;
+  const characterName = player.name || 'Not set';
   let inventoryTitle;
 
   // Check if the user viewing the inventory is the same as the player whose inventory it is
@@ -1403,7 +1558,7 @@ export async function handleDoneButton(interaction, game) {
   }
 
   const gearList = player.gear && player.gear.length > 0 ? player.gear.join(', ') : 'No item added.';
-  const characterName = player.name || player.playerUsername; // Use username as fallback
+  const characterName = player.name || 'Not set';
 
   try {
     if (game.characterGenStep === 7) {

@@ -280,7 +280,7 @@ export const randomConcepts = [
 // Character Creation Messages
 export const newGameMessage = `**The World of Ten Candles**\nYour characters will face unimaginable terrors in the dying of the light.\n\n**Though you know your characters will die, you must have hope that they will survive.**\n\n**Ten Candles** focuses around shared narrative control.\nEveryone will share the mantle of storyteller and have an equal hand in telling this dark story.\n\nLet\'s begin character generation. Check your DMs for instructions.\n\n`;
 export const stepOneMessage = `**Step One: Players Write Traits**\nPlayers, check your DMs and reply with a Virtue and a Vice.`;
-export const stepTwoMessage = `**Step Two: GM Introduces this session's Module / Theme**\nThe GM will now introduce the module/theme and then use \`${BOT_PREFIX}theme [description]\` to advance to Step Three`;
+export const stepTwoMessage = `**Step Two: GM Introduces this session's Module / Theme**\nThe GM will now introduce the module/theme and respond in their DMs with the theme title and description which will automatically advance to Step Three`;
 export const stepThreeMessage = `**Step Three: Players Create Concepts**\nPlayers, expect a DM and respond with your character\'s Name, Look and Concept, in that order as three separate messages.`;
 export const stepFourMessage = `**Step Four: Players Plan Moments**\nMoments are an event that would be reasonable to achieve, kept succinct and clear to provide strong direction. However, all Moments should have potential for failure.`;
 export const stepFiveMessage = `**Step Five: Players and GM Discover Brinks**\nCheck your DMs for personalized instructions on this step.`;

@@ -28,8 +28,7 @@ export function getHelpEmbed(isAdmin, message) {
   if (isGM) {
     baseEmbed.addFields({
       name: '\n\n**GM Only Commands:**',
-      value: `\`${BOT_PREFIX}theme [description]\`: Saves the theme description and advances Character Generation to Step Three.\n` +
-        `\`${BOT_PREFIX}prevstep\`: Goes back one character generation step.\n` +
+      value: `\`${BOT_PREFIX}prevstep\`: Goes back one character generation step.\n` +
         `\`${BOT_PREFIX}gamestatus\`: (DM Only) View game status and player details privately.\n`
         `\`${BOT_PREFIX}cancelgame\`: Cancel the game.\n` +
         `\`${BOT_PREFIX}removeplayer <Player ID> [Reason]\`: Removes a player.\n` +

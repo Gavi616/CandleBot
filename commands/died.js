@@ -1,7 +1,7 @@
 import { getGameData, saveGameData, sendDM, markPlayerDead, areOtherPlayersAlive, findGameByUserId } from '../utils.js'; // Added markPlayerDead, areOtherPlayersAlive, findGameByUserId
-import { playRecordings, client } from '../index.js'; // Added client
+import { playRecordings, client } from '../index.js';
 import { EmbedBuilder, ActionRowBuilder, ButtonBuilder, ButtonStyle } from 'discord.js';
-import { BOT_PREFIX, MARTYRDOM_TIMEOUT } from '../config.js'; // Added BOT_PREFIX, MARTYRDOM_TIMEOUT
+import { BOT_PREFIX, MARTYRDOM_TIMEOUT } from '../config.js';
 
 export async function died(message, args) {
     const channelId = message.channel.id;

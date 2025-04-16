@@ -36,7 +36,7 @@ export async function gmGameStatus(message) {
     // First find *any* game the user is in
     const potentialGame = findGameByUserId(gmId);
 
-    // Now check if they are the GM of that game
+    // Check if they are the GM of that game
     if (!potentialGame || potentialGame.gmId !== gmId) {
         await message.author.send('You are not currently the GM of an active game.').catch(console.error);
         return;
@@ -71,6 +71,15 @@ export async function gmGameStatus(message) {
             .setDisabled(true) // Start disabled as it's the current view
     );
 
+    const ghostsSpeak = game.ghostsSpeakTruths !== false; // Default to true if undefined
+    buttons.push(
+        new ButtonBuilder()
+            .setCustomId(`gmstatus_toggle_ghosts_${gameChannelId}`)
+            .setLabel(`Ghosts Speak: ${ghostsSpeak ? 'ON' : 'OFF'}`)
+            .setStyle(ghostsSpeak ? ButtonStyle.Success : ButtonStyle.Danger)
+        // This button should NOT be disabled
+    );
+
     // Buttons for Players
     for (const playerId of game.playerOrder) {
         const player = game.players[playerId];
@@ -102,28 +111,44 @@ export async function gmGameStatus(message) {
 
 // --- Helper Function to Generate Game Status Embed ---
 export function generateGameStatusEmbed(game, gameChannelName) {
+    // --- Prepare data ---
+    const themeTitle = game.theme?.title || 'Not set';
+    const descriptionValue = game.theme?.description || 'Not set';
+    const truncatedDescription = descriptionValue.length > 1024
+        ? descriptionValue.substring(0, 1021) + '...'
+        : descriptionValue;
+    const gameMode = game.gameMode || 'N/A';
+    const gmMention = `<@${game.gmId}>`;
+    const playerMentions = game.playerOrder.map(pId => `<@${pId}>${game.players[pId]?.isDead ? ' (Dead)' : ''}`).join(', ') || 'None';
+
+    // --- Determine the status line ---
+    let statusString = '';
+    if (game.characterGenStep < 9) {
+        statusString = `Character Generation Step: ${game.characterGenStep}`;
+    } else if (game.inLastStand) {
+        statusString = "All candles have been extinguished. We are in **The Last Stand**.";
+    } else {
+        // Combine Gameplay status, scene, and dice pool
+        statusString = `Gameplay Active - Current Scene: ${game.scene || 'N/A'} - Dice Pool Remaining: ${game.dicePool !== undefined ? game.dicePool : 'N/A'}`;
+    }
+
+    // --- Build the main description string ---
+    let descriptionString = `**Theme / Module Title:** ${themeTitle}\n\n`;
+    descriptionString += `**Description:** ${truncatedDescription}\n\n`;
+
+    descriptionString += `**Game Mode:** ${gameMode}\n`;
+    descriptionString += `**GM:** ${gmMention}\n`;
+    descriptionString += `**Players:** ${playerMentions}\n`;
+    descriptionString += `**Status:** ${statusString}`;
+
+    // --- Create the Embed ---
     const embed = new EmbedBuilder()
         .setColor(0x0099FF)
+        // Keep the title simple
         .setTitle(`Game Status: <#${game.textChannelId}>`)
-        .addFields(
-            { name: 'Theme / Module', value: game.theme || 'Not set' },
-            { name: 'Game Mode', value: game.gameMode || 'N/A' },
-            { name: 'GM', value: `<@${game.gmId}>` },
-            { name: 'Players', value: game.playerOrder.map(pId => `<@${pId}>${game.players[pId]?.isDead ? ' (Dead)' : ''}`).join(', ') || 'None' }
-        )
-        .setTimestamp();
+        // Set the combined description string
+        .setDescription(descriptionString)
 
-    if (game.characterGenStep < 9) {
-        embed.addFields({ name: 'Status', value: `Character Generation Step: ${game.characterGenStep}` });
-    } else if (game.inLastStand) {
-        embed.addFields({ name: 'Status', value: "All candles have been extinguished. We are in **The Last Stand**." });
-    } else {
-        embed.addFields(
-            { name: 'Status', value: `Gameplay Active` },
-            { name: 'Current Scene', value: `${game.scene || 'N/A'}`, inline: true },
-            { name: 'Dice Pool Remaining', value: `${game.dicePool !== undefined ? game.dicePool : 'N/A'}`, inline: true }
-        );
-    }
     return embed;
 }
 
@@ -134,27 +159,42 @@ export function generatePlayerStatusEmbed(game, playerId) {
         return new EmbedBuilder().setColor(0xFF0000).setTitle('Error').setDescription('Player data not found.');
     }
 
-    const playerName = player.name || player.playerUsername;
+    // --- Prepare Data ---
+    const characterName = player.name || player.playerUsername;
+    const playerMention = `<@${playerId}>`;
+    const statusText = player.isDead ? '**DEAD**' : 'Alive';
+    const hopeDice = player.hopeDice || 0;
+    const concept = player.concept || 'Not set';
+    const look = player.look || 'Not set';
+    const virtueText = `${player.virtue || 'N/A'} ${player.virtueBurned ? '(Burned)' : ''}`;
+    const viceText = `${player.vice || 'N/A'} ${player.viceBurned ? '(Burned)' : ''}`;
+    const momentText = `${player.moment || 'N/A'} ${player.momentBurned ? '(Burned)' : ''}`;
+    const brinkText = player.brink || 'N/A';
+    const givenBrinkText = player.givenBrink || 'N/A';
+    const stackText = player.stackOrder?.join(', ') || 'Not set';
+    const inventoryText = player.gear?.length > 0 ? player.gear.join(', ') : 'Empty';
+    const recordingText = player.finalRecording || 'Not set';
+
+    // --- Build Description String ---
+    // Combine Name, Mention, Status, Hope Dice
+    const descriptionString = `**Name: ${characterName}** - **Player: ${playerMention}** - **Status: ${statusText}** - **Hope Dice: ${hopeDice}**`;
+
+    // --- Create Embed ---
     const embed = new EmbedBuilder()
         .setColor(player.isDead ? 0x808080 : 0x0099FF) // Grey out if dead
-        .setTitle(`Player Status: ${playerName}`)
-        .setDescription(player.isDead ? '**DEAD**' : 'Alive')
+        .setTitle(`Player Status: ${characterName}`) // Keep title for clarity
+        .setDescription(descriptionString) // Set the combined top line
         .addFields(
-            { name: 'Name', value: player.name || 'Not set', inline: true },
-            { name: 'Concept', value: player.concept || 'Not set', inline: true },
-            { name: 'Look', value: player.look || 'Not set' },
-            { name: 'Virtue', value: `${player.virtue || 'N/A'} ${player.virtueBurned ? '(Burned)' : ''}`, inline: true },
-            { name: 'Vice', value: `${player.vice || 'N/A'} ${player.viceBurned ? '(Burned)' : ''}`, inline: true },
-            { name: 'Moment', value: `${player.moment || 'N/A'} ${player.momentBurned ? '(Burned)' : ''}` },
-            { name: 'Brink', value: player.brink || 'N/A' },
-            { name: 'Brink Written', value: player.givenBrink || 'N/A' },
-            { name: 'Stack Order', value: player.stackOrder?.join(', ') || 'Not set' },
-            { name: 'Hope Dice', value: `${player.hopeDice || 0}`, inline: true },
-            { name: 'Inventory', value: player.gear?.length > 0 ? player.gear.join(', ') : 'Empty' },
-            { name: 'Final Recording', value: player.recordings || 'Not set' }
+            { name: 'Concept', value: concept, inline: false },
+            { name: 'Look', value: look, inline: false },
+            { name: 'Virtue', value: virtueText, inline: true },
+            { name: 'Vice', value: viceText, inline: true },
+            { name: 'Moment', value: momentText },
+            { name: 'Brink', value: brinkText },
+            { name: 'Brink Written', value: givenBrinkText },
+            { name: 'Stack Order', value: stackText },
+            { name: 'Inventory', value: inventoryText },
+            { name: 'Final Recording', value: recordingText }
         )
-        .setFooter({ text: `Player ID: <@${playerId}>` })
-        .setTimestamp();
-
     return embed;
 }

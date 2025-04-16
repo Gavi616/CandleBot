@@ -1,3 +1,4 @@
+import { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder } from 'discord.js';
 import {
   saveGameData, getGameData, getVirtualTableOrder, askForTraits, askForMoment,
   askForBrink, sendCandleStatus, askForCharacterInfo, getDMResponse, sendDM, displayInventory,
@@ -5,8 +6,8 @@ import {
 } from './utils.js';
 import { client } from './index.js';
 import {
-  TRAIT_TIMEOUT, BRINK_TIMEOUT, gameStartMessage, startingMessageGM, startingMessagePlayer, stepOneMessage,
-  stepTwoMessage, stepThreeMessage, stepFourMessage, stepFiveMessage, stepSixMessage,
+  TRAIT_TIMEOUT, BRINK_TIMEOUT, BOT_PREFIX, gameStartMessage, startingMessageGM, startingMessagePlayer,
+  stepOneMessage, stepTwoMessage, stepThreeMessage, stepFourMessage, stepFiveMessage, stepSixMessage,
   stepSevenMessage, stepSevenReminder, stepEightMessage
 } from './config.js';
 
@@ -81,29 +82,85 @@ export async function sendCharacterGenStep(gameChannel, game) {
 }
 
 export async function handleStepOne(gameChannel, game) {
-  game.traitsRequested = true;
-  gameChannel.send(stepOneMessage);
+  await gameChannel.send(stepOneMessage); // "Players, check your DMs..."
   sendCandleStatus(gameChannel, 3);
-  await new Promise(resolve => setTimeout(resolve, 5000));
-  startReminderTimers(gameChannel, game);
+  await new Promise(resolve => setTimeout(resolve, 5000)); // Pause before DMs
+
+  startReminderTimers(gameChannel, game); // Start GM reminders
+
   const traitPromises = [];
   for (const playerId of game.playerOrder) {
-    const message = await gameChannel.messages.fetch({ limit: 1 }).then(messages => messages.first());
-    traitPromises.push(askForTraits(message, gameChannel, game, playerId));
+    try {
+      const member = await gameChannel.guild.members.fetch(playerId);
+      const user = member.user;
+      // Call the NEW askForTraits which handles the modal flow internally
+      traitPromises.push(askForTraits(user, game, playerId));
+    } catch (error) {
+      console.error(`handleStepOne: Error fetching member or starting askForTraits for ${playerId}:`, error);
+      // Handle error for this player - maybe assign random traits directly?
+      game.players[playerId].virtue = getRandomVirtue();
+      game.players[playerId].vice = getRandomVice();
+      traitPromises.push(Promise.resolve({ // Resolve promise so Promise.all doesn't fail
+          virtue: game.players[playerId].virtue,
+          vice: game.players[playerId].vice
+      }));
+      await gameChannel.send(`⚠️ Error contacting <@${playerId}> for traits. Random traits assigned.`).catch(console.error);
+    }
   }
+
+  // Wait for all players to complete the modal/confirmation/timeout flow
   await Promise.all(traitPromises);
-  const swappedTraits = await swapTraits(client, game.players, game, game.guildId);
-  game.players = swappedTraits;
-  clearReminderTimers(game);
+  console.log("handleStepOne: All players finished trait input/assignment.");
+
+  // --- Perform Trait Swap ---
+  console.log("handleStepOne: Swapping traits...");
+  // Pass game.players directly, swapTraits modifies a copy and returns it
+  const swappedPlayersData = await swapTraits(client, game.players, game, game.guildId);
+  // Overwrite the player data in the main game object with the swapped data
+  Object.assign(game.players, swappedPlayersData);
+  console.log("handleStepOne: Traits swapped.");
+
+  // --- Finalize Step ---
+  clearReminderTimers(game); // Stop GM reminders
   game.characterGenStep++;
-  saveGameData();
-  gameChannel.send('Traits have now been swapped.\nPlayers, check your DMs and look over the Virtue and Vice you have received.');
-  await new Promise(resolve => setTimeout(resolve, 3000));
-  sendCharacterGenStep(gameChannel, game);
+  saveGameData(); // Save the game state with swapped traits
+
+  await new Promise(resolve => setTimeout(resolve, 3000)); // Pause before message
+  await gameChannel.send('Traits have now been swapped.\nPlayers, check your DMs and look over the Virtue and Vice you have received.');
+  await new Promise(resolve => setTimeout(resolve, 3000)); // Pause before next step message
+
+  sendCharacterGenStep(gameChannel, game); // Proceed to Step 2
 }
 
 export async function handleStepTwo(gameChannel, game) {
-  gameChannel.send(stepTwoMessage);
+  // 1. Send the message to the game channel as before
+  await gameChannel.send(stepTwoMessage); // "GM will now introduce the module/theme..."
+
+  // 2. Send a DM to the GM with a button to start the theme process
+  try {
+    const gmMember = await gameChannel.guild.members.fetch(game.gmId);
+    const gmUser = gmMember.user;
+
+    const row = new ActionRowBuilder()
+      .addComponents(
+        new ButtonBuilder()
+          .setCustomId(`set_theme_button_${game.textChannelId}`) // Unique ID including channel
+          .setLabel('Set Game Theme')
+          .setStyle(ButtonStyle.Primary)
+      );
+
+    await sendDM(gmUser, {
+      content: `It's time to set the theme for the **Ten Candles** session in <#${game.textChannelId}>. Click the button below to enter the theme details.`,
+      components: [row]
+    });
+    console.log(`handleStepTwo: Sent 'Set Theme' button DM to GM ${gmUser.tag} for game ${game.textChannelId}`);
+
+    // Start reminder timers for the GM to interact with the button/modal
+    startReminderTimers(gameChannel, game);
+
+  } catch (error) {
+    console.error(`handleStepTwo: Failed to fetch GM or send DM for game ${game.textChannelId}:`, error);
+  }
 }
 
 export async function handleStepThree(gameChannel, game) {

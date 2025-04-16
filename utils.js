@@ -10,8 +10,8 @@ import {
 import { defaultVirtues, defaultVices, defaultMoments, languageOptions, DEFAULT_LIT_CANDLE_EMOJI, DEFAULT_UNLIT_CANDLE_EMOJI } from './config.js';
 import { client } from './index.js';
 import { gameDataSchema, validateGameData } from './validation.js';
-import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType } from 'discord.js';
-import { BOT_PREFIX, TEST_USER_ID, defaultPlayerGMBrinks, defaultThreatBrinks, GM_REMINDER_TIMES, randomNames, randomLooks, randomConcepts } from './config.js';
+import { ModalBuilder, TextInputBuilder, TextInputStyle, ActionRowBuilder, EmbedBuilder, ButtonBuilder, ButtonStyle, ChannelType, StringSelectMenuBuilder, ComponentType, StringSelectMenuOptionBuilder } from 'discord.js';
+import { BOT_PREFIX, TEST_USER_ID, TRAIT_TIMEOUT, defaultPlayerGMBrinks, defaultThreatBrinks, defaultThemes, GM_REMINDER_TIMES, randomNames, randomLooks, randomConcepts } from './config.js';
 import { isTesting } from './index.js';
 import crypto from 'crypto';
 import path from 'path';
@@ -514,19 +514,20 @@ export async function requestConsent(user, prompt, yesId, noId, time, title = 'C
 }
 
 export function getGameData(identifier) {
-  console.log(`getGameData: Called with identifier: ${identifier}`);
+  // console.log(`getGameData: Called with identifier: ${identifier}`); // REMOVE/COMMENT OUT
   let game = gameData[identifier];
 
-  // If not found by channelId, try finding it by playerId
+  // If not found by channelId, try finding it by playerId or gmId
   if (!game) {
-    game = Object.values(gameData).find(game => game.players && (game.players[identifier] || game.gmId === identifier));
+    game = Object.values(gameData).find(g => g.players[identifier] || g.gmId === identifier);
     if (game) {
-      console.log(`getGameData: Found game for playerId ${identifier}`);
+      // console.log(`getGameData: Found game for participantId ${identifier}`); // REMOVE/COMMENT OUT
     } else {
+      // Keep this warning, it's useful when things go wrong
       console.warn(`getGameData: Game data not found for identifier: ${identifier}`);
     }
   } else {
-    console.log(`getGameData: Found game for channelId ${identifier}`);
+    // console.log(`getGameData: Found game for channelId ${identifier}`); // REMOVE/COMMENT OUT
   }
   return game;
 }
@@ -725,41 +726,208 @@ export async function askForCharacterInfo(user, game, playerId, field, question,
   }
 }
 
-export async function askForTraits(message, gameChannel, game, playerId) {
-  const player = await message.guild.members.fetch(playerId);
-  const user = player.user;
-  let virtue, vice;
+export async function askForTraits(user, game, playerId) {
+  const channelId = game.textChannelId; // Get channelId for unique IDs
+  const dmChannel = await user.createDM();
+  let finalVirtue = null;
+  let finalVice = null;
 
-  do {
-    const response = await getDMResponse(user, 'Please send a Virtue and a Vice, separated by a comma (e.g., "courageous, greedy").\nEach should be a single vague but descriptive adjective. (e.g. Sharpshooter => Steady)\nVirtues solve more problems than they create.\nVices cause more problems than they solve.', TRAIT_TIMEOUT, m => m.author.id === playerId, "Request for Traits");
-    if (response) {
-      if (response.trim() === "?") {
-        virtue = getRandomVirtue();
-        vice = getRandomVice();
-        await user.send(`Random traits have been assigned:\nVirtue: ${virtue}\nVice: ${vice}`);
-      } else {
-        [virtue, vice] = response.split(',').map(s => sanitizeString(s.trim()));
-        virtue = normalizeVirtueVice(virtue);
-        vice = normalizeVirtueVice(vice);
-      }
+  while (true) { // Loop until traits are confirmed or timeout occurs
+    // --- 1. Send Button to Initiate Modal ---
+    const startButtonId = `ask_traits_start_${playerId}_${channelId}`;
+    const startEmbed = new EmbedBuilder()
+      .setColor(0x0099FF)
+      .setTitle('Step 1: Set Virtue & Vice')
+      .setDescription('Click the button below to enter your character\'s Virtue and Vice.');
+    const startRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder()
+        .setCustomId(startButtonId)
+        .setLabel('Set Virtue & Vice')
+        .setStyle(ButtonStyle.Primary)
+    );
 
-      const confirmation = await confirmInput(user, `Are you happy with these Traits?\nVirtue: ${virtue}\nVice: ${vice}`, TRAIT_TIMEOUT, "Confirm these Traits");
-
-      if (!confirmation) {
-        continue;
-      }
-      game.players[playerId].virtue = virtue;
-      game.players[playerId].vice = vice;
-      saveGameData();
-      return;
-    } else {
-      game.players[playerId].virtue = getRandomVirtue();
-      game.players[playerId].vice = getRandomVice();
-      saveGameData();
-      await user.send(`Request timed out. Random traits have been assigned:\nVirtue: ${game.players[playerId].virtue}\nVice: ${game.players[playerId].vice}`);
-      return;
+    let startMessage;
+    try {
+      startMessage = await dmChannel.send({ embeds: [startEmbed], components: [startRow] });
+    } catch (error) {
+      console.error(`askForTraits: Failed to send initial button DM to ${user.tag}:`, error);
+      // Assign random on DM failure
+      finalVirtue = getRandomVirtue();
+      finalVice = getRandomVice();
+      console.log(`askForTraits: Assigning random traits to ${playerId} due to DM failure.`);
+      break; // Exit loop
     }
-  } while (true);
+
+    // --- 2. Wait for Button Interaction ---
+    let buttonInteraction;
+    try {
+      buttonInteraction = await startMessage.awaitMessageComponent({
+        filter: (i) => i.user.id === user.id && i.customId === startButtonId,
+        componentType: ComponentType.Button,
+        time: TRAIT_TIMEOUT // Use existing timeout
+      });
+    } catch (error) { // Timeout error
+      console.log(`askForTraits: Player ${user.tag} timed out clicking the start button.`);
+      await startMessage.edit({ content: '*Request timed out.*', embeds: [], components: [] }).catch(() => {}); // Clean up DM
+      finalVirtue = getRandomVirtue();
+      finalVice = getRandomVice();
+      await user.send(`Request timed out. Random traits have been assigned:\nVirtue: ${finalVirtue}\nVice: ${finalVice}`).catch(() => {});
+      break; // Exit loop
+    }
+
+    // --- 3. Show Modal ---
+    const modalId = `traits_modal_${playerId}_${channelId}`;
+    const traitsModal = new ModalBuilder()
+      .setCustomId(modalId)
+      .setTitle('Enter Virtue & Vice');
+
+    const virtueInput = new TextInputBuilder()
+      .setCustomId('virtueInput')
+      .setLabel("Virtue (or '?' for random)")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+    const viceInput = new TextInputBuilder()
+      .setCustomId('viceInput')
+      .setLabel("Vice (or '?' for random)")
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true);
+
+    traitsModal.addComponents(
+      new ActionRowBuilder().addComponents(virtueInput),
+      new ActionRowBuilder().addComponents(viceInput)
+    );
+
+    try {
+      await buttonInteraction.showModal(traitsModal);
+    } catch (modalError) {
+      console.error(`askForTraits: Error showing modal to ${user.tag}:`, modalError);
+      await buttonInteraction.followUp({ content: 'Error showing trait input form. Please try again later or contact support.', ephemeral: true }).catch(() => {});
+      // Let the loop restart on error showing modal
+      await startMessage.edit({ content: '*Error displaying input form. Click button again if needed.*', components: [startRow] }).catch(() => {}); // Re-enable button potentially
+      continue; // Restart loop
+    }
+
+    // --- 4. Wait for Modal Submission ---
+    let modalInteraction;
+    try {
+      modalInteraction = await buttonInteraction.awaitModalSubmit({
+        filter: (i) => i.user.id === user.id && i.customId === modalId,
+        time: TRAIT_TIMEOUT // Timeout for modal submission
+      });
+    } catch (error) { // Timeout error
+      console.log(`askForTraits: Player ${user.tag} timed out submitting the modal.`);
+      await startMessage.edit({ content: '*Modal submission timed out.*', embeds: [], components: [] }).catch(() => {}); // Clean up DM
+      finalVirtue = getRandomVirtue();
+      finalVice = getRandomVice();
+      await user.send(`Modal submission timed out. Random traits have been assigned:\nVirtue: ${finalVirtue}\nVice: ${finalVice}`).catch(() => {});
+      break; // Exit loop
+    }
+
+    // --- 5. Process Modal Input ---
+    let submittedVirtue = modalInteraction.fields.getTextInputValue('virtueInput').trim();
+    let submittedVice = modalInteraction.fields.getTextInputValue('viceInput').trim();
+    let currentVirtue, currentVice;
+
+    if (submittedVirtue === '?') {
+      currentVirtue = getRandomVirtue();
+    } else {
+      currentVirtue = normalizeVirtueVice(sanitizeString(submittedVirtue));
+    }
+
+    if (submittedVice === '?') {
+      currentVice = getRandomVice();
+    } else {
+      currentVice = normalizeVirtueVice(sanitizeString(submittedVice));
+    }
+
+    // Basic validation (ensure they are not empty after processing)
+    if (!currentVirtue || !currentVice) {
+        await modalInteraction.reply({ content: 'Invalid input received. Both Virtue and Vice must be provided (or use "?"). Please try again.', ephemeral: true }).catch(() => {});
+        await startMessage.edit({ content: '*Invalid input. Click button again.*', components: [startRow] }).catch(() => {}); // Re-enable button
+        continue; // Restart loop
+    }
+
+
+    // --- 6. Confirmation Step ---
+    const confirmButtonYesId = `traits_confirm_yes_${playerId}_${channelId}`;
+    const confirmButtonNoId = `traits_confirm_no_${playerId}_${channelId}`;
+
+    const confirmEmbed = new EmbedBuilder()
+      .setColor(0xFFA500) // Orange
+      .setTitle('Confirm Traits')
+      .setDescription(`Are you happy with these Traits?\n\n**Virtue:** ${currentVirtue}\n**Vice:** ${currentVice}`);
+    const confirmRow = new ActionRowBuilder().addComponents(
+      new ButtonBuilder().setCustomId(confirmButtonYesId).setLabel('Yes').setStyle(ButtonStyle.Success),
+      new ButtonBuilder().setCustomId(confirmButtonNoId).setLabel('No, Try Again').setStyle(ButtonStyle.Danger)
+    );
+
+    // Reply to the modal submission with the confirmation message
+    let confirmMessage;
+    try {
+        confirmMessage = await modalInteraction.reply({ embeds: [confirmEmbed], components: [confirmRow], fetchReply: true });
+    } catch (replyError) {
+        console.error(`askForTraits: Error sending confirmation reply to ${user.tag}:`, replyError);
+        await modalInteraction.followUp({ content: 'Error displaying confirmation. Please try again.', ephemeral: true }).catch(() => {});
+        await startMessage.edit({ content: '*Error during confirmation. Click button again.*', components: [startRow] }).catch(() => {}); // Re-enable button
+        continue; // Restart loop
+    }
+
+
+    // --- 7. Wait for Confirmation Button ---
+    let confirmInteraction;
+    try {
+      confirmInteraction = await confirmMessage.awaitMessageComponent({
+        filter: (i) => i.user.id === user.id && (i.customId === confirmButtonYesId || i.customId === confirmButtonNoId),
+        componentType: ComponentType.Button,
+        time: TRAIT_TIMEOUT
+      });
+    } catch (error) { // Timeout error
+      console.log(`askForTraits: Player ${user.tag} timed out confirming traits.`);
+      await confirmMessage.edit({ content: '*Confirmation timed out.*', embeds: [], components: [] }).catch(() => {});
+      finalVirtue = getRandomVirtue();
+      finalVice = getRandomVice();
+      await user.send(`Confirmation timed out. Random traits have been assigned:\nVirtue: ${finalVirtue}\nVice: ${finalVice}`).catch(() => {});
+      break; // Exit loop
+    }
+
+    // --- 8. Process Confirmation ---
+    // Disable buttons after click
+    const finalConfirmRow = new ActionRowBuilder().addComponents(
+        confirmRow.components.map(button => ButtonBuilder.from(button).setDisabled(true))
+    );
+    await confirmInteraction.update({ components: [finalConfirmRow] }).catch(() => {}); // Update confirmation message
+
+    if (confirmInteraction.customId === confirmButtonYesId) {
+      // Confirmed YES
+      finalVirtue = currentVirtue;
+      finalVice = currentVice;
+      await confirmInteraction.followUp({ content: 'Traits confirmed!', ephemeral: true }).catch(() => {}); // Ephemeral confirmation
+      await startMessage.delete().catch(() => {}); // Clean up original button message
+      break; // Exit loop, traits are set
+    } else {
+      // Confirmed NO (Try Again)
+      await confirmInteraction.followUp({ content: 'Okay, let\'s try entering the traits again.', ephemeral: true }).catch(() => {});
+      await startMessage.edit({ content: 'Please click the button again to re-enter your Virtue & Vice.', components: [startRow] }).catch(() => {}); // Edit original message
+      // Loop continues
+    }
+  } // End while loop
+
+  // --- 9. Return Final Traits ---
+  // Assign to game data *after* the loop finishes
+  if (finalVirtue && finalVice) {
+      game.players[playerId].virtue = finalVirtue;
+      game.players[playerId].vice = finalVice;
+      // Don't save here, handleStepOne will save after all players are done
+      console.log(`askForTraits: Final traits for ${playerId}: V=${finalVirtue}, V=${finalVice}`);
+      return { virtue: finalVirtue, vice: finalVice }; // Return the confirmed/assigned traits
+  } else {
+      // Should ideally not happen if logic is correct, but handle defensively
+      console.error(`askForTraits: Loop finished for ${playerId} without valid final traits.`);
+      game.players[playerId].virtue = getRandomVirtue(); // Assign random as fallback
+      game.players[playerId].vice = getRandomVice();
+      return { virtue: game.players[playerId].virtue, vice: game.players[playerId].vice };
+  }
 }
 
 export async function askForMoment(user, game, playerId, time) {
@@ -838,6 +1006,18 @@ export async function askForBrink(user, game, participantId, prompt, time, isThr
   }
 
   return coreInput; // Return the collected core text
+}
+
+export function getRandomTheme() {
+  // Use the imported defaultThemes from config.js
+  if (!defaultThemes || defaultThemes.length === 0) {
+    console.error("getRandomTheme: No themes defined in config.js!");
+    // Return a default theme object on error
+    return { title: "Default Theme (Config Error)", description: "Could not load themes from config." };
+  }
+  const randomIndex = Math.floor(Math.random() * defaultThemes.length);
+  // Return the full theme object
+  return defaultThemes[randomIndex];
 }
 
 export function getRandomName() {
@@ -1103,13 +1283,13 @@ export function normalizeBrink(coreBrink, observerName, isThreat = false) {
 
   // Construct the final, correct prefix
   let finalPrefix = '';
-  // Use "Someone" as fallback observer if name is missing, but handle GM case in the calling function
+  // Use "Someone" as fallback observer (primarily handles the GM case in the calling function), also if name is missing
   const nameToUse = observerName || "Someone";
 
   if (isThreat) {
-    finalPrefix = `${nameToUse} has seen *them* `;
+    finalPrefix = `${nameToUse} has seen *them*`;
   } else {
-    finalPrefix = `${nameToUse} saw you `; // "you" refers to the recipient
+    finalPrefix = `${nameToUse} saw you`; // "you" refers to the recipient
   }
 
   // Combine the correct prefix and the cleaned core brink
@@ -1907,11 +2087,44 @@ export function getUnlitCandleEmoji(channelId) {
 }
 
 export function startReminderTimers(gameChannel, game) {
+  // Capture the current step when the timers are initiated
+  const currentStep = game.characterGenStep;
+  console.log(`startReminderTimers: Setting reminders for Step ${currentStep}`); // Add log
+
   game.reminderTimers = [];
-  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 0), GM_REMINDER_TIMES[0]));
-  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 1), GM_REMINDER_TIMES[1]));
-  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 2), GM_REMINDER_TIMES[2]));
-  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 3), GM_REMINDER_TIMES[3]));
+  // Pass currentStep as the last argument to sendReminder in each setTimeout
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 0, currentStep), GM_REMINDER_TIMES[0]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 1, currentStep), GM_REMINDER_TIMES[1]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 2, currentStep), GM_REMINDER_TIMES[2]));
+  game.reminderTimers.push(setTimeout(() => sendReminder(gameChannel, game, 3, currentStep), GM_REMINDER_TIMES[3]));
+  // No need to saveGameData here, timers aren't part of persistent state
+}
+
+async function sendReminder(gameChannel, game, reminderIndex, step) {
+  // Check if the game still exists and hasn't advanced past char gen
+  const currentGame = getGameData(game.textChannelId);
+  if (!currentGame || currentGame.characterGenStep >= 9 || currentGame.characterGenStep !== step) {
+      console.log(`sendReminder: Reminder for step ${step} skipped. Game state changed or ended.`);
+      return; // Don't send reminder if game state changed significantly
+  }
+
+  try { // Add try-catch around fetching GM
+    const gm = await gameChannel.guild.members.fetch(game.gmId);
+    const user = gm.user;
+    const reminderTimes = GM_REMINDER_TIMES.map(time => formatDuration(time));
+    // Use the 'step' variable passed into the function
+    const reminderMessage = `**Reminder @ ${reminderTimes[reminderIndex]}**: **Character Creation Step ${step}** is taking longer than expected. Please check with your players to ensure they are responding to their DMs.`;
+    await user.send(reminderMessage);
+    console.log(`sendReminder: Sent reminder ${reminderIndex + 1} for step ${step} to GM ${user.tag}`); // Log success
+
+    // Only clear timers on the *last* reminder to avoid clearing prematurely
+    if (reminderIndex === 3) {
+      console.log(`sendReminder: Clearing timers after final reminder for step ${step}.`);
+      clearReminderTimers(game); // clearReminderTimers is safe to call even if empty
+    }
+  } catch (error) {
+      console.error(`sendReminder: Failed to send reminder ${reminderIndex + 1} for step ${step} to GM ${game.gmId}:`, error);
+  }
 }
 
 export function clearReminderTimers(game) {
@@ -1929,18 +2142,6 @@ export function formatDuration(milliseconds) {
   return `${minutes}:${seconds.toString().padStart(2, '0')}`;
 }
 
-async function sendReminder(gameChannel, game, reminderIndex, step) {
-  const gm = await gameChannel.guild.members.fetch(game.gmId);
-  const user = gm.user;
-  const reminderTimes = GM_REMINDER_TIMES.map(time => formatDuration(time));
-  const reminderMessage = `**Reminder @ ${reminderTimes[reminderIndex]}**: **Character Creation Step ${step}** is taking longer than expected. Please check with your players to ensure they are responding to their DMs.`;
-  await user.send(reminderMessage);
-  if (reminderIndex === 3) {
-    clearReminderTimers(game);
-  }
-}
-
-// --- NEW HELPER: Check if other players are alive ---
 export function areOtherPlayersAlive(game, currentPlayerId) {
   if (!game || !game.players) return false;
   return Object.entries(game.players).some(([id, player]) => id !== currentPlayerId && !player.isDead);

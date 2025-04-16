@@ -131,8 +131,7 @@ export async function startGame(message, gameData) { // Keep gameData param for 
       players: {},
       playerOrder: playerIds, // Use the original list, already confirmed they consented
       characterGenStep: 1,
-      traitsRequested: false,
-      theme: '',
+      theme: { title: "", description: "" },
       textChannelId: channelId,
       guildId: message.guild.id,
       voiceChannelId: gameChannel.type === ChannelType.GuildVoice ? channelId : null, // Use channel if it's a voice channel
@@ -140,6 +139,12 @@ export async function startGame(message, gameData) { // Keep gameData param for 
       initiatorId: message.author.id,
       gmId: gmId,
       diceLost: 0,
+      dicePool: 10,
+      scene: 0,
+      ghostsSpeakTruths: true,
+      inLastStand: false,
+      playingRecordings: false,
+      endGame: false,
     };
 
     // Initialize player data
@@ -148,25 +153,25 @@ export async function startGame(message, gameData) { // Keep gameData param for 
         playerUsername: player.user.username,
         consent: true, // Player consented
         brink: '',
+        givenBrink: '',
+        brinkUsedThisRoll: false,
         moment: '',
         virtue: '',
         vice: '',
         name: '',
         look: '',
         concept: '',
-        recordings: '', // Changed from recording to recordings
+        finalRecording: '',
         hopeDice: 0,
         virtueBurned: false,
         viceBurned: false,
         momentBurned: false,
         isDead: false,
-        // Default stack/trait info for validation schema
         availableTraits: ['Virtue', 'Vice', 'Moment'],
         stackOrder: [],
         initialChoice: null,
         inventoryConfirmed: false, // Important for step 7
-        gear: [], // Initialize gear array
-        // Add language/voice if needed later, keep null for now
+        gear: [],
         language: null,
         voice: null,
       };

@@ -2303,5 +2303,26 @@ export function areOtherPlayersAlive(game, currentPlayerId) {
 }
 
 export async function findGameByUserId(userId) {
-  return Object.values(gameData).find(game => game.players[userId] || game.gmId === userId);
+  console.log(`DEBUG findGameByUserId: Searching for user ${userId}`); // Log entry
+  for (const channelId in gameData) {
+    const game = gameData[channelId];
+    // Add checks for null/undefined game objects within the loop
+    if (!game) {
+        console.log(`DEBUG findGameByUserId: Skipping null/undefined game entry for key ${channelId}`);
+        continue;
+    }
+    // Log details of the game being checked
+    console.log(`DEBUG findGameByUserId: Checking game in channel ${channelId}... GM: ${game.gmId}, Players: ${game.players ? Object.keys(game.players) : 'N/A'}`);
+    // Check if players object exists before accessing it
+    const isPlayer = !!(game.players && game.players[userId]);
+    // Check if gmId exists before comparing
+    const isGM = game.gmId === userId;
+
+    if (isPlayer || isGM) {
+      console.log(`DEBUG findGameByUserId: Found match in channel ${channelId}. IsPlayer: ${isPlayer}, IsGM: ${isGM}. Returning this game.`); // Log success
+      return game; // Return the found game object
+    }
+  }
+  console.log(`DEBUG findGameByUserId: No match found for user ${userId}. Returning undefined.`); // Log failure
+  return undefined; // Explicitly return undefined if no match found after checking all entries
 }

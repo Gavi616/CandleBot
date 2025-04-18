@@ -101,6 +101,28 @@ export async function conflict(message, args, globalGameData) {
     return;
   }
 
+  // --- Last Stand Hope Check ---
+  if (game.inLastStand) {
+    const player = game.players[playerId];
+    // Check if player exists and has 0 hope dice
+    if (player && player.hopeDice <= 0) {
+      try {
+        // Send DM
+        if (message.channel.type === ChannelType.GuildText) { // Check if it's a public channel
+          await sendDM({ content: 'You have no Hope left. You cannot initiate conflicts in the Last Stand. You can only sacrifice yourself for narrative control (if you do so, remember to ask the GM to mark you dead).' });
+          // Delete the triggering command message
+          await message.delete().catch(e => console.error("Failed to delete conflict command in Last Stand (no hope):", e));
+        }
+      } catch (error) {
+        console.error("Error replying about Last Stand conflict restriction:", error);
+        // Fallback DM just in case
+        await sendDM(message.author, 'You have no Hope left. You cannot initiate conflicts in the Last Stand.');
+      }
+      return; // Stop conflict execution
+    }
+    // If player has hope dice, proceed normally.
+  }
+
   // Reset per-conflict Brink usage flag
   player.brinkUsedThisRoll = false;
 
@@ -141,7 +163,12 @@ export async function conflict(message, args, globalGameData) {
   let success = rolls.some(r => r === 6) || hopeRolls.some(r => r === 5 || r === 6);
   let playerNarrativeSuccess = playerSixes > gmSixes; // GM wins ties for narration
 
-  console.log(`conflict: Initial roll for ${playerId}: Pool=[${rolls.join(',')}] Hope=[${hopeRolls.join(',')}] (Ones: ${finalOnes}, Player Sixes: ${playerSixes}) | GM=[${gmRolls.join(',')}] (GM Sixes: ${gmSixes}) -> Success: ${success}, Narrative Success: ${playerNarrativeSuccess}`);
+  let initialLogMessage = `conflict: Initial roll for ${playerId}: Pool=[${rolls.join(',')}]`;
+  if (hopeDiceCount > 0) {
+    initialLogMessage += ` Hope=[${hopeRolls.join(',')}]`;
+  }
+  initialLogMessage += ` (Ones: ${finalOnes}, Player Sixes: ${playerSixes}) | GM=[${gmRolls.join(',')}] (GM Sixes: ${gmSixes}) -> Success: ${success}, Narrative Success: ${playerNarrativeSuccess}`;
+  console.log(initialLogMessage);
 
   // --- Reroll Options ---
   let traitToBurn = null;
@@ -252,7 +279,7 @@ export async function conflict(message, args, globalGameData) {
     try {
       const brinkConfirmation = await requestConsent(
         message.author,
-        `Your top trait is **Brink**. Embrace it (${player.brink}) for a full reroll of the remaining dice pool? (This can only be done once per conflict).`,
+        `Your top trait is **Brink**. Embrace it (${player.brink}) for a full reroll of the remaining player dice pool? (This can only be done once per conflict).`,
         `use_brink_yes_${playerId}_${channelId}`,
         `use_brink_no_${playerId}_${channelId}`,
         CONFLICT_TIMEOUT,
@@ -263,9 +290,14 @@ export async function conflict(message, args, globalGameData) {
         brinkReroll = true;
         player.brinkUsedThisRoll = true;
 
+        // Reroll player dice pool and Hope dice only
         rolls = [];
         for (let i = 0; i < currentDicePool; i++) {
           rolls.push(Math.floor(Math.random() * 6) + 1);
+        }
+        hopeRolls = [];
+        for (let i = 0; i < hopeDiceCount; i++) {
+           hopeRolls.push(Math.floor(Math.random() * 6) + 1);
         }
         rerollHappened = true;
 
@@ -274,11 +306,17 @@ export async function conflict(message, args, globalGameData) {
         success = rolls.some(r => r === 6) || hopeRolls.some(r => r === 5 || r === 6);
         playerNarrativeSuccess = playerSixes > gmSixes;
 
-        rerollActionText += `*Embraced **Brink** for a full reroll.*\n`;
-        updateEmbedRolls(`*Embraced Brink for a full reroll.*`); // Update description
+        rerollActionText += `*Embraced **Brink** for a full Player and Hope Dice reroll.*\n`;
+        updateEmbedRolls(`*Embraced Brink for a full Player and Hope Dice reroll.*`); // Update description
         await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error); // Update embed after reroll
 
-        console.log(`conflict: Rerolled entire pool for ${playerId} using Brink. New Pool=[${rolls.join(',')}] -> New Ones: ${finalOnes}, New Player Sixes: ${playerSixes}, New Success: ${success}, New Narrative Success: ${playerNarrativeSuccess}`);
+        // Construct the Brink reroll log message conditionally
+        let brinkLogMessage = `conflict (Brink): Rerolled Player Pool=[${rolls.join(',')}]`;
+        if (hopeDiceCount > 0) {
+          brinkLogMessage += ` and Hope Dice=[${hopeRolls.join(',')}]`;
+        }
+        brinkLogMessage += `. New Ones: ${finalOnes}, New Player Sixes: ${playerSixes}, New Success: ${success}, New Narrative Success: ${playerNarrativeSuccess}`;
+        console.log(brinkLogMessage); // Updated log
 
       } else {
         if (brinkConfirmation === null) {
@@ -433,7 +471,7 @@ export async function conflict(message, args, globalGameData) {
         embed.setColor(CONFLICT_EMBED_COLOR_FAILURE);
         const sacrificeFieldIndex = embed.data.fields?.findIndex(f => f.name === 'Sacrifice Offered');
         if (sacrificeFieldIndex !== -1 && sacrificeFieldIndex !== undefined) {
-            embed.spliceFields(sacrificeFieldIndex, 1);
+          embed.spliceFields(sacrificeFieldIndex, 1);
         }
         embed.addFields({ name: 'Error', value: 'An error occurred during the sacrifice offer. A candle is extinguished.' });
         await conflictEmbedMessage.edit({ embeds: [embed] }).catch(console.error);

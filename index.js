@@ -1635,47 +1635,123 @@ async function me(message) {
 }
 
 export async function startTruthsSystem(client, message, channelId) {
-  const game = gameData[channelId];
+  const game = getGameData(channelId); // Use getGameData
+  if (!game) {
+    console.error(`startTruthsSystem: No game data found for channel ${channelId}`);
+    return;
+  }
+
+  if (game.inLastStand || game.endingScene) {
+    console.log(`startTruthsSystem: Skipping truths, game in last stand or already ending scene.`);
+    return;
+  }
+
+  const gameChannel = message.channel; // Use the channel from the message context
   const playerOrder = game.playerOrder;
   const gmId = game.gmId;
   const litCandles = 11 - game.scene;
 
+  // --- Determine Speaker Order (same logic as before) ---
   let truthSpeakerIndex = 0;
-  if (game.diceLost > 0) {
-    truthSpeakerIndex = playerOrder.indexOf(message.author.id);
+  // Use game.lastConflictPlayerId if available (set by extinguishCandle)
+  const lastActorId = game.lastConflictPlayerId;
+  if (game.diceLost > 0 && lastActorId && playerOrder.includes(lastActorId)) {
+    truthSpeakerIndex = playerOrder.indexOf(lastActorId);
   } else {
-    truthSpeakerIndex = playerOrder.indexOf(gmId);
-  }
-
-  let truthOrderMessage = "";
-  for (let i = 0; i < litCandles; i++) {
-    const speakerId = playerOrder[truthSpeakerIndex];
-    const player = game.players[speakerId];
-    if (player) {
-      truthOrderMessage += `Truth ${i + 1}>: <@${speakerId}>${player.isDead ? " (Ghost)" : ""}\n`;
+    // GM starts if they weren't in playerOrder (normal case) or if diceLost is 0
+    // Find GM's virtual position if they were in the order (defensive)
+    const gmIndex = playerOrder.indexOf(gmId);
+    if (gmIndex !== -1) {
+      truthSpeakerIndex = gmIndex;
+    } else {
+      // Default: Player 0 starts if GM isn't explicitly the starter
+      truthSpeakerIndex = 0;
     }
-    truthSpeakerIndex = (truthSpeakerIndex + 1) % playerOrder.length;
+  }
+  // Ensure startIndex is valid
+  if (truthSpeakerIndex < 0 || truthSpeakerIndex >= playerOrder.length) {
+    truthSpeakerIndex = 0;
   }
 
-  const livingPlayers = playerOrder.filter(playerId => game.players[playerId] && !game.players[playerId].isDead);
-  let finalTruthMessage = "";
-  if (livingPlayers.length > 0) {
-    finalTruthMessage = "*(Living characters only)* All together: **And we are alive.**";
+  // --- Build Lines to Send ---
+  const linesToSend = [];
+  linesToSend.push(`GM only: **These things are true. The world is dark.**`); // Line 0
+
+  const eligibleSpeakers = playerOrder.filter(id => !game.players[id]?.isDead || game.ghostsSpeakTruths !== false);
+  const numEligible = eligibleSpeakers.length;
+
+  if (numEligible > 0) {
+    for (let i = 0; i < litCandles - 1; i++) {
+      // Calculate speaker based on eligible list and starting index
+      const eligibleIndex = (truthSpeakerIndex + i) % numEligible;
+      const speakerId = eligibleSpeakers[eligibleIndex];
+      const player = game.players[speakerId];
+      const isGhost = player?.isDead ?? false;
+      const ghostTag = (isGhost && game.ghostsSpeakTruths) ? " (Ghost)" : "";
+      linesToSend.push(`Truth ${i + 1}/${litCandles}: <@${speakerId}>${ghostTag}`); // Lines 1 to litCandles
+    }
   }
 
-  let fullMessage = `GM only: **These things are true. The world is dark.**\n\n`;
+  linesToSend.push(`Truth ${litCandles}/${litCandles}: *(Living characters only)* All together: **And we are alive.**`);
 
-  if (truthOrderMessage) {
-    fullMessage += `Establishing Truths order:\n${truthOrderMessage}\n\n`;
-  }
+  // Final lines after truths
+  const nextScene = game.scene;
+  const nextPlayerPool = Math.max(0, 11 - nextScene);
+  const nextGmPool = Math.max(0, nextScene - 1);
+  linesToSend.push(`Dice pools refreshed. Players: ${nextPlayerPool}, GM: ${nextGmPool}.`);
 
-  fullMessage += `${finalTruthMessage}`;
+  // --- Loop Through Lines with Button Pacing ---
+  for (let i = 0; i < linesToSend.length; i++) {
+    const line = linesToSend[i];
+    const isLastLine = (i === linesToSend.length - 1);
 
-  message.channel.send(fullMessage);
+    // Send the current line
+    let currentMessage = await gameChannel.send(line);
 
-  game.diceLost = 0;
+    // If not the last line, add button and wait
+    if (!isLastLine) {
+      const buttonId = `truth_continue_${channelId}_${i}`; // Unique enough for this context
+      const continueButton = new ButtonBuilder()
+        .setCustomId(buttonId)
+        .setLabel('Continue')
+        .setStyle(ButtonStyle.Secondary);
+      const row = new ActionRowBuilder().addComponents(continueButton);
 
-  saveGameData();
+      // Add the button to the message we just sent
+      currentMessage = await currentMessage.edit({ components: [row] });
+
+      try {
+        // Wait for the GM to click THIS specific button
+        const filter = (interaction) => interaction.customId === buttonId && interaction.user.id === gmId;
+        const interaction = await gameChannel.awaitMessageComponent({ filter, componentType: ComponentType.Button, time: 3_600_000 }); // 1 hour timeout
+
+        // GM clicked - disable the button
+        try {
+          const disabledRow = new ActionRowBuilder().addComponents(ButtonBuilder.from(continueButton).setDisabled(true));
+          await interaction.update({ components: [disabledRow] }); // Update the interaction (disables button)
+        } catch (updateError) {
+          // Ignore errors if interaction already replied or message deleted
+          if (updateError.code !== 10062 && updateError.code !== 10008) {
+            console.error(`startTruthsSystem: Error disabling button ${buttonId}:`, updateError);
+          }
+        }
+      } catch (error) {
+        // Timeout occurred
+        console.log(`startTruthsSystem: GM (${gmId}) timed out waiting to continue truths in channel ${channelId}.`);
+        await gameChannel.send(`GM timed out. Truth sequence aborted. Please proceed manually or use \`${BOT_PREFIX}cancelgame\`.`);
+        // Disable the button on timeout
+        try {
+          const disabledRow = new ActionRowBuilder().addComponents(ButtonBuilder.from(continueButton).setDisabled(true));
+          await currentMessage.edit({ components: [disabledRow] });
+        } catch (editError) {
+          if (editError.code !== 10008) console.error(`startTruthsSystem: Error disabling button on timeout:`, editError);
+        }
+        return; // Stop the sequence
+      }
+    }
+  } // End for loop
+
+  console.log(`startTruthsSystem: Paced truth sequence completed for game ${channelId}.`);
 }
 
 export async function whitelistChannel(message, args) {

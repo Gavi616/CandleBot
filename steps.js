@@ -438,77 +438,85 @@ export async function handleStepNine(gameChannel, game) {
 }
 
 export async function swapTraits(client, players, game, guildId) {
-  if (typeof guildId !== 'string' || !/^\d{18}$/.test(guildId)) {
+  if (typeof guildId !== 'string' || !/^\d{18,}$/.test(guildId)) {
     console.error("swapTraits: Invalid guildId format. Check the guildId.");
-    return players;
+    return players; // Return original players on error
   }
-  const playerOrder = getVirtualTableOrder(game, false);
+  const playerOrder = getVirtualTableOrder(game, false); // Get only players
 
-  const swappedPlayers = {};
+  // Create a deep copy to avoid modifying the original object during iteration
+  const swappedPlayers = JSON.parse(JSON.stringify(players));
+
+  const swapTraitPromises = [];
 
   for (let i = 0; i < playerOrder.length; i++) {
     const currentPlayerId = playerOrder[i];
-    const nextPlayerId = playerOrder[(i + 1) % playerOrder.length];
+    const leftNeighborId = playerOrder[(i + 1) % playerOrder.length]; // Player to the left
+    const rightNeighborId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length]; // Player to the right
 
-    swappedPlayers[nextPlayerId] = {
-      ...players[nextPlayerId],
-      virtue: players[currentPlayerId].virtue,
-      vice: players[currentPlayerId].vice,
-    };
-    if (!swappedPlayers[currentPlayerId]) {
-      swappedPlayers[currentPlayerId] = {
-        ...players[currentPlayerId],
-      };
+    // Ensure player data exists before accessing
+    if (!players[currentPlayerId] || !swappedPlayers[leftNeighborId] || !swappedPlayers[rightNeighborId]) {
+        console.error(`swapTraits: Missing player data for current (${currentPlayerId}), left (${leftNeighborId}), or right (${rightNeighborId}). Skipping swap involving this player.`);
+        continue;
     }
-  }
 
-  const swapTraitPromises = playerOrder.map(async (recipientId, i) => {
-    if (typeof recipientId !== 'string' || recipientId.length < 15) {
-      console.error("swapTraits: Invalid userId format. Check the recipientId.");
+    // --- Assign Traits ---
+    // Virtue goes LEFT (Current player gives Virtue to Left Neighbor)
+    swappedPlayers[leftNeighborId].virtue = players[currentPlayerId].virtue;
+    // Vice goes RIGHT (Current player gives Vice to Right Neighbor)
+    swappedPlayers[rightNeighborId].vice = players[currentPlayerId].vice;
+
+    // --- Prepare DM ---
+    // The recipient (leftNeighborId) gets the Virtue from currentPlayerId (their right neighbor)
+    // The recipient (leftNeighborId) gets the Vice from the player to *their* left (leftNeighborId's left neighbor)
+    const leftOfLeftNeighborId = playerOrder[(i + 2) % playerOrder.length];
+
+    // Ensure data exists for DM message generation
+    const virtueSourcePlayer = players[currentPlayerId];
+    const viceSourcePlayer = players[leftOfLeftNeighborId];
+    const recipientPlayer = players[leftNeighborId]; // Use original data for names
+
+    if (!virtueSourcePlayer || !viceSourcePlayer || !recipientPlayer) {
+        console.error(`swapTraits (DM Prep): Missing player data for DM to ${leftNeighborId}.`);
+        continue;
     }
-    const senderId = playerOrder[(i - 1 + playerOrder.length) % playerOrder.length];
 
-    try {
-      let guild;
-      try {
-        guild = client.guilds.cache.get(guildId);
-      } catch (error) {
-        console.error(`swapTraits: client.guilds.cache.get(guildId) Error:`, error);
-      }
-      if (!guild) {
-        console.error("swapTraits: No guild found with that guildId. Check the guildId.");
-        return;
-      }
+    const virtueSourceUsername = virtueSourcePlayer.playerUsername || `Player ${currentPlayerId}`;
+    const viceSourceUsername = viceSourcePlayer.playerUsername || `Player ${leftOfLeftNeighborId}`;
+    const recipientUsername = recipientPlayer.playerUsername || `Player ${leftNeighborId}`; // For logging
 
-      let member;
-      try {
-        member = await guild.members.fetch(recipientId);
-      } catch (error) {
-        console.error(`swapTraits: guild.members.fetch(recipientId) Error:`, error);
-      }
+    // Fetch the recipient user object to send the DM
+    swapTraitPromises.push(
+      (async () => {
+        try {
+          const guild = await client.guilds.fetch(guildId); // Fetch guild
+          const member = await guild.members.fetch(leftNeighborId); // Fetch member within guild
+          const recipientUser = member.user;
 
-      if (!member) {
-        console.error(`swapTraits: No member found with id ${recipientId} in guild ${guildId}`);
-        return;
-      }
-      const recipientUser = member.user;
+          // Construct the correct DM message
+          const dmMessage = `Trait Swap Complete:\n` +
+                            `Your **Virtue** (from ${virtueSourceUsername}): **${swappedPlayers[leftNeighborId].virtue}**\n` +
+                            `Your **Vice** (from ${viceSourceUsername}): **${swappedPlayers[leftNeighborId].vice}**`;
 
-      if (!recipientUser) {
-        console.error("swapTraits: No user found with that recipientId. Check the recipientId.");
-        return;
-      }
-      const senderName = players[senderId].playerUsername;
-      const recipientName = players[recipientId].playerUsername;
-      await recipientUser.send(`Your Virtue (from ${senderName}): ${swappedPlayers[recipientId].virtue}\nYour Vice (from ${senderName}): ${swappedPlayers[recipientId].vice}`);
-    } catch (error) {
-      console.error(`Error sending trait swap DMs to player ${recipientId}:`, error);
-    }
-  });
+          await sendDM(recipientUser, dmMessage);
+          console.log(`swapTraits: Sent swapped traits DM to ${recipientUsername} (${leftNeighborId}). Virtue from ${currentPlayerId}, Vice from ${leftOfLeftNeighborId}.`);
+
+        } catch (error) {
+          console.error(`swapTraits: Error fetching member or sending trait swap DM to player ${leftNeighborId}:`, error);
+          // Attempt to notify GM or log error prominently
+          const gameChannel = client.channels.cache.get(game.textChannelId);
+          if (gameChannel) {
+            await gameChannel.send(`⚠️ Error sending swapped traits DM to <@${leftNeighborId}>. They may need to check manually or ask the GM.`).catch(console.error);
+          }
+        }
+      })()
+    );
+  } // End for loop
 
   await Promise.all(swapTraitPromises);
-  return swappedPlayers;
+  console.log("swapTraits: All swap DMs attempted.");
+  return swappedPlayers; // Return the object with correctly assigned traits
 }
-
 
 async function getCharacterInfo(gameChannel, channelId) {
   const game = getGameData(channelId);

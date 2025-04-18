@@ -33,7 +33,7 @@ export const client = new Client({ intents: [GatewayIntentBits.Guilds, GatewayIn
 
 const version = '0.9.962a';
 const botName = 'Ten Candles Bot';
-export const isTesting = true;
+export const isTesting = false;
 let botRestarted = false;
 
 client.once('ready', async () => {
@@ -59,9 +59,6 @@ client.once('ready', async () => {
   if (isTesting) {
     console.log('-- Testing Mode Engaged! --');
     await sendTestDM(client, 'Listening for test commands.');
-
-    // Test Out Map Embed in tester's DMs
-    await startMap(client);
     return;
   } else { // not in testing mode
     if (Object.keys(gameData).length > 0) {

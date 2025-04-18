@@ -3,3 +3,4 @@ node_modules/
 ./strings.js
 keyfile.json
 channelWhitelist.json
+gamedata.json
